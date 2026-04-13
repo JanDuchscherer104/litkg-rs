@@ -95,7 +95,7 @@ id = "TODO-0012"
 title = "Define benchmark-result to autoresearch-target promotion and GitHub issue sync contract"
 issue_ids = ["ISSUE-0013", "ISSUE-0005"]
 priority = "high"
-status = "in_progress"
+status = "done"
 loc_min = 100
 loc_expected = 220
 loc_max = 440
@@ -139,3 +139,13 @@ status = "done"
 loc_min = 220
 loc_expected = 480
 loc_max = 900
+
+[[todos]]
+id = "TODO-0015"
+title = "Implement executable benchmark support and runner normalization for the full catalog"
+issue_ids = ["ISSUE-0015", "ISSUE-0013"]
+priority = "high"
+status = "pending"
+loc_min = 500
+loc_expected = 900
+loc_max = 1400

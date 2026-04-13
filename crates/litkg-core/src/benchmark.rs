@@ -616,9 +616,15 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
     let mut lines = vec![
         format!("# Autoresearch Target: {}", rendered.title),
         String::new(),
+        "## Target".to_string(),
+        String::new(),
+        "Set this to the target repository default branch.".to_string(),
+        String::new(),
+        "## Current problem".to_string(),
+        String::new(),
         rendered.summary.clone(),
         String::new(),
-        "## Benchmark Context".to_string(),
+        "Selected benchmark context:".to_string(),
         String::new(),
     ];
 
@@ -638,7 +644,7 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
         .collect::<Vec<_>>();
 
     lines.push(String::new());
-    lines.push("## Promoted Result Inputs".to_string());
+    lines.push("Promoted result inputs:".to_string());
     lines.push(String::new());
     if promoted.is_empty() {
         lines.push(
@@ -661,7 +667,7 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
 
     if !deferred.is_empty() {
         lines.push(String::new());
-        lines.push("## Deferred Result Inputs".to_string());
+        lines.push("Deferred result inputs:".to_string());
         lines.push(String::new());
         for summary in deferred {
             lines.push(format!(
@@ -677,7 +683,14 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
     }
 
     lines.push(String::new());
-    lines.push("## Proposed Research Work".to_string());
+    lines.push("## Required change".to_string());
+    lines.push(String::new());
+    lines.push(
+        "Run a bounded follow-up autoresearch pass that targets the promoted benchmark evidence below and updates the normalized results bundle with the outcome."
+            .to_string(),
+    );
+    lines.push(String::new());
+    lines.push("Proposed research work:".to_string());
     lines.push(String::new());
     for (index, component) in rendered.components.iter().enumerate() {
         lines.push(format!("### {}. {}", index + 1, component.title));
@@ -685,6 +698,38 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
         lines.push(component.prompt_fragment.clone());
         lines.push(String::new());
     }
+
+    lines.push("## Acceptance criteria".to_string());
+    lines.push(String::new());
+    lines.push(
+        "- The selected autoresearch target is grounded in the promoted benchmark evidence or explicitly records that no promotable evidence is currently available."
+            .to_string(),
+    );
+    lines.push(
+        "- Follow-up benchmark execution updates the normalized results bundle for the selected benchmark set."
+            .to_string(),
+    );
+    lines.push(
+        "- Deferred runs remain excluded from benchmark-deficit targeting unless their statuses are reclassified explicitly."
+            .to_string(),
+    );
+    lines.push(String::new());
+    lines.push("## Test expectations".to_string());
+    lines.push(String::new());
+    lines.push("- `cargo fmt --all`".to_string());
+    lines.push("- `cargo test`".to_string());
+    lines.push("- `make benchmark-validate`".to_string());
+    lines.push(
+        "- Run the relevant benchmark harnesses and refresh the normalized results bundle used for follow-up targeting."
+            .to_string(),
+    );
+    lines.push(String::new());
+    lines.push("## Related issues and local TODOs".to_string());
+    lines.push(String::new());
+    lines.push(
+        "- Add any linked GitHub issues or local backlog IDs before publishing when this target extends existing work."
+            .to_string(),
+    );
     lines.join("\n")
 }
 
@@ -1392,10 +1437,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(rendered.contains("## Promoted Result Inputs"));
+        assert!(rendered.contains("## Current problem"));
+        assert!(rendered.contains("Promoted result inputs:"));
         assert!(rendered.contains("retrieval-regression"));
         assert!(rendered.contains("Evidence: score overall=0.42 ratio"));
-        assert!(rendered.contains("## Proposed Research Work"));
+        assert!(rendered.contains("## Required change"));
+        assert!(rendered.contains("## Acceptance criteria"));
     }
 
     #[test]
@@ -1424,8 +1471,8 @@ mod tests {
         )
         .unwrap();
         assert!(rendered.contains("No promotable result inputs are currently available."));
-        assert!(rendered.contains("## Deferred Result Inputs"));
-        assert!(rendered.contains("## Proposed Research Work"));
+        assert!(rendered.contains("Deferred result inputs:"));
+        assert!(rendered.contains("## Test expectations"));
     }
 
     #[test]
@@ -1455,7 +1502,8 @@ mod tests {
         .unwrap();
 
         assert!(rendered.contains("# Autoresearch Target: KG navigation"));
-        assert!(rendered.contains("## Deferred Result Inputs"));
+        assert!(rendered.contains("## Related issues and local TODOs"));
+        assert!(!rendered.contains("ISSUE-0013"));
     }
 
     #[test]

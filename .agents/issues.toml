@@ -89,7 +89,7 @@ id = "ISSUE-0013"
 title = "Promote benchmark results into selectable autoresearch targets and GitHub issue sync"
 summary = "Extend the benchmark-result layer so validated result bundles can feed overnight autoresearch targets directly and sync issue-ready target proposals into GitHub once the repo has a real remote."
 priority = "high"
-status = "open"
+status = "closed"
 github_issue_number = 8
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/8"
 
@@ -119,3 +119,12 @@ priority = "high"
 status = "closed"
 github_issue_number = 11
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/11"
+
+[[issues]]
+id = "ISSUE-0015"
+title = "Integrate and run the full benchmark catalog against the local stack"
+summary = "Turn the benchmark catalog into an executable integration layer that can inspect support and run every benchmark declared in the repo through normalized local adapters."
+priority = "high"
+status = "open"
+github_issue_number = 12
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/12"

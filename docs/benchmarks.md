@@ -114,3 +114,34 @@ The JSON payload includes:
 - sanitized run summary text plus structured score evidence
 - `result_summaries` as the canonical normalized result view for downstream
   automation
+
+## GitHub Sync
+
+When the repo has a live GitHub remote, the rendered GitHub-issue surface can be
+synced directly into GitHub:
+
+```bash
+make autoresearch-issue
+cargo run -p litkg-cli -- sync-autoresearch-target-issue \
+  --catalog examples/benchmarks/kg.toml \
+  --results examples/benchmarks/sample-results.toml \
+  --target-id kg_navigation_improvement \
+  --dry-run
+```
+
+The sync command:
+
+- renders the same deterministic issue body used by `--format github-issue`
+- infers `owner/repo` from `origin` by default, or accepts `--repo [HOST/]owner/repo`
+- can add labels with repeated `--label`
+- uses `--dry-run` to preview the title and body without opening a GitHub issue
+
+For a live issue create, drop `--dry-run` and optionally pass labels:
+
+```bash
+cargo run -p litkg-cli -- sync-autoresearch-target-issue \
+  --catalog examples/benchmarks/kg.toml \
+  --results examples/benchmarks/sample-results.toml \
+  --target-id kg_navigation_improvement \
+  --label autoresearch
+```

@@ -89,18 +89,15 @@ Benchmark metadata, validation, and autoresearch-target composition now live in 
 - sample results bundle: `examples/benchmarks/sample-results.toml`
 - validation command: `make benchmark-validate`
 - autoresearch-target rendering: `make autoresearch-target`
+- GitHub issue sync for rendered autoresearch targets: `make autoresearch-issue`
 
 Rendered autoresearch targets now distinguish between:
 
-- validation-only result bundles that should stay as schema/smoke evidence
+- validation-only result bundles that should stay as schema or smoke evidence
 - recognized execution failure runs that are eligible to shape the next deterministic target
 - status values outside the recognized promotion/control set must be classified
   explicitly before benchmark validation passes
 
-The renderer also supports `--format issue` for an issue-ready Markdown body
-that carries the same benchmark context, promoted inputs, and component scaffold.
-`--format json` now includes promotion counts, sanitized run summary text, and
-structured score evidence under `result_summaries`; downstream automation should
-consume that normalized view rather than the raw source bundle.
+The renderer supports `markdown`, `json`, and `github-issue` outputs over the same deterministic target selection. `make autoresearch-issue` can preview or create the corresponding GitHub issue through `gh`, while JSON renders now include promotion counts, sanitized run summary text, and structured score evidence under `result_summaries`; downstream automation should consume that normalized view rather than the raw source bundle.
 
 The catalog covers `SWE-Bench Pro`, `SWE-QA-Pro`, `CodeRepoQA`, `StackRepoQA`, `RepoReason`, `RACE-bench`, `SWD-Bench`, `CCBench`, and `Terminal-Bench`.
