@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use litkg_core::{
     download_registry_sources, load_registry, parse_registry_papers, sync_registry,
     validate_benchmark_catalog, validate_benchmark_results, write_parsed_papers,
@@ -66,8 +66,26 @@ struct AutoResearchTargetCommand {
     component_ids: Vec<String>,
     #[arg(long = "benchmark-id")]
     benchmark_ids: Vec<String>,
-    #[arg(long, default_value = "markdown")]
-    format: String,
+    #[arg(long, value_enum, default_value_t = AutoResearchTargetFormatArg::Markdown)]
+    format: AutoResearchTargetFormatArg,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum AutoResearchTargetFormatArg {
+    Markdown,
+    #[value(alias = "github-issue")]
+    Issue,
+    Json,
+}
+
+impl From<AutoResearchTargetFormatArg> for AutoResearchRenderFormat {
+    fn from(value: AutoResearchTargetFormatArg) -> Self {
+        match value {
+            AutoResearchTargetFormatArg::Markdown => AutoResearchRenderFormat::Markdown,
+            AutoResearchTargetFormatArg::Issue => AutoResearchRenderFormat::GitHubIssue,
+            AutoResearchTargetFormatArg::Json => AutoResearchRenderFormat::Json,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -204,25 +222,50 @@ fn main() -> Result<()> {
                 Some(path) => Some(litkg_core::load_benchmark_results(path)?),
                 None => None,
             };
-            let format = match args.format.as_str() {
-                "markdown" => AutoResearchRenderFormat::Markdown,
-                "issue" => AutoResearchRenderFormat::Issue,
-                "json" => AutoResearchRenderFormat::Json,
-                "github-issue" | "issue" => AutoResearchRenderFormat::GitHubIssue,
-                other => anyhow::bail!("Unsupported autoresearch target format `{other}`"),
-            };
             let rendered = litkg_core::render_autoresearch_target(
                 &catalog,
                 results.as_ref(),
                 &args.target_id,
                 &args.component_ids,
                 &args.benchmark_ids,
-                format,
+                args.format.into(),
             )?;
             println!("{rendered}");
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_accepts_issue_render_format() {
+        let cli = Cli::try_parse_from([
+            "litkg",
+            "render-autoresearch-target",
+            "--catalog",
+            "examples/benchmarks/kg.toml",
+            "--results",
+            "examples/benchmarks/sample-results.toml",
+            "--target-id",
+            "kg_navigation_improvement",
+            "--format",
+            "issue",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::RenderAutoresearchTarget(command) => {
+                assert_eq!(command.format, AutoResearchTargetFormatArg::Issue);
+            }
+            other => panic!(
+                "unexpected command parsed: {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
 }
 
 fn materialize(config: &RepoConfig, papers: &[litkg_core::ParsedPaper]) -> Result<()> {

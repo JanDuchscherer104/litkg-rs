@@ -686,6 +686,7 @@ fn summarize_runs_for_promotion(
 
 fn summarize_run_for_promotion(run: &BenchmarkRun) -> PromotedRunSummary {
     let normalized_status = run.status.trim().to_ascii_lowercase();
+    let sanitized_summary = sanitize_inline_markdown(&run.summary);
     let (disposition, reason) = if normalized_status == "validation_only" {
         (
             AutoResearchResultDisposition::Defer,
@@ -698,10 +699,16 @@ fn summarize_run_for_promotion(run: &BenchmarkRun) -> PromotedRunSummary {
             "successful execution run; keep it for release tracking rather than the next target"
                 .to_string(),
         )
-    } else {
+    } else if is_promotable_failure_status(&normalized_status) {
         (
             AutoResearchResultDisposition::Promote,
-            "non-success execution run; eligible to shape the next deterministic research target"
+            "recognized execution failure run; eligible to shape the next deterministic research target"
+                .to_string(),
+        )
+    } else {
+        (
+            AutoResearchResultDisposition::Defer,
+            "non-promotable run status; keep it out of benchmark-deficit targeting until the status is classified explicitly"
                 .to_string(),
         )
     };
@@ -712,7 +719,7 @@ fn summarize_run_for_promotion(run: &BenchmarkRun) -> PromotedRunSummary {
         status: run.status.clone(),
         disposition,
         reason,
-        summary: run.summary.clone(),
+        summary: sanitized_summary,
         evidence: collect_run_evidence(run),
     }
 }
@@ -721,6 +728,13 @@ fn is_success_status(status: &str) -> bool {
     matches!(
         status,
         "success" | "successful" | "passed" | "pass" | "completed" | "ok"
+    )
+}
+
+fn is_promotable_failure_status(status: &str) -> bool {
+    matches!(
+        status,
+        "observed_failure" | "failure" | "failed" | "regression" | "degraded" | "partial_failure"
     )
 }
 
@@ -749,6 +763,10 @@ fn collect_run_evidence(run: &BenchmarkRun) -> Vec<String> {
     }
 
     evidence
+}
+
+fn sanitize_inline_markdown(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn render_evidence_suffix(summary: &PromotedRunSummary) -> String {
@@ -886,7 +904,7 @@ mod tests {
         .unwrap();
 
         assert!(rendered.contains("promote `retrieval-regression`"));
-        assert!(rendered.contains("non-success execution run"));
+        assert!(rendered.contains("recognized execution failure run"));
         assert!(rendered.contains("Summary: Hybrid retrieval missed the expected file cluster."));
         assert!(rendered.contains("Evidence: score overall=0.42 ratio"));
     }
@@ -920,6 +938,66 @@ mod tests {
 
         assert!(rendered.contains("defer `retrieval-win`"));
         assert!(rendered.contains("successful execution run"));
+    }
+
+    #[test]
+    fn defers_unknown_non_success_statuses() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "infra-timeout".into(),
+                status: "timeout".into(),
+                summary: "Harness timed out before benchmark execution completed.".into(),
+                scores: vec![],
+            }],
+        };
+
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::Markdown,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("defer `infra-timeout`"));
+        assert!(rendered.contains("non-promotable run status"));
+        assert!(rendered.contains("Promotion summary: 0 promotable, 1 deferred."));
+    }
+
+    #[test]
+    fn sanitizes_multiline_summaries_for_markdown_outputs() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "retrieval-regression".into(),
+                status: "observed_failure".into(),
+                summary: "Hybrid retrieval missed the expected file cluster.\n\n# follow-up".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 0.42,
+                    unit: "ratio".into(),
+                }],
+            }],
+        };
+
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::Issue,
+        )
+        .unwrap();
+
+        assert!(rendered
+            .contains("Summary: Hybrid retrieval missed the expected file cluster. # follow-up"));
+        assert!(!rendered.contains("\n# follow-up"));
     }
 
     #[test]

@@ -93,11 +93,11 @@ Benchmark metadata, validation, and autoresearch-target composition now live in 
 Rendered autoresearch targets now distinguish between:
 
 - validation-only result bundles that should stay as schema/smoke evidence
-- non-success execution-bearing runs that are eligible to shape the next deterministic target
+- recognized execution failure runs that are eligible to shape the next deterministic target
 
 The renderer also supports `--format issue` for an issue-ready Markdown body
 that carries the same benchmark context, promoted inputs, and component scaffold.
-`--format json` now includes promotion counts plus structured evidence extracted
-from run summaries and score entries.
+`--format json` now includes promotion counts, sanitized run summary text, and
+structured score evidence.
 
 The catalog covers `SWE-Bench Pro`, `SWE-QA-Pro`, `CodeRepoQA`, `StackRepoQA`, `RepoReason`, `RACE-bench`, `SWD-Bench`, `CCBench`, and `Terminal-Bench`.

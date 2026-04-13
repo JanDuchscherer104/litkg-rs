@@ -92,8 +92,10 @@ When a result bundle is present, the rendered target also emits a deterministic
 promotion assessment:
 
 - `validation_only` runs are deferred and treated as schema or smoke checks
-- non-success execution runs are marked as promotable inputs for the next research
-  target
+- recognized execution failure statuses such as `observed_failure` or `failed`
+  are marked as promotable inputs for the next research target
+- control-plane or unclassified statuses such as `timeout`, `pending`, or
+  `infra_error` are deferred until they are classified explicitly
 
 This keeps schema-validation fixtures from masquerading as evidence of benchmark
 deficits during overnight loops.
@@ -107,4 +109,4 @@ The renderer supports three stable output surfaces:
 The JSON payload includes:
 
 - promotion counts for promotable versus deferred runs
-- structured evidence derived from run summaries and score entries
+- sanitized run summary text plus structured score evidence
