@@ -61,7 +61,7 @@ pub struct SectionHeading {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PaperInspection {
     pub metadata: PaperSourceRecord,
-    pub parsed_json_path: PathBuf,
+    pub parsed_json_path: Option<PathBuf>,
     pub materialized_markdown_path: Option<PathBuf>,
     pub local_tex_dir: Option<PathBuf>,
     pub local_pdf_path: Option<PathBuf>,
@@ -373,20 +373,26 @@ pub fn inspect_paper(
 
     Ok(PaperInspection {
         metadata: record.clone(),
-        parsed_json_path: config
-            .parsed_root()
-            .join(format!("{}.json", record.paper_id)),
+        parsed_json_path: {
+            let path = config
+                .parsed_root()
+                .join(format!("{}.json", record.paper_id));
+            path.is_file().then_some(path)
+        },
         materialized_markdown_path: {
             let path = config
                 .generated_docs_root
                 .join(format!("{}.md", record.paper_id));
             path.is_file().then_some(path)
         },
-        local_tex_dir: record.tex_dir.as_ref().map(|dir| config.tex_root.join(dir)),
-        local_pdf_path: record
-            .pdf_file
-            .as_ref()
-            .map(|file| config.pdf_root.join(file)),
+        local_tex_dir: record.tex_dir.as_ref().and_then(|dir| {
+            let path = config.tex_root.join(dir);
+            path.is_dir().then_some(path)
+        }),
+        local_pdf_path: record.pdf_file.as_ref().and_then(|file| {
+            let path = config.pdf_root.join(file);
+            path.is_file().then_some(path)
+        }),
         abstract_text: parsed.and_then(|paper| paper.abstract_text.clone()),
         sections: parsed
             .map(|paper| {
@@ -531,11 +537,14 @@ fn effective_registry_records(
 
     registry
         .iter()
-        .map(|record| {
-            parsed_by_id
-                .get(record.paper_id.as_str())
-                .map(|paper| paper.metadata.clone())
-                .unwrap_or_else(|| record.clone())
+        .map(|record| match parsed_by_id.get(record.paper_id.as_str()) {
+            Some(paper) => {
+                let mut merged = record.clone();
+                merged.title = paper.metadata.title.clone();
+                merged.parse_status = paper.metadata.parse_status.clone();
+                merged
+            }
+            None => record.clone(),
         })
         .collect()
 }
@@ -826,6 +835,51 @@ mod tests {
     }
 
     #[test]
+    fn search_preserves_current_registry_asset_state() {
+        let registry = vec![PaperSourceRecord {
+            paper_id: "demo-paper".into(),
+            citation_key: Some("demo2025paper".into()),
+            title: "Bib Title".into(),
+            authors: vec![],
+            year: Some("2025".into()),
+            arxiv_id: None,
+            doi: None,
+            url: None,
+            tex_dir: None,
+            pdf_file: Some("demo.pdf".into()),
+            source_kind: SourceKind::Bib,
+            download_mode: DownloadMode::ManifestSourcePlusPdf,
+            has_local_tex: true,
+            has_local_pdf: true,
+            parse_status: ParseStatus::Downloaded,
+        }];
+        let parsed = vec![ParsedPaper {
+            metadata: PaperSourceRecord {
+                title: "Parsed Title".into(),
+                has_local_tex: false,
+                has_local_pdf: false,
+                parse_status: ParseStatus::Parsed,
+                ..registry[0].clone()
+            },
+            abstract_text: Some("parsed abstract".into()),
+            sections: vec![PaperSection {
+                level: 1,
+                title: "Parsed section".into(),
+                content: "content".into(),
+            }],
+            figures: vec![],
+            tables: vec![],
+            citations: vec![],
+            provenance: vec![],
+        }];
+
+        let results = search_papers(&registry, &parsed, &[], "Parsed Title", 10).unwrap();
+        assert_eq!(results.hits[0].parse_status, ParseStatus::Parsed);
+        assert!(results.hits[0].has_local_tex);
+        assert!(results.hits[0].has_local_pdf);
+    }
+
+    #[test]
     fn inspect_paper_rejects_ambiguous_exact_matches() {
         let dir = tempfile::tempdir().unwrap();
         let repo_config = config(dir.path());
@@ -858,6 +912,18 @@ mod tests {
     fn inspects_paper_and_builds_citation_neighborhood() {
         let dir = tempfile::tempdir().unwrap();
         let repo_config = config(dir.path());
+        std::fs::create_dir_all(dir.path().join("tex").join("alpha")).unwrap();
+        std::fs::create_dir_all(dir.path().join("pdf")).unwrap();
+        std::fs::create_dir_all(dir.path().join("generated").join("parsed")).unwrap();
+        std::fs::write(
+            dir.path()
+                .join("generated")
+                .join("parsed")
+                .join("alpha.json"),
+            "{}",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("pdf").join("alpha.pdf"), b"pdf").unwrap();
         let mut parsed = sample_parsed();
         parsed.push(ParsedPaper {
             metadata: PaperSourceRecord {

@@ -463,7 +463,14 @@ fn render_paper_inspection(inspection: &PaperInspection) -> String {
         ),
         String::new(),
         "paths:".to_string(),
-        format!("  parsed_json: {}", inspection.parsed_json_path.display()),
+        format!(
+            "  parsed_json: {}",
+            inspection
+                .parsed_json_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "n/a".to_string())
+        ),
         format!(
             "  materialized_markdown: {}",
             inspection

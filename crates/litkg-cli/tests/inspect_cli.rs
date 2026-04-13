@@ -97,6 +97,72 @@ relevance_tags = [\"retrieval\"]\n",
     config_path
 }
 
+fn write_metadata_only_config(root: &Path) -> PathBuf {
+    let manifest_path = root.join("sources.jsonl");
+    let bib_path = root.join("references.bib");
+    let tex_root = root.join("tex");
+    let pdf_root = root.join("pdf");
+    let generated_docs_root = root.join("generated");
+    let parsed_root = generated_docs_root.join("parsed");
+    let registry_path = generated_docs_root.join("registry.jsonl");
+
+    fs::create_dir_all(&generated_docs_root).unwrap();
+    fs::create_dir_all(&parsed_root).unwrap();
+    fs::write(&manifest_path, "").unwrap();
+    fs::write(&bib_path, "").unwrap();
+
+    write_registry(
+        &registry_path,
+        &[PaperSourceRecord {
+            paper_id: "metadata-only".into(),
+            citation_key: Some("metadata2025paper".into()),
+            title: "Metadata Only".into(),
+            authors: vec!["Mia Metadata".into()],
+            year: Some("2025".into()),
+            arxiv_id: None,
+            doi: None,
+            url: None,
+            tex_dir: Some("missing-tex".into()),
+            pdf_file: Some("missing.pdf".into()),
+            source_kind: SourceKind::Bib,
+            download_mode: DownloadMode::MetadataOnly,
+            has_local_tex: false,
+            has_local_pdf: false,
+            parse_status: ParseStatus::MetadataOnly,
+        }],
+    )
+    .unwrap();
+
+    let config_path = root.join("metadata-only.toml");
+    fs::write(
+        &config_path,
+        format!(
+            "manifest_path = \"{}\"\n\
+bib_path = \"{}\"\n\
+tex_root = \"{}\"\n\
+pdf_root = \"{}\"\n\
+generated_docs_root = \"{}\"\n\
+registry_path = \"{}\"\n\
+parsed_root = \"{}\"\n\
+neo4j_export_root = \"{}\"\n\
+sink = \"neo4j\"\n\
+download_pdfs = false\n\
+relevance_tags = []\n",
+            manifest_path.display(),
+            bib_path.display(),
+            tex_root.display(),
+            pdf_root.display(),
+            generated_docs_root.display(),
+            registry_path.display(),
+            parsed_root.display(),
+            generated_docs_root.join("neo4j-export").display(),
+        ),
+    )
+    .unwrap();
+
+    config_path
+}
+
 #[test]
 fn stats_command_supports_json_output() {
     let dir = tempfile::tempdir().unwrap();
@@ -261,4 +327,34 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
         .clone();
     let show_json: Value = serde_json::from_slice(&show_output).unwrap();
     assert_eq!(show_json["metadata"]["parse_status"], "Parsed");
+}
+
+#[test]
+fn show_paper_json_uses_null_for_missing_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_metadata_only_config(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "show-paper",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--paper",
+            "metadata2025paper",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["metadata"]["parse_status"], "MetadataOnly");
+    assert_eq!(json["parsed_json_path"], Value::Null);
+    assert_eq!(json["materialized_markdown_path"], Value::Null);
+    assert_eq!(json["local_tex_dir"], Value::Null);
+    assert_eq!(json["local_pdf_path"], Value::Null);
 }
