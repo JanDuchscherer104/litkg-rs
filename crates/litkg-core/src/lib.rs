@@ -2,6 +2,7 @@ pub mod benchmark;
 pub mod bibtex;
 pub mod config;
 pub mod download;
+pub mod enrich;
 pub mod manifest;
 pub mod materialize;
 pub mod model;
@@ -17,6 +18,7 @@ pub use benchmark::{
 pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{RepoConfig, SinkMode};
 pub use download::{download_registry_sources, DownloadOptions};
+pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
 pub use manifest::{load_manifest, ManifestEntry};
 pub use materialize::{
     emit_markdown, load_parsed_papers, matched_relevance_tags, write_materialized_doc,
