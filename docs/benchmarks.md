@@ -103,3 +103,8 @@ The renderer supports three stable output surfaces:
 - `markdown` for operator reading
 - `issue` for issue-ready bodies
 - `json` for machine consumption
+
+The JSON payload includes:
+
+- promotion counts for promotable versus deferred runs
+- structured evidence derived from run summaries and score entries

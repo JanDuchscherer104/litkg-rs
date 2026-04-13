@@ -106,6 +106,7 @@ pub struct RenderedAutoResearchTarget {
     pub benchmarks: Vec<BenchmarkSpec>,
     pub components: Vec<AutoResearchComponent>,
     pub runs: Vec<BenchmarkRun>,
+    pub promotion_summary: PromotionSummary,
     pub result_summaries: Vec<PromotedRunSummary>,
 }
 
@@ -124,6 +125,8 @@ pub struct PromotedRunSummary {
     pub status: String,
     pub disposition: AutoResearchResultDisposition,
     pub reason: String,
+    pub summary: String,
+    pub evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -131,6 +134,13 @@ pub struct PromotedRunSummary {
 pub enum AutoResearchResultDisposition {
     Promote,
     Defer,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PromotionSummary {
+    pub promotable_count: usize,
+    pub deferred_count: usize,
+    pub has_promotable_results: bool,
 }
 
 pub fn load_benchmark_catalog(path: impl AsRef<Path>) -> Result<BenchmarkCatalog> {
@@ -426,6 +436,7 @@ pub fn render_autoresearch_target(
         Vec::new()
     };
 
+    let result_summaries = summarize_runs_for_promotion(results, &selected_benchmark_ids);
     let rendered = RenderedAutoResearchTarget {
         id: target.id.clone(),
         title: target.title.clone(),
@@ -433,7 +444,8 @@ pub fn render_autoresearch_target(
         benchmarks: selected_benchmarks,
         components: selected_components,
         runs: selected_runs,
-        result_summaries: summarize_runs_for_promotion(results, &selected_benchmark_ids),
+        promotion_summary: build_promotion_summary(&result_summaries),
+        result_summaries,
     };
 
     match format {
@@ -485,6 +497,11 @@ fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
         lines.push(String::new());
         lines.push("## Result Promotion Assessment".to_string());
         lines.push(String::new());
+        lines.push(format!(
+            "Promotion summary: {} promotable, {} deferred.",
+            rendered.promotion_summary.promotable_count, rendered.promotion_summary.deferred_count
+        ));
+        lines.push(String::new());
         for summary in &rendered.result_summaries {
             lines.push(format!(
                 "- {} `{}` on `{}` [{}]: {}",
@@ -497,6 +514,10 @@ fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
                 summary.status,
                 summary.reason
             ));
+            lines.push(format!("  Summary: {}", summary.summary));
+            if !summary.evidence.is_empty() {
+                lines.push(format!("  Evidence: {}", summary.evidence.join("; ")));
+            }
         }
 
         if !rendered.result_summaries.is_empty()
@@ -566,8 +587,13 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
     } else {
         for summary in promoted {
             lines.push(format!(
-                "- `{}` on `{}` [{}]: {}",
-                summary.run_id, summary.benchmark_id, summary.status, summary.reason
+                "- `{}` on `{}` [{}]: {} Summary: {}{}",
+                summary.run_id,
+                summary.benchmark_id,
+                summary.status,
+                summary.reason,
+                summary.summary,
+                render_evidence_suffix(summary)
             ));
         }
     }
@@ -578,8 +604,13 @@ fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
         lines.push(String::new());
         for summary in deferred {
             lines.push(format!(
-                "- `{}` on `{}` [{}]: {}",
-                summary.run_id, summary.benchmark_id, summary.status, summary.reason
+                "- `{}` on `{}` [{}]: {} Summary: {}{}",
+                summary.run_id,
+                summary.benchmark_id,
+                summary.status,
+                summary.reason,
+                summary.summary,
+                render_evidence_suffix(summary)
             ));
         }
     }
@@ -681,6 +712,8 @@ fn summarize_run_for_promotion(run: &BenchmarkRun) -> PromotedRunSummary {
         status: run.status.clone(),
         disposition,
         reason,
+        summary: run.summary.clone(),
+        evidence: collect_run_evidence(run),
     }
 }
 
@@ -689,6 +722,41 @@ fn is_success_status(status: &str) -> bool {
         status,
         "success" | "successful" | "passed" | "pass" | "completed" | "ok"
     )
+}
+
+fn build_promotion_summary(result_summaries: &[PromotedRunSummary]) -> PromotionSummary {
+    let promotable_count = result_summaries
+        .iter()
+        .filter(|summary| matches!(summary.disposition, AutoResearchResultDisposition::Promote))
+        .count();
+    let deferred_count = result_summaries.len().saturating_sub(promotable_count);
+
+    PromotionSummary {
+        promotable_count,
+        deferred_count,
+        has_promotable_results: promotable_count > 0,
+    }
+}
+
+fn collect_run_evidence(run: &BenchmarkRun) -> Vec<String> {
+    let mut evidence = Vec::new();
+
+    for score in &run.scores {
+        evidence.push(format!(
+            "score {}={} {}",
+            score.metric_id, score.value, score.unit
+        ));
+    }
+
+    evidence
+}
+
+fn render_evidence_suffix(summary: &PromotedRunSummary) -> String {
+    if summary.evidence.is_empty() {
+        String::new()
+    } else {
+        format!(" Evidence: {}", summary.evidence.join("; "))
+    }
 }
 
 #[cfg(test)]
@@ -786,6 +854,7 @@ mod tests {
         assert!(rendered.contains("Compare graph-only with hybrid retrieval."));
         assert!(rendered.contains("baseline"));
         assert!(rendered.contains("Result Promotion Assessment"));
+        assert!(rendered.contains("Promotion summary: 0 promotable, 1 deferred."));
         assert!(rendered.contains("No promotable execution results were found."));
     }
 
@@ -818,6 +887,8 @@ mod tests {
 
         assert!(rendered.contains("promote `retrieval-regression`"));
         assert!(rendered.contains("non-success execution run"));
+        assert!(rendered.contains("Summary: Hybrid retrieval missed the expected file cluster."));
+        assert!(rendered.contains("Evidence: score overall=0.42 ratio"));
     }
 
     #[test]
@@ -880,6 +951,7 @@ mod tests {
 
         assert!(rendered.contains("## Promoted Result Inputs"));
         assert!(rendered.contains("retrieval-regression"));
+        assert!(rendered.contains("Evidence: score overall=0.42 ratio"));
         assert!(rendered.contains("## Proposed Research Work"));
     }
 
@@ -941,6 +1013,38 @@ mod tests {
 
         assert!(rendered.contains("# Autoresearch Target: KG navigation"));
         assert!(rendered.contains("## Deferred Result Inputs"));
+    }
+
+    #[test]
+    fn renders_json_with_promotion_summary() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "retrieval-regression".into(),
+                status: "observed_failure".into(),
+                summary: "Hybrid retrieval missed the expected file cluster.".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 0.42,
+                    unit: "ratio".into(),
+                }],
+            }],
+        };
+
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::Json,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("\"promotable_count\": 1"));
+        assert!(rendered.contains("\"has_promotable_results\": true"));
+        assert!(rendered.contains("\"evidence\""));
     }
 
     #[test]
