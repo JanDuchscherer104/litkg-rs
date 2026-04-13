@@ -344,6 +344,12 @@ pub fn validate_benchmark_results(
     let mut seen_run_ids = BTreeSet::new();
 
     for run in &results.runs {
+        if run.run_id.trim().is_empty() {
+            bail!(
+                "Benchmark run for benchmark `{}` must have a non-empty run_id",
+                run.benchmark_id
+            );
+        }
         if !seen_run_ids.insert(run.run_id.clone()) {
             bail!("Duplicate benchmark run id `{}`", run.run_id);
         }
@@ -397,6 +403,13 @@ pub fn validate_benchmark_results(
             if score.unit.trim().is_empty() {
                 bail!(
                     "Benchmark run `{}` metric `{}` must have a non-empty unit",
+                    run.run_id,
+                    score.metric_id
+                );
+            }
+            if !score.value.is_finite() {
+                bail!(
+                    "Benchmark run `{}` metric `{}` must have a finite numeric value",
                     run.run_id,
                     score.metric_id
                 );
@@ -1228,6 +1241,48 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported status `new_failure_mode`"));
+    }
+
+    #[test]
+    fn rejects_empty_run_ids_during_validation() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "".into(),
+                status: "validation_only".into(),
+                summary: "Catalog validated".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 1.0,
+                    unit: "pass".into(),
+                }],
+            }],
+        };
+
+        let error = validate_benchmark_results(&catalog, &results).unwrap_err();
+        assert!(error.to_string().contains("non-empty run_id"));
+    }
+
+    #[test]
+    fn rejects_non_finite_score_values_during_validation() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "nan-run".into(),
+                status: "observed_failure".into(),
+                summary: "Runner failed with NaN score.".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: f64::NAN,
+                    unit: "ratio".into(),
+                }],
+            }],
+        };
+
+        let error = validate_benchmark_results(&catalog, &results).unwrap_err();
+        assert!(error.to_string().contains("finite numeric value"));
     }
 
     #[test]

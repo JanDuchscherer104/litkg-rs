@@ -8,7 +8,7 @@
 - sample results bundle: `examples/benchmarks/sample-results.toml`
 - validation entrypoint: `cargo run -p litkg-cli -- validate-benchmarks --catalog ... --results ...`
 - target rendering entrypoint: `cargo run -p litkg-cli -- render-autoresearch-target --catalog ... --results ... --target-id ...`
-- target render formats: `markdown`, `json`, and `github-issue`
+- target render formats: `markdown`, `issue` (alias `github-issue`), and `json`
 
 ## Included Benchmarks
 
