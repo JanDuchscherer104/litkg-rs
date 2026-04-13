@@ -53,7 +53,7 @@ id = "ISSUE-0007"
 title = "Add strict AGENTS, README, and REQUIREMENTS initialization templates for client repos"
 summary = "Create strict initialization templates influenced by aria-nbv and prml-vslam so downstream repos can bootstrap agent scaffolding consistently."
 priority = "high"
-status = "closed"
+status = "open"
 github_issue_number = 4
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/4"
 
@@ -80,7 +80,7 @@ id = "ISSUE-0010"
 title = "Add instruction-capture mode to generalize user guidance into agent scaffolding"
 summary = "Define a mode where subsequent user instructions are evaluated and promoted into root scaffolding, nested scaffolding, or skills as durable operational guidance."
 priority = "high"
-status = "closed"
+status = "open"
 github_issue_number = 7
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/7"
 
@@ -89,7 +89,7 @@ id = "ISSUE-0013"
 title = "Promote benchmark results into selectable autoresearch targets and GitHub issue sync"
 summary = "Extend the benchmark-result layer so validated result bundles can feed overnight autoresearch targets directly and sync issue-ready target proposals into GitHub once the repo has a real remote."
 priority = "high"
-status = "closed"
+status = "open"
 github_issue_number = 8
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/8"
 
@@ -112,19 +112,19 @@ github_issue_number = 10
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/10"
 
 [[issues]]
-id = "ISSUE-0014"
-title = "Document repo-scoped Codex skill and MCP setup"
-summary = "Add an operator-facing guide for repo-scoped Codex skills, optional `agents/openai.yaml` metadata, and the optional Graphiti/Neo4j MCP path."
-priority = "high"
-status = "closed"
-github_issue_number = 11
-github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/11"
-
-[[issues]]
-id = "ISSUE-0015"
-title = "Integrate and run the full benchmark catalog against the local stack"
-summary = "Turn the benchmark catalog into an executable integration layer that can inspect support and run every benchmark declared in the repo through normalized local adapters."
+id = "ISSUE-0016"
+title = "Add repo-independent graph enrichment overlay and edge schema"
+summary = "Move graph enrichment into a sink-independent Rust contract with typed enriched edges, provenance, and deterministic serialization instead of relying on live Neo4j-only helper writes."
 priority = "high"
 status = "open"
-github_issue_number = 12
-github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/12"
+github_issue_number = 17
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/17"
+
+[[issues]]
+id = "ISSUE-0017"
+title = "Add deterministic paper-to-paper topical edges from parsed literature text"
+summary = "Infer high-precision paper-to-paper topical links from parsed paper text with deterministic scoring, evidence, and export support in the Rust pipeline."
+priority = "high"
+status = "open"
+github_issue_number = 18
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/18"

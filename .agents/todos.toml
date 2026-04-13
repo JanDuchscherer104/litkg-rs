@@ -65,7 +65,7 @@ id = "TODO-0007"
 title = "Define instruction-capture routing rules for scaffold promotion"
 issue_ids = ["ISSUE-0010"]
 priority = "high"
-status = "done"
+status = "pending"
 loc_min = 80
 loc_expected = 160
 loc_max = 320
@@ -85,7 +85,7 @@ id = "TODO-0009"
 title = "Design strict repo bootstrap templates for AGENTS, README, and REQUIREMENTS"
 issue_ids = ["ISSUE-0007"]
 priority = "medium"
-status = "done"
+status = "pending"
 loc_min = 80
 loc_expected = 180
 loc_max = 360
@@ -95,7 +95,7 @@ id = "TODO-0012"
 title = "Define benchmark-result to autoresearch-target promotion and GitHub issue sync contract"
 issue_ids = ["ISSUE-0013", "ISSUE-0005"]
 priority = "high"
-status = "done"
+status = "pending"
 loc_min = 100
 loc_expected = 220
 loc_max = 440
@@ -121,31 +121,21 @@ loc_expected = 220
 loc_max = 420
 
 [[todos]]
-id = "TODO-0013"
-title = "Document Codex skill discovery and optional MCP setup for litkg-rs"
-issue_ids = ["ISSUE-0014"]
-priority = "medium"
-status = "done"
-loc_min = 80
-loc_expected = 180
-loc_max = 320
-
-[[todos]]
-id = "TODO-0014"
-title = "Implement initial native graph viewer MVP and inspect-graph CLI"
-issue_ids = ["ISSUE-0009"]
-priority = "high"
-status = "done"
-loc_min = 220
-loc_expected = 480
-loc_max = 900
-
-[[todos]]
 id = "TODO-0015"
-title = "Implement executable benchmark support and runner normalization for the full catalog"
-issue_ids = ["ISSUE-0015", "ISSUE-0013"]
+title = "Define sink-independent graph enrichment edge model and serialization contract"
+issue_ids = ["ISSUE-0016"]
 priority = "high"
 status = "pending"
-loc_min = 500
-loc_expected = 900
-loc_max = 1400
+loc_min = 120
+loc_expected = 220
+loc_max = 420
+
+[[todos]]
+id = "TODO-0016"
+title = "Implement deterministic paper-to-paper topical edge inference and export"
+issue_ids = ["ISSUE-0017", "ISSUE-0016"]
+priority = "high"
+status = "pending"
+loc_min = 140
+loc_expected = 260
+loc_max = 420

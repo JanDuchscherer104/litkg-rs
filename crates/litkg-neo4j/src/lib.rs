@@ -1,29 +1,22 @@
 use anyhow::{Context, Result};
-use litkg_core::{ParsedPaper, RepoConfig};
-use serde::{Deserialize, Serialize};
+use litkg_core::{infer_enriched_edges, ParsedPaper, RepoConfig};
+use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Neo4jNode {
-    pub id: String,
-    pub labels: Vec<String>,
-    pub properties: serde_json::Value,
+#[derive(Debug, Serialize)]
+struct Neo4jNode {
+    id: String,
+    labels: Vec<String>,
+    properties: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Neo4jEdge {
-    pub source: String,
-    pub target: String,
-    pub rel_type: String,
-    pub properties: serde_json::Value,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Neo4jExportBundle {
-    pub root: PathBuf,
-    pub nodes: Vec<Neo4jNode>,
-    pub edges: Vec<Neo4jEdge>,
+#[derive(Debug, Serialize)]
+struct Neo4jEdge {
+    source: String,
+    target: String,
+    rel_type: String,
+    properties: serde_json::Value,
 }
 
 pub struct Neo4jSink;
@@ -89,6 +82,19 @@ impl Neo4jSink {
             }
         }
 
+        for edge in infer_enriched_edges(papers) {
+            edges.push(Neo4jEdge {
+                source: format!("paper:{}", edge.source_paper_id),
+                target: format!("paper:{}", edge.target_paper_id),
+                rel_type: edge.edge_type.rel_type().into(),
+                properties: serde_json::json!({
+                    "score": edge.score,
+                    "strategy": edge.strategy.as_str(),
+                    "evidence": edge.evidence,
+                }),
+            });
+        }
+
         let nodes_path = out_dir.join("nodes.jsonl");
         let edges_path = out_dir.join("edges.jsonl");
         fs::write(&nodes_path, jsonl(&nodes)?)?;
@@ -97,47 +103,12 @@ impl Neo4jSink {
     }
 }
 
-pub fn load_export_bundle(root: impl AsRef<Path>) -> Result<Neo4jExportBundle> {
-    let root = root.as_ref();
-    let nodes_path = root.join("nodes.jsonl");
-    let edges_path = root.join("edges.jsonl");
-    Ok(Neo4jExportBundle {
-        root: root.to_path_buf(),
-        nodes: read_jsonl(&nodes_path)?,
-        edges: read_jsonl(&edges_path)?,
-    })
-}
-
 fn jsonl<T: Serialize>(items: &[T]) -> Result<String> {
     let mut lines = Vec::with_capacity(items.len());
     for item in items {
         lines.push(serde_json::to_string(item)?);
     }
     Ok(lines.join("\n") + "\n")
-}
-
-fn read_jsonl<T>(path: &Path) -> Result<Vec<T>>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let mut items = Vec::new();
-    for (line_number, line) in raw.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let item = serde_json::from_str(trimmed).with_context(|| {
-            format!(
-                "Failed to parse JSONL record {} from {}",
-                line_number + 1,
-                path.display()
-            )
-        })?;
-        items.push(item);
-    }
-    Ok(items)
 }
 
 #[cfg(test)]
@@ -195,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_export_bundle_from_jsonl() {
+    fn exports_similar_topic_edges() {
         let dir = tempfile::tempdir().unwrap();
         let config = RepoConfig {
             manifest_path: dir.path().join("sources.jsonl"),
@@ -211,37 +182,142 @@ mod tests {
             download_pdfs: false,
             relevance_tags: vec![],
         };
-        let papers = vec![ParsedPaper {
+        let papers = vec![
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "paper-a".into(),
+                    citation_key: Some("papera2026".into()),
+                    title: "Stereo visual odometry with bundle adjustment".into(),
+                    authors: vec![],
+                    year: Some("2026".into()),
+                    arxiv_id: None,
+                    doi: None,
+                    url: None,
+                    tex_dir: None,
+                    pdf_file: None,
+                    source_kind: SourceKind::ManifestAndBib,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: Some("Pose graph refinement for stereo visual odometry.".into()),
+                sections: vec![],
+                figures: vec![],
+                tables: vec![],
+                citations: vec![],
+                provenance: vec![],
+            },
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "paper-b".into(),
+                    citation_key: Some("paperb2026".into()),
+                    title: "Pose graph refinement for stereo odometry".into(),
+                    authors: vec![],
+                    year: Some("2026".into()),
+                    arxiv_id: None,
+                    doi: None,
+                    url: None,
+                    tex_dir: None,
+                    pdf_file: None,
+                    source_kind: SourceKind::ManifestAndBib,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: Some("Bundle adjustment improves stereo visual tracking.".into()),
+                sections: vec![],
+                figures: vec![],
+                tables: vec![],
+                citations: vec![],
+                provenance: vec![],
+            },
+        ];
+
+        Neo4jSink::export(&config, &papers).unwrap();
+        let edges = fs::read_to_string(config.neo4j_export_root().join("edges.jsonl")).unwrap();
+
+        assert!(edges.contains("\"rel_type\":\"SIMILAR_TOPIC\""));
+        assert!(edges.contains("\"strategy\":\"weighted_token_overlap\""));
+        assert!(edges.contains("\"source\":\"paper:paper-a\""));
+        assert!(edges.contains("\"target\":\"paper:paper-b\""));
+    }
+
+    #[test]
+    fn exports_resolved_citation_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = RepoConfig {
+            manifest_path: dir.path().join("sources.jsonl"),
+            bib_path: dir.path().join("references.bib"),
+            tex_root: dir.path().join("tex"),
+            pdf_root: dir.path().join("pdf"),
+            generated_docs_root: dir.path().join("generated"),
+            registry_path: None,
+            parsed_root: None,
+            neo4j_export_root: None,
+            sink: SinkMode::Neo4j,
+            graphify_rebuild_command: None,
+            download_pdfs: false,
+            relevance_tags: vec![],
+        };
+        let citing = ParsedPaper {
             metadata: PaperSourceRecord {
-                paper_id: "vista".into(),
-                citation_key: Some("zhang2026vistaslam".into()),
-                title: "ViSTA-SLAM".into(),
+                paper_id: "paper-a".into(),
+                citation_key: Some("papera2026".into()),
+                title: "Stereo visual odometry with bundle adjustment".into(),
                 authors: vec![],
                 year: Some("2026".into()),
-                arxiv_id: Some("2509.01584".into()),
+                arxiv_id: None,
                 doi: None,
                 url: None,
                 tex_dir: None,
                 pdf_file: None,
-                source_kind: SourceKind::Bib,
-                download_mode: DownloadMode::MetadataOnly,
-                has_local_tex: false,
+                source_kind: SourceKind::ManifestAndBib,
+                download_mode: DownloadMode::ManifestSource,
+                has_local_tex: true,
                 has_local_pdf: false,
-                parse_status: ParseStatus::MetadataOnly,
+                parse_status: ParseStatus::Parsed,
             },
-            abstract_text: None,
+            abstract_text: Some("Pose graph refinement for stereo visual odometry.".into()),
             sections: vec![],
             figures: vec![],
             tables: vec![],
-            citations: vec!["foo".into()],
+            citations: vec!["paperb2026".into()],
             provenance: vec![],
-        }];
+        };
+        let target = ParsedPaper {
+            metadata: PaperSourceRecord {
+                paper_id: "paper-b".into(),
+                citation_key: Some("paperb2026".into()),
+                title: "Pose graph refinement for stereo odometry".into(),
+                authors: vec![],
+                year: Some("2026".into()),
+                arxiv_id: None,
+                doi: None,
+                url: None,
+                tex_dir: None,
+                pdf_file: None,
+                source_kind: SourceKind::ManifestAndBib,
+                download_mode: DownloadMode::ManifestSource,
+                has_local_tex: true,
+                has_local_pdf: false,
+                parse_status: ParseStatus::Parsed,
+            },
+            abstract_text: Some("Bundle adjustment improves stereo visual tracking.".into()),
+            sections: vec![],
+            figures: vec![],
+            tables: vec![],
+            citations: vec![],
+            provenance: vec![],
+        };
 
-        Neo4jSink::export(&config, &papers).unwrap();
-        let bundle = load_export_bundle(config.neo4j_export_root()).unwrap();
-        assert_eq!(bundle.nodes.len(), 2);
-        assert_eq!(bundle.edges.len(), 1);
-        assert_eq!(bundle.nodes[0].labels, vec!["Paper".to_string()]);
-        assert_eq!(bundle.edges[0].rel_type, "CITES");
+        Neo4jSink::export(&config, &[citing, target]).unwrap();
+        let edges = fs::read_to_string(config.neo4j_export_root().join("edges.jsonl")).unwrap();
+
+        assert!(edges.contains("\"rel_type\":\"CITES_PAPER\""));
+        assert!(edges.contains("\"strategy\":\"exact_citation_key\""));
+        assert!(edges.contains("\"source\":\"paper:paper-a\""));
+        assert!(edges.contains("\"target\":\"paper:paper-b\""));
     }
 }
