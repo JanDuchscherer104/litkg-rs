@@ -1,0 +1,13 @@
+[package]
+name = "litkg-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+litkg-core = { path = "../litkg-core" }
+litkg-graphify = { path = "../litkg-graphify" }
+litkg-neo4j = { path = "../litkg-neo4j" }

@@ -1,0 +1,390 @@
+[[benchmarks]]
+id = "swe-bench-pro"
+name = "SWE-Bench Pro"
+best_use = "Top-line public benchmark for long-horizon software-engineering task resolution."
+task_scale = "1,865 tasks across 41 repositories, split into 731 public, 276 commercial, and 858 held-out tasks."
+summary = "Contamination-resistant successor to the older SWE-Bench family with enterprise-like, multi-file, long-horizon tasks."
+dataset_notes = [
+  "Primary public issue-resolution benchmark for KG-assisted coding agents.",
+  "Pass@1 is reported as resolve rate in the paper.",
+  "Commercial and held-out sets are not publicly released.",
+]
+tags = [
+  "issue-resolution",
+  "long-horizon",
+  "public-benchmark",
+  "contamination-resistant",
+]
+
+  [[benchmarks.metrics]]
+  id    = "pass_at_1"
+  label = "Pass@1"
+  notes = "Resolve rate under the benchmark scaffold."
+
+  [[benchmarks.metrics]]
+  id    = "failure_mode_analysis"
+  label = "Failure Mode Analysis"
+  notes = "LLM-as-judge trajectory bucket analysis used for diagnostic breakdowns."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2509.16941"
+
+[[benchmarks]]
+id = "swe-qa-pro"
+name = "SWE-QA-Pro"
+best_use = "Direct evaluation of repository-grounded QA and codebase exploration."
+task_scale = "260 questions from 26 long-tail repositories, with 4 to 9 questions per semantic cluster."
+summary = "Repository-level QA benchmark that filters out questions solvable without grounded codebase exploration."
+dataset_notes = [
+  "Python-only in the current release because repositories require executable sandboxes.",
+  "Answers are expected to cite file paths and line numbers.",
+  "Strongest public fit for a KG-backed repository QA skill.",
+]
+tags = ["repo-qa", "grounding", "navigation", "tool-use"]
+
+  [[benchmarks.metrics]]
+  id    = "correctness"
+  label = "Correctness"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "completeness"
+  label = "Completeness"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "relevance"
+  label = "Relevance"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "clarity"
+  label = "Clarity"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "reasoning_quality"
+  label = "Reasoning Quality"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2603.16124"
+
+  [[benchmarks.sources]]
+  label = "github"
+  url   = "https://github.com/TIGER-AI-Lab/SWE-QA-Pro"
+
+[[benchmarks]]
+id = "coderepoqa"
+name = "CodeRepoQA"
+best_use = "Large-scale multilingual, multi-turn software-engineering QA stress test."
+task_scale = "585,687 multi-turn QA entries from 30 repositories across 5 languages, averaging 6.62 turns per entry."
+summary = "Large repository QA benchmark built from GitHub issues and maintainer responses."
+dataset_notes = [
+  "Useful for scale and dialogue context testing.",
+  "Metrics are lexical overlap metrics rather than grounded execution or structured judging.",
+]
+tags = ["repo-qa", "multilingual", "multi-turn", "large-scale"]
+
+  [[benchmarks.metrics]]
+  id    = "bleu"
+  label = "BLEU"
+  notes = "N-gram precision with brevity penalty."
+
+  [[benchmarks.metrics]]
+  id    = "rouge_l"
+  label = "ROUGE-L"
+  notes = "Longest common subsequence overlap."
+
+  [[benchmarks.metrics]]
+  id    = "rouge_1"
+  label = "ROUGE-1"
+  notes = "Unigram overlap."
+
+  [[benchmarks.metrics]]
+  id    = "edit_similarity"
+  label = "Edit Similarity"
+  notes = "Edit-distance-oriented similarity score."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2412.14764"
+
+  [[benchmarks.sources]]
+  label = "github"
+  url   = "https://github.com/kinesiatricssxilm14/CodeRepoQA"
+
+[[benchmarks]]
+id = "stackrepoqa"
+name = "StackRepoQA"
+best_use = "Repository QA evaluation with explicit retrieval and contamination analysis."
+task_scale = "1,318 real developer question/answer pairs across 134 open-source Java projects."
+summary = "Repository-level question answering benchmark grounded in Stack Overflow questions mapped to Java repositories."
+dataset_notes = [
+  "Strong fit for testing graph-structured retrieval policies.",
+  "LLM-as-judge scoring is paired with post-cutoff contamination analysis.",
+]
+tags = ["repo-qa", "retrieval", "java", "contamination-analysis"]
+
+  [[benchmarks.metrics]]
+  id    = "correctness"
+  label = "Correctness"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "completeness"
+  label = "Completeness"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "faithfulness"
+  label = "Faithfulness"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.metrics]]
+  id    = "conciseness"
+  label = "Conciseness"
+  notes = "LLM-as-judge score from 1 to 10."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2603.26567"
+
+  [[benchmarks.sources]]
+  label = "doi"
+  url   = "https://doi.org/10.1145/3803846.3807467"
+
+[[benchmarks]]
+id = "reporeason"
+name = "RepoReason"
+best_use = "White-box diagnosis of repository-level reasoning failures."
+task_scale = "2,492 tasks across 7 repositories, stratified into Easy (1009), Medium (838), and Hard (645)."
+summary = "Execution-driven reasoning benchmark with dynamic slicing and interpretable cognitive metrics."
+dataset_notes = [
+  "Best public benchmark here for identifying whether KG retrieval lowers reading load or integration width.",
+  "Not an end-to-end patch benchmark.",
+]
+tags = ["reasoning", "white-box", "dynamic-slicing", "diagnostics"]
+
+  [[benchmarks.metrics]]
+  id    = "pass_at_1"
+  label = "Pass@1"
+  notes = "Task accuracy under the benchmark setup."
+
+  [[benchmarks.metrics]]
+  id    = "esv"
+  label = "Effective Sliced Volume"
+  notes = "Reading load over the causally relevant code volume."
+
+  [[benchmarks.metrics]]
+  id    = "mcl"
+  label = "Mutation Chain Length"
+  notes = "Simulation depth measured as dynamic state-update steps."
+
+  [[benchmarks.metrics]]
+  id    = "dfi"
+  label = "Dependency Fan-in"
+  notes = "Integration width measured as the number of independent upstream logical inputs."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2601.03731"
+
+[[benchmarks]]
+id = "race-bench"
+name = "RACE-bench"
+best_use = "Repository-level feature addition benchmark with intermediate reasoning ground truth."
+task_scale = "528 validated tasks from 12 repositories, plus a 100-task Lite subset."
+summary = "Dual-track benchmark that scores both final patch success and intermediate reasoning quality."
+dataset_notes = [
+  "Best public benchmark here for localization and decomposition quality.",
+  "Includes explicit metrics for files, tasks, and steps rather than only final patch correctness.",
+]
+tags = ["reasoning", "feature-addition", "localization", "planning"]
+
+  [[benchmarks.metrics]]
+  id    = "resolved_rate"
+  label = "Resolved Rate"
+  notes = "Patch correctness on the first attempt."
+
+  [[benchmarks.metrics]]
+  id    = "recall_at_concept"
+  label = "Recall@Concept"
+  notes = "Coverage of benchmark concepts explicitly explained by the agent."
+
+  [[benchmarks.metrics]]
+  id    = "accuracy_at_concept"
+  label = "Accuracy@Concept"
+  notes = "Semantic consistency of explained concepts."
+
+  [[benchmarks.metrics]]
+  id    = "recall_at_relevant_files"
+  label = "Recall@RelevantFiles"
+  notes = "Coverage of necessary files identified by the agent."
+
+  [[benchmarks.metrics]]
+  id    = "recall_at_specific_tasks"
+  label = "Recall@SpecificTasks"
+  notes = "Coverage of necessary implementation tasks."
+
+  [[benchmarks.metrics]]
+  id    = "recall_at_task_steps"
+  label = "Recall@TaskSteps"
+  notes = "Coverage of benchmark task steps."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2603.26337"
+
+[[benchmarks]]
+id = "swd-bench"
+name = "SWD-Bench"
+best_use = "Documentation-grounded repository understanding and functionality QA."
+task_scale = "4,170 entries across 3 functionality-driven QA tasks over 12 repository versions."
+summary = "Documentation evaluation benchmark that measures whether generated or curated docs support repository understanding."
+dataset_notes = [
+  "Best public fit when the KG spans code plus docs and internal project context.",
+  "Paper reports detailed model evaluation on a 480-entry sampled subset for cost reasons.",
+]
+tags = ["documentation", "repo-qa", "localization", "completion"]
+
+  [[benchmarks.metrics]]
+  id    = "b_acc"
+  label = "Balanced Accuracy"
+  notes = "Binary detection metric for functionality detection."
+
+  [[benchmarks.metrics]]
+  id    = "mcc"
+  label = "Matthews Correlation Coefficient"
+  notes = "Binary detection metric robust to class imbalance."
+
+  [[benchmarks.metrics]]
+  id    = "f1"
+  label = "F1"
+  notes = "Macro-averaged localization overlap score."
+
+  [[benchmarks.metrics]]
+  id    = "iou"
+  label = "Intersection over Union"
+  notes = "Localization overlap between predicted and reference file sets."
+
+  [[benchmarks.metrics]]
+  id    = "em"
+  label = "Thresholded Exact Match"
+  notes = "Completion metric over predicted technical details."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2604.06793"
+
+[[benchmarks]]
+id = "ccbench"
+name = "CCBench"
+best_use = "Contamination-resistant evaluation on small, messy, private-style codebases."
+task_scale = "About 180 tasks from private CodeCrafters user submissions, usually below 10k lines of code."
+summary = "Website benchmark emphasizing non-training-data tasks and realistic small private-style codebases."
+dataset_notes = [
+  "Useful sanity check when public open-source benchmarks feel too benchmark-maxed.",
+  "Published as a benchmark site rather than a full research harness with rich intermediate metrics.",
+]
+tags = [
+  "contamination-resistant",
+  "small-codebases",
+  "real-world",
+  "private-style",
+]
+
+  [[benchmarks.metrics]]
+  id    = "success_rate"
+  label = "Success Rate"
+  notes = "Task completion rate under the benchmark timeout and test runner."
+
+  [[benchmarks.sources]]
+  label = "benchmark-site"
+  url   = "https://ccbench.org/"
+
+[[benchmarks]]
+id = "terminal-bench"
+name = "Terminal-Bench"
+best_use = "Terminal-native agent evaluation for long-horizon CLI tasks."
+task_scale = "Terminal-Bench 2.0 contains 89 hard tasks across software engineering, machine learning, security, data science, and related terminal workflows."
+summary = "Benchmark for shell-driven agents where success depends on terminal actions rather than repo QA alone."
+dataset_notes = [
+  "Use when the KG sits inside a shell agent rather than only retrieval and synthesis.",
+  "Empirical difficulty bins are derived from model pass rates.",
+]
+tags = ["terminal", "agent", "long-horizon", "cli"]
+
+  [[benchmarks.metrics]]
+  id    = "task_resolution_rate"
+  label = "Task Resolution Rate"
+  notes = "Primary success metric, reported with 95 percent confidence intervals."
+
+  [[benchmarks.metrics]]
+  id    = "empirical_difficulty"
+  label = "Empirical Difficulty"
+  notes = "Difficulty bin based on frontier-model pass rate thresholds."
+
+  [[benchmarks.sources]]
+  label = "paper"
+  url   = "https://arxiv.org/abs/2601.11868"
+
+  [[benchmarks.sources]]
+  label = "benchmark-site"
+  url   = "https://www.tbench.ai/"
+
+[[autoresearch_components]]
+id = "retrieval_ablation"
+title = "Retrieval ablation and grounding"
+prompt_fragment = """
+Run a strict retrieval ablation on the selected benchmarks. Compare no retrieval, text-only retrieval, graph-only retrieval, and hybrid graph+text retrieval. Report file hit@k, evidence precision, grounding rate, and wrong-edge hallucination rate for each condition. Keep evaluation prompts and stop conditions identical across ablations.
+"""
+benchmark_ids = ["swe-qa-pro", "stackrepoqa", "reporeason", "swd-bench"]
+tags = ["retrieval", "ablation", "grounding"]
+
+[[autoresearch_components]]
+id = "reasoning_diagnostics"
+title = "Reasoning bottleneck analysis"
+prompt_fragment = """
+Focus on where reasoning fails rather than only whether final answers fail. Use RepoReason and RACE-bench to identify reading-load, simulation-depth, and integration-width bottlenecks. When possible, map failures to missed files, missed tasks, and missed task steps.
+"""
+benchmark_ids = ["reporeason", "race-bench"]
+tags = ["reasoning", "diagnostics", "localization"]
+
+[[autoresearch_components]]
+id = "docs_plus_code"
+title = "Docs-plus-code evaluation"
+prompt_fragment = """
+Measure whether adding authored documentation, README surfaces, and stable project memory improves repository understanding. Use SWD-Bench as the main public benchmark and report whether documentation helps detection, localization, and completion without reducing grounding fidelity.
+"""
+benchmark_ids = ["swd-bench", "swe-qa-pro"]
+tags = ["documentation", "context", "localization"]
+
+[[autoresearch_components]]
+id = "execution_gate"
+title = "End-to-end execution gate"
+prompt_fragment = """
+Use an execution-grounded benchmark as the release gate. Prefer SWE-Bench Pro for issue-resolution quality and Terminal-Bench when the evaluated system acts through a shell. Track latency, token cost, and the relationship between multi-file scope and success rate.
+"""
+benchmark_ids = ["swe-bench-pro", "terminal-bench", "ccbench"]
+tags = ["execution", "release-gate", "cost"]
+
+[[autoresearch_targets]]
+id = "kg_navigation_improvement"
+title = "KG navigation improvement"
+summary = "Improve repository grounding, localization, and evidence quality for the knowledge-graph stack."
+benchmark_ids = ["swe-qa-pro", "stackrepoqa", "reporeason", "swd-bench"]
+component_ids = [
+  "retrieval_ablation",
+  "reasoning_diagnostics",
+  "docs_plus_code",
+]
+
+[[autoresearch_targets]]
+id            = "kg_release_gate"
+title         = "KG release gate"
+summary       = "Use public and contamination-resistant execution benchmarks as a release gate for the stack."
+benchmark_ids = ["swe-bench-pro", "ccbench", "terminal-bench"]
+component_ids = ["execution_gate", "retrieval_ablation"]

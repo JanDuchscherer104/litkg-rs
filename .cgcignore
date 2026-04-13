@@ -1,0 +1,7 @@
+.agents/
+.cache/
+.data/
+docs/_site/
+out/
+target/
+tmp/

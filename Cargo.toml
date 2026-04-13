@@ -1,0 +1,27 @@
+[workspace]
+members = [
+  "crates/litkg-cli",
+  "crates/litkg-core",
+  "crates/litkg-graphify",
+  "crates/litkg-neo4j",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+rust-version = "1.84"
+version = "0.1.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "=4.5.23", features = ["derive"] }
+flate2 = "1.0"
+indexmap = "=2.2.6"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tar = "0.4"
+tempfile = "=3.14.0"
+toml = "=0.8.8"
+walkdir = "2.5"

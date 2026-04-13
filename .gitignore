@@ -1,0 +1,14 @@
+/target/
+/.idea/
+/.vscode/
+/.DS_Store
+/.env
+/.cache/
+/.data/
+/.tmp/
+__pycache__/
+*.py[cod]
+
+# Local output used by adapters/examples
+/out/
+/tmp/

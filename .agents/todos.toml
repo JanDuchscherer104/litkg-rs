@@ -1,0 +1,121 @@
+meta = { updated_on = "2026-04-13" }
+
+[[todos]]
+id = "TODO-0001"
+title = "Implement normalized registry merge"
+issue_ids = ["ISSUE-0002"]
+priority = "high"
+status = "done"
+loc_min = 120
+loc_expected = 220
+loc_max = 420
+
+[[todos]]
+id = "TODO-0002"
+title = "Implement arXiv downloader and safe extraction"
+issue_ids = ["ISSUE-0002"]
+priority = "high"
+status = "done"
+loc_min = 120
+loc_expected = 220
+loc_max = 420
+
+[[todos]]
+id = "TODO-0003"
+title = "Implement TeX parser and deterministic Markdown emitter"
+issue_ids = ["ISSUE-0004"]
+priority = "high"
+status = "done"
+loc_min = 180
+loc_expected = 320
+loc_max = 600
+
+[[todos]]
+id = "TODO-0004"
+title = "Implement graphify and Neo4j export adapters"
+issue_ids = ["ISSUE-0002", "ISSUE-0003"]
+priority = "medium"
+status = "done"
+loc_min = 120
+loc_expected = 260
+loc_max = 520
+
+[[todos]]
+id = "TODO-0005"
+title = "Define Auto Research target-function schema and overnight execution contract"
+issue_ids = ["ISSUE-0005"]
+priority = "high"
+status = "pending"
+loc_min = 120
+loc_expected = 220
+loc_max = 420
+
+[[todos]]
+id = "TODO-0006"
+title = "Define PR review fan-out contract and accepted-review feedback loop"
+issue_ids = ["ISSUE-0006", "ISSUE-0008"]
+priority = "high"
+status = "pending"
+loc_min = 120
+loc_expected = 240
+loc_max = 480
+
+[[todos]]
+id = "TODO-0007"
+title = "Define instruction-capture routing rules for scaffold promotion"
+issue_ids = ["ISSUE-0010"]
+priority = "high"
+status = "pending"
+loc_min = 80
+loc_expected = 160
+loc_max = 320
+
+[[todos]]
+id = "TODO-0008"
+title = "Define Apple Silicon native viewer requirements and crate shortlist"
+issue_ids = ["ISSUE-0009"]
+priority = "medium"
+status = "done"
+loc_min = 100
+loc_expected = 200
+loc_max = 420
+
+[[todos]]
+id = "TODO-0009"
+title = "Design strict repo bootstrap templates for AGENTS, README, and REQUIREMENTS"
+issue_ids = ["ISSUE-0007"]
+priority = "medium"
+status = "pending"
+loc_min = 80
+loc_expected = 180
+loc_max = 360
+
+[[todos]]
+id = "TODO-0012"
+title = "Define benchmark-result to autoresearch-target promotion and GitHub issue sync contract"
+issue_ids = ["ISSUE-0013", "ISSUE-0005"]
+priority = "high"
+status = "pending"
+loc_min = 100
+loc_expected = 220
+loc_max = 440
+
+[[todos]]
+id = "TODO-0010"
+title = "Define graph visualization inspection checklist and review loop"
+issue_ids = ["ISSUE-0011", "ISSUE-0008"]
+priority = "high"
+status = "pending"
+loc_min = 80
+loc_expected = 180
+loc_max = 360
+
+[[todos]]
+id = "TODO-0011"
+title = "Design local Ollama query flow using embeddings and Gemma"
+issue_ids = ["ISSUE-0012", "ISSUE-0003"]
+priority = "high"
+status = "pending"
+loc_min = 100
+loc_expected = 220
+loc_max = 420

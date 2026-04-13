@@ -1,0 +1,12 @@
+manifest_path = "/Users/jd/repos/prml-vslam/docs/literature/tex-src/sources.jsonl"
+bib_path = "/Users/jd/repos/prml-vslam/docs/references.bib"
+tex_root = "/Users/jd/repos/prml-vslam/docs/literature/tex-src"
+pdf_root = "/Users/jd/repos/prml-vslam/docs/literature/pdf"
+generated_docs_root = "/Users/jd/repos/prml-vslam/docs/literature/generated"
+registry_path = "/Users/jd/repos/prml-vslam/docs/literature/generated/registry.jsonl"
+parsed_root = "/Users/jd/repos/prml-vslam/docs/literature/generated/parsed"
+neo4j_export_root = "/Users/jd/repos/prml-vslam/docs/literature/generated/neo4j-export"
+sink = "graphify"
+graphify_rebuild_command = "/Users/jd/repos/prml-vslam/.venv/bin/python -c \"from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('/Users/jd/repos/prml-vslam'))\""
+download_pdfs = true
+relevance_tags = ["ViSTA-SLAM", "MASt3R-SLAM", "DROID-SLAM", "ADVIO", "COLMAP", "Open3D", "evo"]

@@ -1,0 +1,56 @@
+[[runs]]
+benchmark_id = "swe-qa-pro"
+run_id = "catalog-validation-smoke"
+status = "validation_only"
+summary = "Smoke result used to validate the benchmark schema and autoresearch-target plumbing before integrating external benchmark harnesses."
+
+  [[runs.scores]]
+  metric_id = "correctness"
+  value = 1.0
+  unit = "pass"
+
+  [[runs.scores]]
+  metric_id = "completeness"
+  value = 1.0
+  unit = "pass"
+
+  [[runs.scores]]
+  metric_id = "relevance"
+  value = 1.0
+  unit = "pass"
+
+  [[runs.scores]]
+  metric_id = "clarity"
+  value = 1.0
+  unit = "pass"
+
+  [[runs.scores]]
+  metric_id = "reasoning_quality"
+  value = 1.0
+  unit = "pass"
+
+[[runs]]
+benchmark_id = "reporeason"
+run_id = "diagnostic-schema-smoke"
+status = "validation_only"
+summary = "Schema-level smoke result confirming that white-box reasoning metrics can be attached to autoresearch targets."
+
+  [[runs.scores]]
+  metric_id = "pass_at_1"
+  value = 1.0
+  unit = "pass"
+
+  [[runs.scores]]
+  metric_id = "esv"
+  value = 1.0
+  unit = "validated"
+
+  [[runs.scores]]
+  metric_id = "mcl"
+  value = 1.0
+  unit = "validated"
+
+  [[runs.scores]]
+  metric_id = "dfi"
+  value = 1.0
+  unit = "validated"

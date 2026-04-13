@@ -1,0 +1,92 @@
+meta = { updated_on = "2026-04-13" }
+
+[[issues]]
+id = "ISSUE-0001"
+title = "Evaluate Memory-Palace-MCP as an MCP-native comparison target"
+summary = "Assess zeyynepkaraduman/Memory-Palace-MCP for MCP-native memory UX, extension points, and issue-tracker comparisons against litgraph-rs."
+priority = "medium"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0002"
+title = "Design graphify adapter contract"
+summary = "Define the file layout, determinism rules, and rebuild boundary for graphify-oriented corpus output."
+priority = "high"
+status = "closed"
+
+[[issues]]
+id = "ISSUE-0003"
+title = "Design optional Neo4j and MCP export contract"
+summary = "Define a stable export bundle for Neo4j/MCP without making Neo4j the primary graph path for client repos."
+priority = "medium"
+status = "closed"
+
+[[issues]]
+id = "ISSUE-0004"
+title = "Define TeX parser limits and math fallback policy"
+summary = "Make the parser explicit about how it handles root discovery, included files, captions, citations, and math-heavy regions."
+priority = "high"
+status = "closed"
+
+[[issues]]
+id = "ISSUE-0005"
+title = "Add native Auto Research mode optimized for Codex overnight execution"
+summary = "Design a native Auto Research capability that can run throughout the night in Codex with target functions, stop conditions, review gates, and resumable state."
+priority = "critical"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0006"
+title = "Add sub-agent PR review fan-out and review aggregation loop"
+summary = "Trigger sub-agent code review on every pull request, aggregate findings, and feed accepted changes back into the main execution loop."
+priority = "critical"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0007"
+title = "Add strict AGENTS, README, and REQUIREMENTS initialization templates for client repos"
+summary = "Create strict initialization templates influenced by aria-nbv and prml-vslam so downstream repos can bootstrap agent scaffolding consistently."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0008"
+title = "Add Codex UI-assisted review loop for visual outputs"
+summary = "Create a review loop that lets Codex agents inspect human-relevant visual outputs through UI/CUA surfaces and propose improvements."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0009"
+title = "Add a native Rust viewer and exploration tool optimized for Apple Silicon"
+summary = "Design and integrate a high-performance local viewer for graph and embedding exploration, prioritizing Apple Silicon-native performance and UX."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0010"
+title = "Add instruction-capture mode to generalize user guidance into agent scaffolding"
+summary = "Define a mode where subsequent user instructions are evaluated and promoted into root scaffolding, nested scaffolding, or skills as durable operational guidance."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0013"
+title = "Promote benchmark results into selectable autoresearch targets and GitHub issue sync"
+summary = "Extend the benchmark-result layer so validated result bundles can feed overnight autoresearch targets directly and sync issue-ready target proposals into GitHub once the repo has a real remote."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0011"
+title = "Add visual inspection workflow for graph visualization quality"
+summary = "Review the graph visualization itself as a first-class product surface, inspect layouts and visual outputs, and use that feedback to improve graph exploration quality."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0012"
+title = "Add easy local query path powered by Ollama embeddings or Gemma"
+summary = "Support simple local semantic querying over the KG using Ollama-hosted embeddings and Gemma-class local models without requiring remote services."
+priority = "high"
+status = "open"
