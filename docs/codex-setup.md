@@ -12,16 +12,22 @@ Current repo skills:
 - `gh-issue-lifecycle`: GitHub issue creation, sync, and resolution workflow
 - `code-review-litkg-rs`: working-tree, PR, and autoresearch review gate
 - `autoresearch-litkg-rs`: bounded benchmark-driven research loop
+- `create-pr`: structured pull request authoring and update workflow
+
+The main repo skill remains `litkg-rs`. The other skills are narrower helpers that should not replace the main repo skill as the primary entrypoint.
 
 Optional skill metadata lives in `agents/openai.yaml` inside an individual skill directory.
 
-Use plain `SKILL.md` when the instructions are enough by themselves. Add `agents/openai.yaml` when you want a clearer display name, a short launcher description, a default prompt, or explicit dependency hints in Codex. In this repo, `litkg-rs` stays instruction-only because it mainly provides grounding, while `autoresearch-litkg-rs`, `code-review-litkg-rs`, and `gh-issue-lifecycle` already carry `agents/openai.yaml` metadata for smoother invocation.
+Use plain `SKILL.md` when the instructions are enough by themselves. Add `agents/openai.yaml` when you want a clearer display name, a short launcher description, a default prompt, or explicit dependency hints in Codex. In this repo, `litkg-rs` stays instruction-only because it mainly provides grounding, while `autoresearch-litkg-rs`, `code-review-litkg-rs`, `gh-issue-lifecycle`, and `create-pr` can carry UI metadata for smoother invocation.
 
 ## Verify Skill Discovery
 
 1. Open the repo from the repository root so `AGENTS.md` and `.agents/skills/` are in scope.
-2. Ask Codex to summarize the repo instructions or invoke one of the explicit skills, for example `Use $litkg-rs to inspect the current workspace.`
-3. Confirm that Codex can name the four repo skills above without extra setup.
+2. Ask Codex to summarize the repo instructions or invoke the main skill, for example `Use $litkg-rs to inspect the current workspace.`
+3. Optionally verify the PR helper with `Use $create-pr to draft a PR body for a docs-only change in litkg-rs.`
+4. Confirm that Codex can name the repo skills above without extra setup.
+
+If a newly added or edited repo skill does not appear, restart Codex from the repo root. Codex usually detects skill changes automatically, but restart is the practical recovery path when the session still shows stale metadata.
 
 ## Optional MCP Path For The Local KG Stack
 
@@ -52,6 +58,8 @@ command = "bash"
 args = ["-lc", "cd \"$(git rev-parse --show-toplevel)\" && ./scripts/kg/start_graphiti.sh stdio"]
 env_vars = ["OPENAI_API_KEY"]
 startup_timeout_sec = 30
+tool_timeout_sec = 120
+required = false
 ```
 
 This keeps the repo command concrete while resolving the current checkout root at runtime. `./scripts/kg/start_graphiti.sh` reads `.env` first and falls back to `.env.example`, so the repo defaults from the active checkout are used automatically.
@@ -92,3 +100,10 @@ That uses the same repo script and default environment flow as the project-scope
 - `.agents/skills/gh-issue-lifecycle/SKILL.md`
 - `.agents/skills/code-review-litkg-rs/SKILL.md`
 - `.agents/skills/autoresearch-litkg-rs/SKILL.md`
+- `.agents/skills/create-pr/SKILL.md`
+
+## Sources
+
+- [Agent Skills – Codex](https://developers.openai.com/codex/skills)
+- [Model Context Protocol – Codex](https://developers.openai.com/codex/mcp)
+- [Custom instructions with AGENTS.md – Codex](https://developers.openai.com/codex/guides/agents-md)
