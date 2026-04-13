@@ -111,6 +111,27 @@ cargo run -p litkg-cli -- run-benchmarks \
   --output /abs/path/to/results.toml
 ```
 
+The run-plan TOML must contain one or more `[[runs]]` entries with this shape:
+
+```toml
+[[runs]]
+benchmark_id = "swe-qa-pro"
+run_id = "swe-qa-pro-local"
+command = "python3 path/to/evaluator.py"
+workdir = "/abs/path/to/evaluator-checkout"
+
+[runs.env]
+OPENAI_API_KEY = "env-or-token"
+```
+
+Fields:
+
+- `benchmark_id`: catalog benchmark id to run
+- `run_id`: stable unique identifier for the normalized run
+- `command`: shell command invoked through `sh -c`
+- `workdir`: optional working directory for the command
+- `env`: optional environment map injected into the process
+
 ## Auto Research Target Composition
 
 Autoresearch targets are assembled from reusable components stored in the same benchmark catalog. Each target chooses a default benchmark subset and a default ordered component list, but the CLI also allows overriding those selections.
