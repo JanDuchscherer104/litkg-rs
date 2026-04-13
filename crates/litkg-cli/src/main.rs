@@ -4,8 +4,9 @@ use litkg_core::{
     build_registry_snapshot, compute_corpus_stats, download_registry_sources, inspect_paper,
     load_parsed_papers, load_registry, parse_registry_papers, search_papers, sync_registry,
     validate_benchmark_catalog, validate_benchmark_results, write_parsed_papers,
-    AutoResearchRenderFormat, BenchmarkResults, CorpusStats, DownloadOptions, PaperInspection,
-    PaperSourceRecord, RepoConfig, SearchResults, SinkMode,
+    AutoResearchRenderFormat, BenchmarkResults, CorpusStats, DownloadMode, DownloadOptions,
+    PaperInspection, PaperSourceRecord, ParseStatus, ParsedPaper, RepoConfig, SearchResults,
+    SinkMode, SourceKind,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
@@ -219,8 +220,8 @@ fn main() -> Result<()> {
         }
         Commands::Stats(args) => {
             let config = RepoConfig::load(&args.config.config)?;
-            let registry = load_registry_or_sync(&config)?;
             let papers = load_parsed_papers(config.parsed_root())?;
+            let registry = load_registry_or_sync(&config, &papers)?;
             let stats = compute_corpus_stats(&registry, &papers);
             print_structured_output(&stats, args.format, render_stats)?;
         }
@@ -229,8 +230,8 @@ fn main() -> Result<()> {
                 anyhow::bail!("--limit must be at least 1");
             }
             let config = RepoConfig::load(&args.config.config)?;
-            let registry = load_registry_or_sync(&config)?;
             let papers = load_parsed_papers(config.parsed_root())?;
+            let registry = load_registry_or_sync(&config, &papers)?;
             let hits = search_papers(
                 &registry,
                 &papers,
@@ -242,8 +243,8 @@ fn main() -> Result<()> {
         }
         Commands::ShowPaper(args) => {
             let config = RepoConfig::load(&args.config.config)?;
-            let registry = load_registry_or_sync(&config)?;
             let papers = load_parsed_papers(config.parsed_root())?;
+            let registry = load_registry_or_sync(&config, &papers)?;
             let inspection = inspect_paper(&config, &registry, &papers, &args.paper_selector)?;
             print_structured_output(&inspection, args.format, render_paper_inspection)?;
         }
@@ -329,11 +330,90 @@ fn materialize(config: &RepoConfig, papers: &[litkg_core::ParsedPaper]) -> Resul
     Ok(())
 }
 
-fn load_registry_or_sync(config: &RepoConfig) -> Result<Vec<PaperSourceRecord>> {
+fn load_registry_or_sync(
+    config: &RepoConfig,
+    parsed_papers: &[ParsedPaper],
+) -> Result<Vec<PaperSourceRecord>> {
     if config.registry_path().exists() {
         load_registry(config.registry_path())
     } else {
-        build_registry_snapshot(config)
+        Ok(hydrate_snapshot_records(
+            build_registry_snapshot(config)?,
+            parsed_papers,
+        ))
+    }
+}
+
+fn hydrate_snapshot_records(
+    registry: Vec<PaperSourceRecord>,
+    parsed_papers: &[ParsedPaper],
+) -> Vec<PaperSourceRecord> {
+    let parsed_by_id: std::collections::BTreeMap<&str, &ParsedPaper> = parsed_papers
+        .iter()
+        .map(|paper| (paper.metadata.paper_id.as_str(), paper))
+        .collect();
+
+    registry
+        .into_iter()
+        .map(|record| match parsed_by_id.get(record.paper_id.as_str()) {
+            Some(paper) => {
+                let mut merged = record;
+                if parsed_artifact_is_structured(paper) {
+                    merged.title = paper.metadata.title.clone();
+                    merged.parse_status = ParseStatus::Parsed;
+                }
+                merged.citation_key = merged
+                    .citation_key
+                    .or_else(|| paper.metadata.citation_key.clone());
+                if merged.authors.is_empty() && !paper.metadata.authors.is_empty() {
+                    merged.authors = paper.metadata.authors.clone();
+                }
+                merged.year = merged.year.or_else(|| paper.metadata.year.clone());
+                merged.arxiv_id = merged.arxiv_id.or_else(|| paper.metadata.arxiv_id.clone());
+                merged.doi = merged.doi.or_else(|| paper.metadata.doi.clone());
+                merged.url = merged.url.or_else(|| paper.metadata.url.clone());
+                merged.tex_dir = merged.tex_dir.or_else(|| paper.metadata.tex_dir.clone());
+                merged.pdf_file = merged.pdf_file.or_else(|| paper.metadata.pdf_file.clone());
+                merged.source_kind =
+                    richer_source_kind(merged.source_kind, paper.metadata.source_kind.clone());
+                merged.download_mode = richer_download_mode(
+                    merged.download_mode,
+                    paper.metadata.download_mode.clone(),
+                );
+                merged.has_local_tex = merged.has_local_tex || paper.metadata.has_local_tex;
+                merged.has_local_pdf = merged.has_local_pdf || paper.metadata.has_local_pdf;
+                merged
+            }
+            None => record,
+        })
+        .collect()
+}
+
+fn parsed_artifact_is_structured(paper: &ParsedPaper) -> bool {
+    paper.metadata.parse_status == ParseStatus::Parsed
+        || paper.abstract_text.is_some()
+        || !paper.sections.is_empty()
+        || !paper.figures.is_empty()
+        || !paper.tables.is_empty()
+        || !paper.citations.is_empty()
+        || !paper.provenance.is_empty()
+}
+
+fn richer_source_kind(current: SourceKind, parsed: SourceKind) -> SourceKind {
+    use SourceKind::{Bib, Manifest, ManifestAndBib};
+    match (current, parsed) {
+        (ManifestAndBib, _) | (_, ManifestAndBib) => ManifestAndBib,
+        (Manifest, _) | (_, Manifest) => Manifest,
+        (Bib, Bib) => Bib,
+    }
+}
+
+fn richer_download_mode(current: DownloadMode, parsed: DownloadMode) -> DownloadMode {
+    use DownloadMode::{ManifestSource, ManifestSourcePlusPdf, MetadataOnly};
+    match (current, parsed) {
+        (ManifestSourcePlusPdf, _) | (_, ManifestSourcePlusPdf) => ManifestSourcePlusPdf,
+        (ManifestSource, _) | (_, ManifestSource) => ManifestSource,
+        (MetadataOnly, MetadataOnly) => MetadataOnly,
     }
 }
 

@@ -526,6 +526,16 @@ fn normalize_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn has_structured_parsed_content(paper: &ParsedPaper) -> bool {
+    paper.metadata.parse_status == ParseStatus::Parsed
+        || paper.abstract_text.is_some()
+        || !paper.sections.is_empty()
+        || !paper.figures.is_empty()
+        || !paper.tables.is_empty()
+        || !paper.citations.is_empty()
+        || !paper.provenance.is_empty()
+}
+
 fn effective_registry_records(
     registry: &[PaperSourceRecord],
     parsed_papers: &[ParsedPaper],
@@ -540,8 +550,10 @@ fn effective_registry_records(
         .map(|record| match parsed_by_id.get(record.paper_id.as_str()) {
             Some(paper) => {
                 let mut merged = record.clone();
-                merged.title = paper.metadata.title.clone();
-                merged.parse_status = paper.metadata.parse_status.clone();
+                if has_structured_parsed_content(paper) {
+                    merged.title = paper.metadata.title.clone();
+                    merged.parse_status = ParseStatus::Parsed;
+                }
                 merged
             }
             None => record.clone(),

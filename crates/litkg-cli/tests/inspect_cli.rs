@@ -308,6 +308,8 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
         .clone();
     let search_json: Value = serde_json::from_slice(&search_output).unwrap();
     assert_eq!(search_json["hits"][0]["parse_status"], "Parsed");
+    assert_eq!(search_json["hits"][0]["has_local_tex"], true);
+    assert_eq!(search_json["hits"][0]["has_local_pdf"], true);
 
     let show_output = Command::cargo_bin("litkg-cli")
         .unwrap()
@@ -316,7 +318,7 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
             "--config",
             config_path.to_str().unwrap(),
             "--paper",
-            "Parsed Demo Paper",
+            "2501.12345",
             "--format",
             "json",
         ])
@@ -327,6 +329,13 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
         .clone();
     let show_json: Value = serde_json::from_slice(&show_output).unwrap();
     assert_eq!(show_json["metadata"]["parse_status"], "Parsed");
+    assert_eq!(show_json["metadata"]["source_kind"], "ManifestAndBib");
+    assert_eq!(
+        show_json["metadata"]["download_mode"],
+        "ManifestSourcePlusPdf"
+    );
+    assert_eq!(show_json["metadata"]["has_local_tex"], true);
+    assert_eq!(show_json["metadata"]["has_local_pdf"], true);
 }
 
 #[test]
