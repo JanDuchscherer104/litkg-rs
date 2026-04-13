@@ -560,46 +560,94 @@ fn matched_parsed_papers<'a>(
     registry: &[PaperSourceRecord],
     parsed_papers: &'a [ParsedPaper],
 ) -> BTreeMap<String, &'a ParsedPaper> {
-    let parsed_by_id: BTreeMap<&str, &ParsedPaper> = parsed_papers
-        .iter()
-        .map(|paper| (paper.metadata.paper_id.as_str(), paper))
-        .collect();
-    let parsed_by_citation: BTreeMap<&str, &ParsedPaper> = parsed_papers
-        .iter()
-        .filter_map(|paper| {
-            paper
-                .metadata
-                .citation_key
-                .as_deref()
-                .map(|key| (key, paper))
-        })
-        .collect();
-    let parsed_by_arxiv: BTreeMap<&str, &ParsedPaper> = parsed_papers
-        .iter()
-        .filter_map(|paper| paper.metadata.arxiv_id.as_deref().map(|id| (id, paper)))
-        .collect();
-
     registry
         .iter()
         .filter_map(|record| {
-            let paper = parsed_by_id
-                .get(record.paper_id.as_str())
-                .copied()
-                .or_else(|| {
-                    record
-                        .citation_key
-                        .as_deref()
-                        .and_then(|key| parsed_by_citation.get(key).copied())
-                })
-                .or_else(|| {
-                    record
-                        .arxiv_id
-                        .as_deref()
-                        .and_then(|id| parsed_by_arxiv.get(id).copied())
-                })?;
+            let paper = select_best_parsed_match(record, parsed_papers)?;
             Some((record.paper_id.clone(), paper))
         })
         .collect()
+}
+
+fn select_best_parsed_match<'a>(
+    record: &PaperSourceRecord,
+    parsed_papers: &'a [ParsedPaper],
+) -> Option<&'a ParsedPaper> {
+    let mut best: Option<(&ParsedPaper, ParsedMatchScore)> = None;
+    let mut ambiguous = false;
+
+    for paper in parsed_papers {
+        let Some(score) = parsed_match_score(record, paper) else {
+            continue;
+        };
+
+        match best {
+            None => {
+                best = Some((paper, score));
+                ambiguous = false;
+            }
+            Some((best_paper, best_score)) => {
+                if score > best_score {
+                    best = Some((paper, score));
+                    ambiguous = false;
+                } else if score == best_score
+                    && paper.metadata.paper_id != best_paper.metadata.paper_id
+                {
+                    ambiguous = true;
+                }
+            }
+        }
+    }
+
+    if ambiguous {
+        None
+    } else {
+        best.map(|(paper, _)| paper)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct ParsedMatchScore {
+    structured: u8,
+    richness: usize,
+    exact_paper_id: u8,
+    exact_citation: u8,
+    exact_arxiv: u8,
+}
+
+fn parsed_match_score(record: &PaperSourceRecord, paper: &ParsedPaper) -> Option<ParsedMatchScore> {
+    let exact_paper_id = u8::from(paper.metadata.paper_id == record.paper_id);
+    let exact_citation = u8::from(
+        record.citation_key.is_some()
+            && paper.metadata.citation_key.is_some()
+            && record.citation_key == paper.metadata.citation_key,
+    );
+    let exact_arxiv = u8::from(
+        record.arxiv_id.is_some()
+            && paper.metadata.arxiv_id.is_some()
+            && record.arxiv_id == paper.metadata.arxiv_id,
+    );
+
+    if exact_paper_id == 0 && exact_citation == 0 && exact_arxiv == 0 {
+        return None;
+    }
+
+    Some(ParsedMatchScore {
+        structured: u8::from(has_structured_parsed_content(paper)),
+        richness: parsed_content_richness(paper),
+        exact_paper_id,
+        exact_citation,
+        exact_arxiv,
+    })
+}
+
+fn parsed_content_richness(paper: &ParsedPaper) -> usize {
+    usize::from(paper.abstract_text.is_some())
+        + paper.sections.len()
+        + paper.figures.len()
+        + paper.tables.len()
+        + paper.citations.len()
+        + paper.provenance.len()
 }
 
 fn unique_parsed_papers<'a>(papers: Vec<&'a ParsedPaper>) -> Vec<&'a ParsedPaper> {
@@ -935,6 +983,170 @@ mod tests {
         assert_eq!(results.hits[0].parse_status, ParseStatus::Parsed);
         assert!(results.hits[0].has_local_tex);
         assert!(results.hits[0].has_local_pdf);
+    }
+
+    #[test]
+    fn stable_identifier_match_beats_stale_exact_id_sidecar() {
+        let registry = vec![PaperSourceRecord {
+            paper_id: "arxiv-2601-00001".into(),
+            citation_key: None,
+            title: "Current Manifest Paper".into(),
+            authors: vec![],
+            year: None,
+            arxiv_id: Some("2601.00001".into()),
+            doi: None,
+            url: None,
+            tex_dir: Some("paper-tex".into()),
+            pdf_file: None,
+            source_kind: SourceKind::Manifest,
+            download_mode: DownloadMode::ManifestSource,
+            has_local_tex: true,
+            has_local_pdf: false,
+            parse_status: ParseStatus::Downloaded,
+        }];
+        let parsed = vec![
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "arxiv-2601-00001".into(),
+                    citation_key: None,
+                    title: "Stale Metadata".into(),
+                    authors: vec![],
+                    year: None,
+                    arxiv_id: Some("2601.00001".into()),
+                    doi: None,
+                    url: None,
+                    tex_dir: Some("paper-tex".into()),
+                    pdf_file: None,
+                    source_kind: SourceKind::Manifest,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::MetadataOnly,
+                },
+                abstract_text: None,
+                sections: vec![],
+                figures: vec![],
+                tables: vec![],
+                citations: vec![],
+                provenance: vec![],
+            },
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "old2024paper".into(),
+                    citation_key: Some("old2024paper".into()),
+                    title: "Parsed Paper".into(),
+                    authors: vec!["Old Author".into()],
+                    year: Some("2024".into()),
+                    arxiv_id: Some("2601.00001".into()),
+                    doi: None,
+                    url: None,
+                    tex_dir: Some("paper-tex".into()),
+                    pdf_file: Some("stale.pdf".into()),
+                    source_kind: SourceKind::ManifestAndBib,
+                    download_mode: DownloadMode::ManifestSourcePlusPdf,
+                    has_local_tex: true,
+                    has_local_pdf: true,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: Some("stale parsed abstract".into()),
+                sections: vec![PaperSection {
+                    level: 1,
+                    title: "Parsed Section".into(),
+                    content: "content".into(),
+                }],
+                figures: vec![],
+                tables: vec![],
+                citations: vec![],
+                provenance: vec!["paper-tex/main.tex".into()],
+            },
+        ];
+
+        let results = search_papers(&registry, &parsed, &[], "Parsed Paper", 10).unwrap();
+        assert_eq!(results.hits[0].title, "Parsed Paper");
+        assert_eq!(results.hits[0].parse_status, ParseStatus::Parsed);
+    }
+
+    #[test]
+    fn ambiguous_stable_identifier_matches_are_ignored() {
+        let registry = vec![PaperSourceRecord {
+            paper_id: "arxiv-2601-00001".into(),
+            citation_key: None,
+            title: "Current Manifest Paper".into(),
+            authors: vec![],
+            year: None,
+            arxiv_id: Some("2601.00001".into()),
+            doi: None,
+            url: None,
+            tex_dir: Some("paper-tex".into()),
+            pdf_file: None,
+            source_kind: SourceKind::Manifest,
+            download_mode: DownloadMode::ManifestSource,
+            has_local_tex: true,
+            has_local_pdf: false,
+            parse_status: ParseStatus::Downloaded,
+        }];
+        let parsed = vec![
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "old-a".into(),
+                    citation_key: Some("old-a".into()),
+                    title: "Parsed A".into(),
+                    authors: vec![],
+                    year: None,
+                    arxiv_id: Some("2601.00001".into()),
+                    doi: None,
+                    url: None,
+                    tex_dir: Some("paper-tex".into()),
+                    pdf_file: None,
+                    source_kind: SourceKind::Manifest,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: Some("A".into()),
+                sections: vec![PaperSection {
+                    level: 1,
+                    title: "Section".into(),
+                    content: "A".into(),
+                }],
+                figures: vec![],
+                tables: vec![],
+                citations: vec![],
+                provenance: vec!["a.tex".into()],
+            },
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "old-b".into(),
+                    citation_key: Some("old-b".into()),
+                    title: "Parsed B".into(),
+                    authors: vec![],
+                    year: None,
+                    arxiv_id: Some("2601.00001".into()),
+                    doi: None,
+                    url: None,
+                    tex_dir: Some("paper-tex".into()),
+                    pdf_file: None,
+                    source_kind: SourceKind::Manifest,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: Some("B".into()),
+                sections: vec![PaperSection {
+                    level: 1,
+                    title: "Section".into(),
+                    content: "B".into(),
+                }],
+                figures: vec![],
+                tables: vec![],
+                citations: vec![],
+                provenance: vec!["b.tex".into()],
+            },
+        ];
+
+        assert!(matched_parsed_papers(&registry, &parsed).is_empty());
     }
 
     #[test]
