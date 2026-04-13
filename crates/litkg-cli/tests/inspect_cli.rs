@@ -16,15 +16,25 @@ fn write_test_config(root: &Path) -> PathBuf {
     let parsed_root = generated_docs_root.join("parsed");
     let registry_path = generated_docs_root.join("registry.jsonl");
 
-    fs::create_dir_all(&tex_root).unwrap();
+    fs::create_dir_all(tex_root.join("demo-tex")).unwrap();
     fs::create_dir_all(&pdf_root).unwrap();
     fs::create_dir_all(&generated_docs_root).unwrap();
-    fs::write(&manifest_path, "").unwrap();
     fs::write(
-        &bib_path,
-        "@article{demo2025paper,\n  title = {Bib Demo Paper},\n  author = {Dana Demo},\n  year = {2025}\n}\n",
+        &manifest_path,
+        "{\"title\":\"Manifest Demo Paper\",\"arxiv_id\":\"2501.12345\",\"tex_dir\":\"demo-tex\",\"pdf_file\":\"demo-paper.pdf\"}\n",
     )
     .unwrap();
+    fs::write(
+        &bib_path,
+        "@article{demo2025paper,\n  title = {Bib Demo Paper},\n  author = {Dana Demo},\n  year = {2025},\n  eprint = {2501.12345}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        tex_root.join("demo-tex").join("main.tex"),
+        "\\title{Parsed Demo Paper}",
+    )
+    .unwrap();
+    fs::write(pdf_root.join("demo-paper.pdf"), b"pdf").unwrap();
 
     let registry = vec![PaperSourceRecord {
         paper_id: "demo2025paper".into(),
@@ -154,6 +164,93 @@ relevance_tags = []\n",
             pdf_root.display(),
             generated_docs_root.display(),
             registry_path.display(),
+            parsed_root.display(),
+            generated_docs_root.join("neo4j-export").display(),
+        ),
+    )
+    .unwrap();
+
+    config_path
+}
+
+fn write_stale_snapshot_config(root: &Path) -> PathBuf {
+    let manifest_path = root.join("sources.jsonl");
+    let bib_path = root.join("references.bib");
+    let tex_root = root.join("tex");
+    let pdf_root = root.join("pdf");
+    let generated_docs_root = root.join("generated");
+    let parsed_root = generated_docs_root.join("parsed");
+
+    fs::create_dir_all(tex_root.join("paper-tex")).unwrap();
+    fs::create_dir_all(&pdf_root).unwrap();
+    fs::create_dir_all(&parsed_root).unwrap();
+    fs::write(
+        &manifest_path,
+        "{\"title\":\"Current Manifest Paper\",\"arxiv_id\":\"2601.00001\",\"tex_dir\":\"paper-tex\"}\n",
+    )
+    .unwrap();
+    fs::write(&bib_path, "").unwrap();
+    fs::write(
+        tex_root.join("paper-tex").join("main.tex"),
+        "\\title{Parsed Paper}",
+    )
+    .unwrap();
+
+    write_parsed_papers(
+        &parsed_root,
+        &[ParsedPaper {
+            metadata: PaperSourceRecord {
+                paper_id: "arxiv-2601-00001".into(),
+                citation_key: Some("old2024paper".into()),
+                title: "Parsed Paper".into(),
+                authors: vec!["Old Author".into()],
+                year: Some("2024".into()),
+                arxiv_id: Some("2601.00001".into()),
+                doi: None,
+                url: None,
+                tex_dir: Some("paper-tex".into()),
+                pdf_file: Some("stale.pdf".into()),
+                source_kind: SourceKind::ManifestAndBib,
+                download_mode: DownloadMode::ManifestSourcePlusPdf,
+                has_local_tex: true,
+                has_local_pdf: true,
+                parse_status: ParseStatus::Parsed,
+            },
+            abstract_text: Some("stale parsed abstract".into()),
+            sections: vec![PaperSection {
+                level: 1,
+                title: "Parsed Section".into(),
+                content: "content".into(),
+            }],
+            figures: vec![],
+            tables: vec![],
+            citations: vec![],
+            provenance: vec!["paper-tex/main.tex".into()],
+        }],
+    )
+    .unwrap();
+
+    let config_path = root.join("stale.toml");
+    fs::write(
+        &config_path,
+        format!(
+            "manifest_path = \"{}\"\n\
+bib_path = \"{}\"\n\
+tex_root = \"{}\"\n\
+pdf_root = \"{}\"\n\
+generated_docs_root = \"{}\"\n\
+registry_path = \"{}\"\n\
+parsed_root = \"{}\"\n\
+neo4j_export_root = \"{}\"\n\
+sink = \"graphify\"\n\
+download_pdfs = false\n\
+relevance_tags = []\n",
+            manifest_path.display(),
+            bib_path.display(),
+            tex_root.display(),
+            pdf_root.display(),
+            generated_docs_root.display(),
+            generated_docs_root.join("registry.jsonl").display(),
             parsed_root.display(),
             generated_docs_root.join("neo4j-export").display(),
         ),
@@ -366,4 +463,48 @@ fn show_paper_json_uses_null_for_missing_artifacts() {
     assert_eq!(json["materialized_markdown_path"], Value::Null);
     assert_eq!(json["local_tex_dir"], Value::Null);
     assert_eq!(json["local_pdf_path"], Value::Null);
+}
+
+#[test]
+fn no_registry_fallback_does_not_resurrect_stale_parsed_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_stale_snapshot_config(dir.path());
+
+    let show_output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "show-paper",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--paper",
+            "2601.00001",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let show_json: Value = serde_json::from_slice(&show_output).unwrap();
+    assert_eq!(show_json["metadata"]["parse_status"], "Parsed");
+    assert_eq!(show_json["metadata"]["source_kind"], "Manifest");
+    assert_eq!(show_json["metadata"]["download_mode"], "ManifestSource");
+    assert_eq!(show_json["metadata"]["has_local_tex"], true);
+    assert_eq!(show_json["metadata"]["has_local_pdf"], false);
+    assert_eq!(show_json["metadata"]["citation_key"], Value::Null);
+
+    Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "show-paper",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--paper",
+            "old2024paper",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .failure();
 }
