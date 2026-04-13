@@ -62,6 +62,17 @@ Use the local `.agents/` backlog:
 make agents-db
 ```
 
+Common operator helpers:
+
+```bash
+make loc
+make loc-rs
+make lint-check
+make ci
+make litkg-sync
+make litkg-pipeline LITKG_CONFIG=examples/prml-vslam.toml LITKG_PIPELINE_ARGS="--download-pdfs"
+```
+
 ## Local KG Runtime
 
 The repository now carries the reusable local Neo4j and Graphiti runtime pieces that were first proven in NBV:
@@ -77,6 +88,8 @@ Useful commands:
 ```bash
 make kg-up
 make kg-update KG_SRC_DIR=crates/litkg-core
+make kg-graphiti GRAPHITI_MODE=stdio
+make kg-smoke
 make kg-ingest-docs
 make kg-down
 ```
