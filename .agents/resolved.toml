@@ -1,4 +1,4 @@
 meta = { updated_on = "2026-04-13" }
 
-resolved_issues = ["ISSUE-0002", "ISSUE-0003", "ISSUE-0004"]
-resolved_todos = ["TODO-0001", "TODO-0002", "TODO-0003", "TODO-0004", "TODO-0008"]
+resolved_issues = ["ISSUE-0002", "ISSUE-0003", "ISSUE-0004", "ISSUE-0007", "ISSUE-0010", "ISSUE-0014"]
+resolved_todos = ["TODO-0001", "TODO-0002", "TODO-0003", "TODO-0004", "TODO-0007", "TODO-0008", "TODO-0009", "TODO-0013"]

@@ -27,3 +27,6 @@ Purpose: a compact operational memory surface for this toolkit repo. Record stab
 - The repo-local code review workflow lives under `.agents/skills/code-review-litkg-rs/` and covers working-tree review, GitHub PR review, and autoresearch winner review gates.
 - The local Neo4j and Graphiti runtime scripts under `scripts/kg/` are reusable repo tooling, not client-specific pipeline logic.
 - GitHub issue creation and issue resolution now have a dedicated repo-local skill plus `.github` templates for issue intake and PR-based closure.
+- Repo-scoped Codex setup for skills and the optional Graphiti/Neo4j MCP path is documented in `docs/codex-setup.md`.
+- Strict downstream bootstrap templates for `AGENTS.md`, `README.md`, and `REQUIREMENTS.md` live under `templates/bootstrap/`.
+- Issue work now requires a short TODO or status comment on the GitHub issue that states the planned change and whether execution is happening in the local checkout or an isolated worktree.

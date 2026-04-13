@@ -16,6 +16,14 @@ The first consumer is `prml-vslam`, but this repository is intentionally not tie
 - [CODEOWNER.md](CODEOWNER.md) stores distilled human-owner requirements and preferences that should persist beyond one chat session.
 - [AGENTS.md](AGENTS.md) stores repo policy and operating rules for agents.
 
+## Codex Setup
+
+See [docs/codex-setup.md](docs/codex-setup.md) for repo-scoped skill discovery, optional `agents/openai.yaml` metadata, and the optional Graphiti and Neo4j MCP path. That MCP path remains secondary to the main file-output pipeline.
+
+## Bootstrap Templates
+
+Downstream repos can start from the strict templates under [templates/bootstrap/](templates/bootstrap/) and the usage notes in [docs/bootstrap-templates.md](docs/bootstrap-templates.md).
+
 ## Workspace
 
 - `litkg-core`: normalized paper model, registry merge, downloader, parser, and materializer
