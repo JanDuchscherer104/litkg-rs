@@ -5,10 +5,14 @@
 ## Files
 
 - benchmark catalog: `examples/benchmarks/kg.toml`
+- integration matrix: `examples/benchmarks/integrations.toml`
 - sample results bundle: `examples/benchmarks/sample-results.toml`
 - validation entrypoint: `cargo run -p litkg-cli -- validate-benchmarks --catalog ... --results ...`
+- support inspection entrypoint: `cargo run -p litkg-cli -- benchmark-support --catalog ... --integrations ...`
+- execution entrypoint: `cargo run -p litkg-cli -- run-benchmarks --catalog ... --integrations ... --plan ... --output ...`
 - target rendering entrypoint: `cargo run -p litkg-cli -- render-autoresearch-target --catalog ... --results ... --target-id ...`
 - target render formats: `markdown`, `issue` (alias `github-issue`), and `json`
+- result-promotion entrypoint: `cargo run -p litkg-cli -- promote-benchmark-results --catalog ... --results ...`
 
 ## Included Benchmarks
 
@@ -46,6 +50,65 @@ Run it with:
 
 ```bash
 make benchmark-validate
+```
+
+## Integration Readiness
+
+The integration matrix makes the current execution state explicit per benchmark:
+
+- `official_harness` or `official_pipeline`: a public runnable surface exists upstream, but `litkg-rs` still expects a local command wrapper to emit normalized JSON
+- `dataset_only`: the dataset is public, but no upstream evaluator is currently packaged for direct invocation
+- `paper_only` or `benchmark_site`: the catalog currently points to a paper or site only, so local execution must be supplied through a custom command adapter
+
+Inspect the current machine state with:
+
+```bash
+cargo run -p litkg-cli -- benchmark-support \
+  --catalog examples/benchmarks/kg.toml \
+  --integrations examples/benchmarks/integrations.toml
+```
+
+## Running Benchmarks
+
+`litkg-rs` runs benchmarks through external command adapters. Each configured command receives:
+
+- `LITKG_BENCHMARK_ID`
+- `LITKG_BENCHMARK_RUN_ID`
+- `LITKG_BENCHMARK_OUTPUT_PATH`
+- `LITKG_BENCHMARK_ARTIFACT_DIR`
+
+The command must write normalized JSON to `LITKG_BENCHMARK_OUTPUT_PATH` with this shape:
+
+```json
+{
+  "status": "error",
+  "summary": "Short run summary",
+  "scores": [
+    {
+      "metric_id": "correctness",
+      "value": 0.42,
+      "unit": "ratio"
+    }
+  ],
+  "diagnostics": ["optional diagnostic text"],
+  "artifacts": [
+    {
+      "label": "raw-log",
+      "kind": "log",
+      "location": "artifacts/run.log"
+    }
+  ]
+}
+```
+
+With a run plan in place, execute the configured adapters with:
+
+```bash
+cargo run -p litkg-cli -- run-benchmarks \
+  --catalog examples/benchmarks/kg.toml \
+  --integrations examples/benchmarks/integrations.toml \
+  --plan /abs/path/to/run-plan.toml \
+  --output /abs/path/to/results.toml
 ```
 
 ## Auto Research Target Composition
@@ -114,6 +177,28 @@ The JSON payload includes:
 - sanitized run summary text plus structured score evidence
 - `result_summaries` as the canonical normalized result view for downstream
   automation
+
+## Result Promotion
+
+Validated benchmark bundles can also be promoted into deterministic autoresearch drafts. Promotion works as a pure transformation over the catalog plus a results bundle:
+
+- benchmark filters narrow which runs are eligible
+- status filters let operators focus on states such as `error` or `failed`
+- metric thresholds use inline rules such as `correctness<=0.7` or `pass_at_1<0.5`
+- component selection policies choose whether promotion keeps the template components only, appends benchmark-matched components, or uses matched components only
+
+Example:
+
+```bash
+cargo run -p litkg-cli -- promote-benchmark-results \
+  --catalog examples/benchmarks/kg.toml \
+  --results examples/benchmarks/sample-results.toml \
+  --target-id kg_navigation_improvement \
+  --status error \
+  --metric-threshold correctness<=0.7 \
+  --component-selection template-and-matched \
+  --format github-issue
+```
 
 ## GitHub Sync
 

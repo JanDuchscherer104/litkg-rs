@@ -23,6 +23,7 @@ Purpose: a compact operational memory surface for this toolkit repo. Record stab
 - Apple Silicon macOS is a primary operator platform and should bias native viewer, performance, packaging, and overnight-agent workflow decisions.
 - The scaffolding should support explicit capture of user instructions into durable repo memory or skills when requested.
 - Benchmark metadata, benchmark-result validation, and benchmark-driven autoresearch-target composition now live in `litkg-core::benchmark` and are surfaced through `litkg-cli`.
+- Benchmark integration inspection, normalized command-adapter execution, and deterministic result promotion now live alongside the benchmark schema in `litkg-core` and are surfaced through `litkg-cli`.
 - Rendered autoresearch targets now classify selected benchmark runs into deferred validation-only or successful evidence versus promotable recognized execution failure runs.
 - `render-autoresearch-target` supports `markdown`, `issue`/`github-issue`, and `json` outputs over the same deterministic target selection, and `sync-autoresearch-target-issue` can publish the GitHub-issue render through `gh`.
 - Benchmark validation rejects unknown run statuses until they are classified into promotion or control-plane behavior explicitly.

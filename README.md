@@ -86,9 +86,13 @@ make kg-down
 Benchmark metadata, validation, and autoresearch-target composition now live in this repo:
 
 - benchmark catalog: `examples/benchmarks/kg.toml`
+- benchmark integration matrix: `examples/benchmarks/integrations.toml`
 - sample results bundle: `examples/benchmarks/sample-results.toml`
 - validation command: `make benchmark-validate`
+- local readiness inspection: `cargo run -p litkg-cli -- benchmark-support --catalog ... --integrations ...`
+- benchmark execution: `cargo run -p litkg-cli -- run-benchmarks --catalog ... --integrations ... --plan ... --output ...`
 - autoresearch-target rendering: `make autoresearch-target`
+- result-promotion entrypoint: `cargo run -p litkg-cli -- promote-benchmark-results --catalog ... --results ...`
 - GitHub issue sync for rendered autoresearch targets: `make autoresearch-issue`
 
 Rendered autoresearch targets now distinguish between:
@@ -99,5 +103,8 @@ Rendered autoresearch targets now distinguish between:
   explicitly before benchmark validation passes
 
 The renderer supports `markdown`, `json`, and `github-issue` outputs over the same deterministic target selection. `make autoresearch-issue` can preview or create the corresponding GitHub issue through `gh`, while JSON renders now include promotion counts, sanitized run summary text, and structured score evidence under `result_summaries`; downstream automation should consume that normalized view rather than the raw source bundle.
+
+The integration matrix plus `benchmark-support`, `run-benchmarks`, and `promote-benchmark-results`
+are now first-class operator surfaces rather than source-only scaffolding.
 
 The catalog covers `SWE-Bench Pro`, `SWE-QA-Pro`, `CodeRepoQA`, `StackRepoQA`, `RepoReason`, `RACE-bench`, `SWD-Bench`, `CCBench`, and `Terminal-Bench`.

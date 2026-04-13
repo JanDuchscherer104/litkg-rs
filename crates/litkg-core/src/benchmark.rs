@@ -994,18 +994,24 @@ fn append_run_details(lines: &mut Vec<String>, run: &BenchmarkRun) {
     let score_summary = if run.scores.is_empty() {
         "no scores recorded".to_string()
     } else {
-        run.scores
-            .iter()
-            .map(|score| format!("{}={} {}", score.metric_id, score.value, score.unit))
-            .collect::<Vec<_>>()
-            .join(", ")
+        format_score_summary_from_scores(&run.scores)
     };
     lines.push(format!(
         "- `{}` on `{}` [{}]: {}",
-        run.run_id, run.benchmark_id, run.status, score_summary
+        run.run_id,
+        run.benchmark_id,
+        sanitize_inline_markdown(&run.status),
+        score_summary
     ));
     if !run.diagnostics.is_empty() {
-        lines.push(format!("  diagnostics: {}", run.diagnostics.join(" | ")));
+        lines.push(format!(
+            "  diagnostics: {}",
+            run.diagnostics
+                .iter()
+                .map(|diagnostic| sanitize_inline_markdown(diagnostic))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ));
     }
     if !run.artifacts.is_empty() {
         lines.push(format!(
@@ -1014,7 +1020,9 @@ fn append_run_details(lines: &mut Vec<String>, run: &BenchmarkRun) {
                 .iter()
                 .map(|artifact| format!(
                     "{} ({}) -> {}",
-                    artifact.label, artifact.kind, artifact.location
+                    sanitize_inline_markdown(&artifact.label),
+                    sanitize_inline_markdown(&artifact.kind),
+                    sanitize_inline_markdown(&artifact.location)
                 ))
                 .collect::<Vec<_>>()
                 .join(" | ")
@@ -1023,10 +1031,15 @@ fn append_run_details(lines: &mut Vec<String>, run: &BenchmarkRun) {
     if let Some(execution) = &run.execution {
         lines.push(format!(
             "  execution: {} via `{}` in `{}`",
-            execution.runner_kind, execution.command, execution.workdir
+            sanitize_inline_markdown(&execution.runner_kind),
+            sanitize_inline_markdown(&execution.command),
+            sanitize_inline_markdown(&execution.workdir)
         ));
     }
-    lines.push(format!("  summary: {}", run.summary));
+    lines.push(format!(
+        "  summary: {}",
+        sanitize_inline_markdown(&run.summary)
+    ));
 }
 
 fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
@@ -1362,7 +1375,7 @@ fn requested_status_set(statuses: &[String]) -> Option<BTreeSet<String>> {
     Some(
         statuses
             .iter()
-            .map(|status| status.trim().to_string())
+            .map(|status| status.trim().to_ascii_lowercase())
             .filter(|status| !status.is_empty())
             .collect(),
     )
@@ -1374,6 +1387,9 @@ fn promotion_evidence_for_run(
     status_filter: Option<&BTreeSet<String>>,
     metric_thresholds: &[MetricThresholdRule],
 ) -> Option<PromotionEvidence> {
+    let normalized_status = run.status.trim().to_ascii_lowercase();
+    let status_class =
+        classify_run_status(&run.status).expect("benchmark results should be validated first");
     if benchmark_filter
         .map(|filter| !filter.contains(&run.benchmark_id))
         .unwrap_or(false)
@@ -1381,15 +1397,23 @@ fn promotion_evidence_for_run(
         return None;
     }
     if status_filter
-        .map(|filter| !filter.contains(&run.status))
+        .map(|filter| !filter.contains(&normalized_status))
         .unwrap_or(false)
+    {
+        return None;
+    }
+    if status_filter.is_none()
+        && !matches!(status_class, BenchmarkRunStatusClass::PromotableFailure)
     {
         return None;
     }
 
     let mut reasons = Vec::new();
     if status_filter.is_some() {
-        reasons.push(format!("status `{}` matched promotion filter", run.status));
+        reasons.push(format!(
+            "status `{}` matched promotion filter",
+            normalized_status
+        ));
     }
 
     let threshold_reasons = matched_threshold_reasons(run, metric_thresholds);
@@ -2262,6 +2286,112 @@ mod tests {
             render_promoted_targets(&promoted, AutoResearchRenderFormat::GitHubIssue).unwrap();
         assert!(rendered.contains("Title: Auto Research: KG navigation"));
         assert!(rendered.contains("status `error` matched promotion filter"));
+    }
+
+    #[test]
+    fn promotion_filters_compare_normalized_status_values() {
+        let catalog = BenchmarkCatalog {
+            benchmarks: sample_catalog().benchmarks,
+            autoresearch_components: vec![AutoResearchComponent {
+                id: "ablation".into(),
+                title: "Ablation".into(),
+                prompt_fragment: "Compare graph-only with hybrid retrieval.".into(),
+                benchmark_ids: vec!["swe-qa-pro".into()],
+                tags: vec!["retrieval".into()],
+            }],
+            autoresearch_targets: vec![AutoResearchTargetTemplate {
+                id: "kg-navigation".into(),
+                title: "KG navigation".into(),
+                summary: "Improve repository navigation quality.".into(),
+                benchmark_ids: vec!["swe-qa-pro".into()],
+                component_ids: vec!["ablation".into()],
+            }],
+        };
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "baseline".into(),
+                status: " FAILED ".into(),
+                summary: "Grounding fell off on cross-file questions.".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 0.42,
+                    unit: "score".into(),
+                }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
+            }],
+        };
+
+        let promoted = promote_benchmark_results(
+            &catalog,
+            &results,
+            &BenchmarkPromotionRequest {
+                target_ids: vec!["kg-navigation".into()],
+                benchmark_ids: vec![],
+                status_filters: vec!["failed".into()],
+                metric_thresholds: vec![],
+                component_selection: PromotionComponentSelection::TemplateOnly,
+                component_ids: vec![],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(promoted.len(), 1);
+    }
+
+    #[test]
+    fn default_promotion_skips_validation_only_runs() {
+        let catalog = BenchmarkCatalog {
+            benchmarks: sample_catalog().benchmarks,
+            autoresearch_components: vec![AutoResearchComponent {
+                id: "ablation".into(),
+                title: "Ablation".into(),
+                prompt_fragment: "Compare graph-only with hybrid retrieval.".into(),
+                benchmark_ids: vec!["swe-qa-pro".into()],
+                tags: vec!["retrieval".into()],
+            }],
+            autoresearch_targets: vec![AutoResearchTargetTemplate {
+                id: "kg-navigation".into(),
+                title: "KG navigation".into(),
+                summary: "Improve repository navigation quality.".into(),
+                benchmark_ids: vec!["swe-qa-pro".into()],
+                component_ids: vec!["ablation".into()],
+            }],
+        };
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "baseline".into(),
+                status: "validation_only".into(),
+                summary: "Catalog validated".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 1.0,
+                    unit: "pass".into(),
+                }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
+            }],
+        };
+
+        let promoted = promote_benchmark_results(
+            &catalog,
+            &results,
+            &BenchmarkPromotionRequest {
+                target_ids: vec!["kg-navigation".into()],
+                benchmark_ids: vec![],
+                status_filters: vec![],
+                metric_thresholds: vec![],
+                component_selection: PromotionComponentSelection::TemplateOnly,
+                component_ids: vec![],
+            },
+        )
+        .unwrap();
+
+        assert!(promoted.is_empty());
     }
 
     #[test]

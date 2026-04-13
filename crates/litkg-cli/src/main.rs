@@ -113,8 +113,8 @@ struct BenchmarkExecutionArgs {
 struct BenchmarkSupportCommand {
     #[command(flatten)]
     execution: BenchmarkExecutionArgs,
-    #[arg(long, default_value = "text")]
-    format: String,
+    #[arg(long, value_enum, default_value_t = BenchmarkSupportFormatArg::Text)]
+    format: BenchmarkSupportFormatArg,
 }
 
 #[derive(Args, Clone)]
@@ -139,10 +139,23 @@ struct PromoteBenchmarkResultsCommand {
     status_filters: Vec<String>,
     #[arg(long = "metric-threshold")]
     metric_thresholds: Vec<String>,
-    #[arg(long, default_value = "template-only")]
-    component_selection: String,
-    #[arg(long, default_value = "markdown")]
-    format: String,
+    #[arg(long, value_enum, default_value_t = PromotionComponentSelectionArg::TemplateOnly)]
+    component_selection: PromotionComponentSelectionArg,
+    #[arg(long, value_enum, default_value_t = AutoResearchTargetFormatArg::Markdown)]
+    format: AutoResearchTargetFormatArg,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum BenchmarkSupportFormatArg {
+    Text,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum PromotionComponentSelectionArg {
+    TemplateOnly,
+    TemplateAndMatched,
+    MatchedOnly,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -159,6 +172,20 @@ impl From<AutoResearchTargetFormatArg> for AutoResearchRenderFormat {
             AutoResearchTargetFormatArg::Markdown => AutoResearchRenderFormat::Markdown,
             AutoResearchTargetFormatArg::Issue => AutoResearchRenderFormat::GitHubIssue,
             AutoResearchTargetFormatArg::Json => AutoResearchRenderFormat::Json,
+        }
+    }
+}
+
+impl From<PromotionComponentSelectionArg> for PromotionComponentSelection {
+    fn from(value: PromotionComponentSelectionArg) -> Self {
+        match value {
+            PromotionComponentSelectionArg::TemplateOnly => {
+                PromotionComponentSelection::TemplateOnly
+            }
+            PromotionComponentSelectionArg::TemplateAndMatched => {
+                PromotionComponentSelection::TemplateAndMatched
+            }
+            PromotionComponentSelectionArg::MatchedOnly => PromotionComponentSelection::MatchedOnly,
         }
     }
 }
@@ -305,10 +332,13 @@ fn main() -> Result<()> {
                 plan.as_ref(),
                 &args.execution.benchmark_ids,
             )?;
-            match args.format.as_str() {
-                "text" => println!("{}", render_support_statuses(&statuses)),
-                "json" => println!("{}", serde_json::to_string_pretty(&statuses)?),
-                other => anyhow::bail!("Unsupported benchmark support format `{other}`"),
+            match args.format {
+                BenchmarkSupportFormatArg::Text => {
+                    println!("{}", render_support_statuses(&statuses))
+                }
+                BenchmarkSupportFormatArg::Json => {
+                    println!("{}", serde_json::to_string_pretty(&statuses)?)
+                }
             }
         }
         Commands::RunBenchmarks(args) => {
@@ -361,11 +391,11 @@ fn main() -> Result<()> {
                     .iter()
                     .map(|raw| parse_metric_threshold(raw))
                     .collect::<Result<Vec<_>>>()?,
-                component_selection: parse_component_selection(&args.component_selection)?,
+                component_selection: args.component_selection.into(),
                 component_ids: args.component_ids,
             };
             let promoted = promote_benchmark_results(&catalog, &results, &request)?;
-            let rendered = render_promoted_targets(&promoted, parse_render_format(&args.format)?)?;
+            let rendered = render_promoted_targets(&promoted, args.format.into())?;
             println!("{rendered}");
         }
         Commands::SyncAutoresearchTargetIssue(args) => {
@@ -413,24 +443,6 @@ fn load_benchmark_inputs(
         None => None,
     };
     Ok((catalog, results))
-}
-
-fn parse_render_format(raw: &str) -> Result<AutoResearchRenderFormat> {
-    match raw {
-        "markdown" => Ok(AutoResearchRenderFormat::Markdown),
-        "json" => Ok(AutoResearchRenderFormat::Json),
-        "github-issue" | "issue" => Ok(AutoResearchRenderFormat::GitHubIssue),
-        other => anyhow::bail!("Unsupported autoresearch target format `{other}`"),
-    }
-}
-
-fn parse_component_selection(raw: &str) -> Result<PromotionComponentSelection> {
-    match raw {
-        "template-only" => Ok(PromotionComponentSelection::TemplateOnly),
-        "template-and-matched" => Ok(PromotionComponentSelection::TemplateAndMatched),
-        "matched-only" => Ok(PromotionComponentSelection::MatchedOnly),
-        other => anyhow::bail!("Unsupported component selection policy `{other}`"),
-    }
 }
 
 fn parse_metric_threshold(raw: &str) -> Result<MetricThresholdRule> {
@@ -784,7 +796,7 @@ mod tests {
         match cli.command {
             Commands::BenchmarkSupport(command) => {
                 assert_eq!(command.execution.benchmark_ids, vec!["swe-qa-pro"]);
-                assert_eq!(command.format, "json");
+                assert_eq!(command.format, BenchmarkSupportFormatArg::Json);
             }
             other => panic!(
                 "unexpected command parsed: {:?}",
@@ -818,7 +830,11 @@ mod tests {
                 assert_eq!(command.target_ids, vec!["kg_navigation_improvement"]);
                 assert_eq!(command.status_filters, vec!["error"]);
                 assert_eq!(command.metric_thresholds, vec!["correctness<=0.7"]);
-                assert_eq!(command.format, "github-issue");
+                assert_eq!(
+                    command.component_selection,
+                    PromotionComponentSelectionArg::TemplateOnly
+                );
+                assert_eq!(command.format, AutoResearchTargetFormatArg::Issue);
             }
             other => panic!(
                 "unexpected command parsed: {:?}",

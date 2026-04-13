@@ -419,9 +419,11 @@ fn execute_run_request(
     integration: &BenchmarkIntegration,
     request: &BenchmarkRunRequest,
 ) -> Result<BenchmarkRun> {
-    let tempdir = tempfile::tempdir().context("Failed to create benchmark runner tempdir")?;
-    let output_path = tempdir.path().join("normalized-result.json");
-    let artifact_dir = tempdir.path().join("artifacts");
+    let temp_root = tempfile::tempdir()
+        .context("Failed to create benchmark runner tempdir")?
+        .into_path();
+    let output_path = temp_root.join("normalized-result.json");
+    let artifact_dir = temp_root.join("artifacts");
     fs::create_dir_all(&artifact_dir).with_context(|| {
         format!(
             "Failed to create artifact directory {}",
@@ -520,6 +522,7 @@ fn execute_run_request(
             artifacts: normalized.artifacts,
             execution: Some(execution.clone()),
         };
+        rewrite_artifact_locations(&mut run.artifacts, &artifact_dir);
         push_command_streams(
             &mut run.diagnostics,
             &stdout,
@@ -614,6 +617,23 @@ fn binary_exists(binary: &str) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+fn rewrite_artifact_locations(artifacts: &mut [BenchmarkArtifact], artifact_dir: &Path) {
+    for artifact in artifacts {
+        let location = PathBuf::from(&artifact.location);
+        if location.is_absolute() {
+            continue;
+        }
+        let candidate = if let Some(stripped) = artifact.location.strip_prefix("artifacts/") {
+            artifact_dir.join(stripped)
+        } else {
+            artifact_dir.join(&artifact.location)
+        };
+        if candidate.exists() {
+            artifact.location = candidate.display().to_string();
+        }
+    }
 }
 
 fn missing_prereq_diagnostics(
@@ -778,6 +798,8 @@ mod tests {
         fs::write(
             &script_path,
             r#"#!/bin/sh
+mkdir -p "$LITKG_BENCHMARK_ARTIFACT_DIR"
+printf 'fixture-log' > "$LITKG_BENCHMARK_ARTIFACT_DIR/run.log"
 cat > "$LITKG_BENCHMARK_OUTPUT_PATH" <<'EOF'
 {
   "status": "error",
@@ -834,5 +856,6 @@ EOF
             "external_command"
         );
         assert_eq!(results.runs[0].diagnostics[0], "fixture-run");
+        assert!(std::path::Path::new(&results.runs[0].artifacts[0].location).exists());
     }
 }
