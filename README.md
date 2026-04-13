@@ -1,6 +1,6 @@
-# litgraph-rs
+# litkg-rs
 
-`litgraph-rs` is a repo-independent Rust toolkit for:
+`litkg-rs` is a repo-independent Rust toolkit for:
 
 - merging paper manifests and BibTeX into a normalized literature registry
 - downloading arXiv source bundles and optional PDFs

@@ -302,11 +302,11 @@ async def main() -> None:
 
     try:
         await graphiti.build_indices_and_constraints()
-        group_id = os.environ.get("GRAPHITI_GROUP_ID", "litgraph-docs")
+        group_id = os.environ.get("GRAPHITI_GROUP_ID", "litkg-docs")
         for path in doc_paths:
             episode_body, reference_time = build_episode_body(path)
             rel_path = path.relative_to(repo_root).as_posix()
-            source_description = f"litgraph-rs repo {path.suffix.lstrip('.') or 'markdown'} documentation"
+            source_description = f"litkg-rs repo {path.suffix.lstrip('.') or 'markdown'} documentation"
             await graphiti.add_episode(
                 name=rel_path,
                 episode_body=episode_body,

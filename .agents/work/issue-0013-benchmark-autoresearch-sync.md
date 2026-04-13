@@ -12,7 +12,7 @@ Extend the benchmark-result layer so validated result bundles can feed overnight
 
 - The benchmark catalog and target renderer now exist locally, but the result bundles are still mostly validation-oriented rather than execution-oriented.
 - Overnight or autonomous research loops need a deterministic way to turn benchmark outcomes into concrete next-target prompts.
-- Once `litgraph-rs` has a real GitHub remote, those target proposals should be convertible into issue-ready payloads without rewriting the same structure by hand.
+- Once `litkg-rs` has a real GitHub remote, those target proposals should be convertible into issue-ready payloads without rewriting the same structure by hand.
 
 ## Proposed Scope
 

@@ -1,6 +1,6 @@
 # Architecture
 
-`litgraph-rs` is split into a normalized literature core plus thin graph adapters.
+`litkg-rs` is split into a normalized literature core plus thin graph adapters.
 
 ## Core Pipeline
 

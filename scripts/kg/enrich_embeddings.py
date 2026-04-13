@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,34 +21,9 @@ from urllib.request import Request, urlopen
 EMBEDDING_DIM = 1024
 CODE_LABELS = ("File", "Module", "Class", "Function")
 GRAPHITI_LABELS = ("Episodic", "Entity", "Community")
-# TODO(create gh issue) WHAT is this hardcoded bullshit? shit like that must be llm based
-COMMON_TOKENS = {
-    "and",
-    "api",
-    "class",
-    "code",
-    "docs",
-    "document",
-    "file",
-    "for",
-    "from",
-    "function",
-    "graph",
-    "implementation",
-    "index",
-    "kg",
-    "main",
-    "method",
-    "module",
-    "node",
-    "repo",
-    "script",
-    "section",
-    "stack",
-    "the",
-    "this",
-    "with",
-}
+TOKEN_KEEP_SHORT = {"kg", "tex", "bib"}
+TOKEN_FILTER_CANDIDATE_LIMIT = 96
+TOKEN_FILTER_RETURN_LIMIT = 24
 PATH_REF_RE = re.compile(
     r"(?P<path>[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.(?:rs|py|sh|md|qmd|toml|yml|yaml|json|jsonl))"
 )
@@ -68,14 +44,18 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def ensure_embedding_model(model_name: str) -> None:
+def list_ollama_models() -> list[str]:
     listing = subprocess.run(
         ["ollama", "list"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    installed_models = {line.split()[0] for line in listing[1:] if line.strip()}
+    return [line.split()[0] for line in listing[1:] if line.strip()]
+
+
+def ensure_embedding_model(model_name: str) -> None:
+    installed_models = set(list_ollama_models())
     if model_name not in installed_models:
         subprocess.run(["ollama", "pull", model_name], check=True)
 
@@ -91,6 +71,13 @@ def ollama_embed_url(base_url: str) -> str:
     if trimmed.endswith("/v1"):
         trimmed = trimmed[:-3]
     return f"{trimmed}/api/embed"
+
+
+def ollama_chat_url(base_url: str) -> str:
+    trimmed = base_url.rstrip("/")
+    if trimmed.endswith("/v1"):
+        trimmed = trimmed[:-3]
+    return f"{trimmed}/api/chat"
 
 
 class Neo4jHTTP:
@@ -157,6 +144,21 @@ class NodeRecord:
     embedding: list[float] | None = None
 
 
+def pick_token_filter_model(installed_models: list[str]) -> str | None:
+    preferred_models = [
+        os.environ.get("KG_TOKEN_FILTER_MODEL"),
+        os.environ.get("GRAPHITI_LLM_MODEL"),
+    ]
+    installed_set = set(installed_models)
+    for model_name in preferred_models:
+        if model_name and model_name in installed_set:
+            return model_name
+    for model_name in installed_models:
+        if "embedding" not in model_name.lower():
+            return model_name
+    return None
+
+
 def scoped_path_prefixes(raw_prefix: str | None, root: Path) -> list[str] | None:
     if raw_prefix is None or not raw_prefix.strip():
         return None
@@ -177,15 +179,135 @@ def scoped_path_prefixes(raw_prefix: str | None, root: Path) -> list[str] | None
     return prefixes
 
 
-def normalize_tokens(text: str) -> set[str]:
-    tokens = set()
+def split_tokens(text: str) -> list[str]:
+    tokens = []
     for token in re.split(r"[^A-Za-z0-9_]+", text.lower()):
-        if not token or token in COMMON_TOKENS:
+        if not token:
             continue
-        if len(token) < 3 and token not in {"kg", "tex", "bib"}:
+        if len(token) < 3 and token not in TOKEN_KEEP_SHORT:
             continue
-        tokens.add(token)
+        tokens.append(token)
     return tokens
+
+
+def normalize_tokens(text: str, ignored_tokens: set[str] | None = None) -> set[str]:
+    ignored = ignored_tokens or set()
+    return {token for token in split_tokens(text) if token not in ignored}
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match is None:
+            raise
+        parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected JSON object response.")
+    return parsed
+
+
+def infer_common_tokens(
+    chat_url: str,
+    model_name: str | None,
+    code_records: list[NodeRecord],
+    graphiti_records: list[NodeRecord],
+) -> set[str]:
+    if model_name is None:
+        return set()
+
+    code_counts: Counter[str] = Counter()
+    graphiti_counts: Counter[str] = Counter()
+
+    for record in code_records:
+        code_counts.update(set(split_tokens(record.text)))
+    for record in graphiti_records:
+        graphiti_counts.update(set(split_tokens(record.text)))
+
+    combined_counts = code_counts + graphiti_counts
+    candidates: list[dict[str, int | str]] = []
+    for token, total_hits in combined_counts.most_common(TOKEN_FILTER_CANDIDATE_LIMIT):
+        if total_hits < 3:
+            break
+        candidates.append(
+            {
+                "token": token,
+                "code_hits": code_counts[token],
+                "graph_hits": graphiti_counts[token],
+                "total_hits": total_hits,
+            }
+        )
+
+    if len(candidates) < 8:
+        return set()
+
+    request = Request(
+        chat_url,
+        data=json.dumps(
+            {
+                "model": model_name,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0, "seed": 0},
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You select globally useless overlap tokens for matching "
+                            "graph/document nodes to code nodes. Only choose tokens "
+                            "from the provided list that are generic boilerplate, "
+                            "metadata labels, or otherwise too broad to help linking. "
+                            "Keep domain terms, library names, file types, graph terms, "
+                            "and implementation-specific words. Return JSON with an "
+                            "'ignore' array and no extra keys."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "max_ignore_tokens": TOKEN_FILTER_RETURN_LIMIT,
+                                "candidates": candidates,
+                            },
+                            ensure_ascii=True,
+                            sort_keys=True,
+                        ),
+                    },
+                ],
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urlopen(request) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, json.JSONDecodeError, ValueError):
+        return set()
+
+    message = payload.get("message", {})
+    content = message.get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        return set()
+
+    try:
+        parsed = extract_json_object(content)
+    except (json.JSONDecodeError, ValueError):
+        return set()
+
+    ignore = parsed.get("ignore", [])
+    if not isinstance(ignore, list):
+        return set()
+
+    allowed_tokens = {entry["token"] for entry in candidates}
+    return {
+        token
+        for token in (str(value).lower().strip() for value in ignore)
+        if token in allowed_tokens
+    }
 
 
 def compact_json(props: dict[str, Any], keys: list[str]) -> str:
@@ -308,7 +430,7 @@ def fetch_records(
                 kind=kind,
                 name=name,
                 text=text,
-                tokens=normalize_tokens(text),
+                tokens=set(),
                 embedding=props.get("kg_embedding")
                 if isinstance(props.get("kg_embedding"), list)
                 else None,
@@ -452,6 +574,7 @@ def main() -> int:
 
     embedding_model = os.environ.get("EMBEDDING_MODEL", "qwen3-embedding:4b")
     ensure_embedding_model(embedding_model)
+    installed_models = list_ollama_models()
 
     neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
     neo4j_http_url = os.environ.get("NEO4J_HTTP_URL", derive_neo4j_http_url(neo4j_uri))
@@ -463,13 +586,13 @@ def main() -> int:
     if not neo4j_password:
         raise RuntimeError("NEO4J_PASSWORD must be set.")
 
-    graphiti_group_id = os.environ.get("GRAPHITI_GROUP_ID", "litgraph-docs")
+    graphiti_group_id = os.environ.get("GRAPHITI_GROUP_ID", "litkg-docs")
     code_path_prefixes = scoped_path_prefixes(
         os.environ.get("KG_CODE_PATH_PREFIX"), root
     )
-    embed_url = ollama_embed_url(
-        os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    )
+    ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    embed_url = ollama_embed_url(ollama_base_url)
+    chat_url = ollama_chat_url(ollama_base_url)
     client = Neo4jHTTP(neo4j_http_url, neo4j_database, neo4j_username, neo4j_password)
 
     code_records = fetch_records(client, CODE_LABELS, path_prefixes=code_path_prefixes)
@@ -488,7 +611,16 @@ def main() -> int:
         )
         return 1
 
+    ignored_tokens = infer_common_tokens(
+        chat_url,
+        pick_token_filter_model(installed_models),
+        code_records,
+        graphiti_records,
+    )
+
     all_records = code_records + graphiti_records
+    for record in all_records:
+        record.tokens = normalize_tokens(record.text, ignored_tokens)
     embed_limit = int(os.environ.get("KG_EMBED_LIMIT", "0"))
     if embed_limit > 0:
         all_records = all_records[:embed_limit]

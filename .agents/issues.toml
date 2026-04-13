@@ -3,7 +3,7 @@ meta = { updated_on = "2026-04-13" }
 [[issues]]
 id = "ISSUE-0001"
 title = "Evaluate Memory-Palace-MCP as an MCP-native comparison target"
-summary = "Assess zeyynepkaraduman/Memory-Palace-MCP for MCP-native memory UX, extension points, and issue-tracker comparisons against litgraph-rs."
+summary = "Assess zeyynepkaraduman/Memory-Palace-MCP for MCP-native memory UX, extension points, and issue-tracker comparisons against litkg-rs."
 priority = "medium"
 status = "open"
 

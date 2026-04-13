@@ -1,6 +1,6 @@
 # Local KG Stack
 
-`litgraph-rs` now carries the reusable local Neo4j and Graphiti runtime pieces that were first established in NBV and generalized for this repo.
+`litkg-rs` now carries the reusable local Neo4j and Graphiti runtime pieces that were first established in NBV and generalized for this repo.
 
 ## Surfaces
 

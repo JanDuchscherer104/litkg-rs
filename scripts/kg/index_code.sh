@@ -79,7 +79,7 @@ export DEFAULT_DATABASE=neo4j
 export NEO4J_URI="${NEO4J_URI:-bolt://localhost:7687}"
 export NEO4J_USERNAME="${NEO4J_USERNAME:-neo4j}"
 export NEO4J_USER="${NEO4J_USER:-${NEO4J_USERNAME}}"
-export NEO4J_PASSWORD="${NEO4J_PASSWORD:-litgraphlocal}"
+export NEO4J_PASSWORD="${NEO4J_PASSWORD:-litkglocal}"
 export NEO4J_DATABASE="${NEO4J_DATABASE:-neo4j}"
 
 cd "${REPO_ROOT}"

@@ -1,6 +1,6 @@
 # Benchmark Catalog
 
-`litgraph-rs` owns the benchmark metadata and validation surfaces used to evaluate the local KG stack and to compose benchmark-driven auto research targets.
+`litkg-rs` owns the benchmark metadata and validation surfaces used to evaluate the local KG stack and to compose benchmark-driven auto research targets.
 
 ## Files
 

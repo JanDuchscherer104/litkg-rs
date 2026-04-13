@@ -61,9 +61,9 @@ uv sync --extra providers
 export CONFIG_PATH="config/config-docker-neo4j.yaml"
 export NEO4J_URI="${NEO4J_URI:-bolt://localhost:7687}"
 export NEO4J_USER="${NEO4J_USER:-${NEO4J_USERNAME:-neo4j}}"
-export NEO4J_PASSWORD="${NEO4J_PASSWORD:-litgraphlocal}"
+export NEO4J_PASSWORD="${NEO4J_PASSWORD:-litkglocal}"
 export NEO4J_DATABASE="${NEO4J_DATABASE:-neo4j}"
-export GRAPHITI_GROUP_ID="${GRAPHITI_GROUP_ID:-litgraph-docs}"
+export GRAPHITI_GROUP_ID="${GRAPHITI_GROUP_ID:-litkg-docs}"
 export SEMAPHORE_LIMIT="${SEMAPHORE_LIMIT:-2}"
 
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then

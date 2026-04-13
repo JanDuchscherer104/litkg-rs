@@ -1,13 +1,13 @@
 services:
   neo4j:
     image: neo4j:2026.03.1
-    container_name: litgraph-neo4j
+    container_name: litkg-neo4j
     restart: unless-stopped
     ports:
       - "7474:7474"
       - "7687:7687"
     environment:
-      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-litgraphlocal}
+      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-litkglocal}
       NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - ../../.data/kg/neo4j/data:/data

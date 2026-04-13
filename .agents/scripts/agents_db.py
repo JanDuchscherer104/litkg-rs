@@ -123,7 +123,7 @@ def render_ranked_text(kind: str, ranked: dict[str, list[dict[str, Any]]], limit
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Manage the local litgraph-rs .agents backlog.")
+    parser = argparse.ArgumentParser(description="Manage the local litkg-rs .agents backlog.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     rank_parser = subparsers.add_parser("rank", help="Show ranked active issues and todos.")

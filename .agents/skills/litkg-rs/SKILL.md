@@ -1,9 +1,9 @@
 ---
-name: litgraph-rs
+name: litkg-rs
 description: Use when working on the standalone Rust literature KG toolkit, especially registry merge, arXiv download, TeX parsing, graphify materialization, Neo4j export, and client-repo adapter configs.
 ---
 
-# litgraph-rs
+# litkg-rs
 
 ## Grounding
 

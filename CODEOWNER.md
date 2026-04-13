@@ -13,7 +13,7 @@ Purpose: preserve high-signal human-owner requirements, preferences, and durable
 
 ## Product Direction
 
-- Build `litgraph-rs` as a **repo-independent** toolkit. It must not assume one client repo.
+- Build `litkg-rs` as a **repo-independent** toolkit. It must not assume one client repo.
 - Keep the first consumer (`prml-vslam`) thin. Client repos should supply config and adapters, not own the core parsing or graph logic.
 - Keep `graphify` as the preferred first local graph adapter for current client repos when that matches their existing workflow.
 - Keep Neo4j/MCP support optional and secondary unless a client repo explicitly promotes it to primary.
