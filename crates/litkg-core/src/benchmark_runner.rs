@@ -1,10 +1,14 @@
-use crate::benchmark::{BenchmarkCatalog, BenchmarkSource};
+use crate::benchmark::{
+    validate_benchmark_results, BenchmarkArtifact, BenchmarkCatalog, BenchmarkExecutionRecord,
+    BenchmarkResults, BenchmarkRun, BenchmarkScore, BenchmarkSource,
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct BenchmarkIntegrationCatalog {
@@ -62,6 +66,18 @@ pub struct BenchmarkSupportStatus {
     pub summary: String,
     pub official_sources: Vec<BenchmarkSource>,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct NormalizedBenchmarkRunArtifact {
+    pub status: String,
+    pub summary: String,
+    #[serde(default)]
+    pub scores: Vec<BenchmarkScore>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+    #[serde(default)]
+    pub artifacts: Vec<BenchmarkArtifact>,
 }
 
 pub fn load_benchmark_integrations(path: impl AsRef<Path>) -> Result<BenchmarkIntegrationCatalog> {
@@ -288,6 +304,86 @@ pub fn inspect_benchmark_support(
         .collect()
 }
 
+pub fn run_benchmarks(
+    catalog: &BenchmarkCatalog,
+    integrations: &BenchmarkIntegrationCatalog,
+    plan: Option<&BenchmarkRunPlan>,
+    benchmark_ids: &[String],
+) -> Result<BenchmarkResults> {
+    validate_benchmark_integrations(catalog, integrations)?;
+    if let Some(plan) = plan {
+        validate_benchmark_run_plan(catalog, plan)?;
+    }
+
+    let selected_benchmarks = select_benchmarks(catalog, benchmark_ids)?;
+    let integration_by_id = integration_map(integrations);
+    let run_plan_by_benchmark = run_plan_map(plan);
+    let mut results = BenchmarkResults::default();
+
+    for benchmark in selected_benchmarks {
+        let integration = integration_by_id
+            .get(benchmark.id.as_str())
+            .expect("validated integration coverage");
+        let requests = run_plan_by_benchmark.get(benchmark.id.as_str());
+        if let Some(requests) = requests {
+            let missing_binaries = integration
+                .required_binaries
+                .iter()
+                .filter(|binary| !binary_exists(binary))
+                .cloned()
+                .collect::<Vec<_>>();
+            let missing_env_vars = integration
+                .required_env_vars
+                .iter()
+                .filter(|name| {
+                    env::var(name.as_str())
+                        .map(|value| value.trim().is_empty())
+                        .unwrap_or(true)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            if !missing_binaries.is_empty() || !missing_env_vars.is_empty() {
+                results.runs.push(BenchmarkRun {
+                    benchmark_id: benchmark.id.clone(),
+                    run_id: format!("{}-prerequisite-check", benchmark.id),
+                    status: "unavailable".to_string(),
+                    summary: "Benchmark integration is configured but missing local prerequisites."
+                        .to_string(),
+                    scores: Vec::new(),
+                    diagnostics: missing_prereq_diagnostics(&missing_binaries, &missing_env_vars),
+                    artifacts: Vec::new(),
+                    execution: None,
+                });
+                continue;
+            }
+
+            for request in requests {
+                results
+                    .runs
+                    .push(execute_run_request(catalog, integration, request)?);
+            }
+        } else {
+            results.runs.push(BenchmarkRun {
+                benchmark_id: benchmark.id.clone(),
+                run_id: format!("{}-unconfigured", benchmark.id),
+                status: "unconfigured".to_string(),
+                summary: "No benchmark run request is configured for this benchmark.".to_string(),
+                scores: Vec::new(),
+                diagnostics: vec![
+                    "Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."
+                        .to_string(),
+                ],
+                artifacts: Vec::new(),
+                execution: None,
+            });
+        }
+    }
+
+    validate_benchmark_results(catalog, &results)?;
+    Ok(results)
+}
+
 fn select_benchmarks<'a>(
     catalog: &'a BenchmarkCatalog,
     benchmark_ids: &[String],
@@ -316,6 +412,179 @@ fn integration_map(
         .iter()
         .map(|integration| (integration.benchmark_id.as_str(), integration))
         .collect()
+}
+
+fn execute_run_request(
+    catalog: &BenchmarkCatalog,
+    integration: &BenchmarkIntegration,
+    request: &BenchmarkRunRequest,
+) -> Result<BenchmarkRun> {
+    let tempdir = tempfile::tempdir().context("Failed to create benchmark runner tempdir")?;
+    let output_path = tempdir.path().join("normalized-result.json");
+    let artifact_dir = tempdir.path().join("artifacts");
+    fs::create_dir_all(&artifact_dir).with_context(|| {
+        format!(
+            "Failed to create artifact directory {}",
+            artifact_dir.display()
+        )
+    })?;
+
+    let workdir = request
+        .workdir
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| env::current_dir().expect("current_dir is available"));
+
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(&request.command);
+    command.current_dir(&workdir);
+    command.env("LITKG_BENCHMARK_ID", &request.benchmark_id);
+    command.env("LITKG_BENCHMARK_RUN_ID", &request.run_id);
+    command.env("LITKG_BENCHMARK_OUTPUT_PATH", &output_path);
+    command.env("LITKG_BENCHMARK_ARTIFACT_DIR", &artifact_dir);
+    for (key, value) in &request.env {
+        command.env(key, value);
+    }
+
+    let execution = BenchmarkExecutionRecord {
+        runner_kind: integration.runner_kind.clone(),
+        command: request.command.clone(),
+        workdir: workdir.display().to_string(),
+    };
+
+    let output = match command.output() {
+        Ok(output) => output,
+        Err(error) => {
+            return Ok(BenchmarkRun {
+                benchmark_id: request.benchmark_id.clone(),
+                run_id: request.run_id.clone(),
+                status: "runner_failed".to_string(),
+                summary: "Failed to spawn benchmark command.".to_string(),
+                scores: Vec::new(),
+                diagnostics: vec![error.to_string()],
+                artifacts: Vec::new(),
+                execution: Some(execution),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if output_path.exists() {
+        let raw = match fs::read_to_string(&output_path) {
+            Ok(raw) => raw,
+            Err(error) => {
+                return Ok(BenchmarkRun {
+                    benchmark_id: request.benchmark_id.clone(),
+                    run_id: request.run_id.clone(),
+                    status: "normalization_error".to_string(),
+                    summary: "Failed to read normalized benchmark artifact.".to_string(),
+                    scores: Vec::new(),
+                    diagnostics: vec![
+                        error.to_string(),
+                        format!("Artifact path: {}", output_path.display()),
+                    ],
+                    artifacts: Vec::new(),
+                    execution: Some(execution),
+                });
+            }
+        };
+
+        let normalized: NormalizedBenchmarkRunArtifact = match serde_json::from_str(&raw) {
+            Ok(normalized) => normalized,
+            Err(error) => {
+                return Ok(BenchmarkRun {
+                    benchmark_id: request.benchmark_id.clone(),
+                    run_id: request.run_id.clone(),
+                    status: "normalization_error".to_string(),
+                    summary: "Failed to parse normalized benchmark artifact.".to_string(),
+                    scores: Vec::new(),
+                    diagnostics: vec![
+                        error.to_string(),
+                        format!("Artifact path: {}", output_path.display()),
+                    ],
+                    artifacts: Vec::new(),
+                    execution: Some(execution),
+                });
+            }
+        };
+
+        let mut run = BenchmarkRun {
+            benchmark_id: request.benchmark_id.clone(),
+            run_id: request.run_id.clone(),
+            status: normalized.status,
+            summary: normalized.summary,
+            scores: normalized.scores,
+            diagnostics: normalized.diagnostics,
+            artifacts: normalized.artifacts,
+            execution: Some(execution.clone()),
+        };
+        push_command_streams(
+            &mut run.diagnostics,
+            &stdout,
+            &stderr,
+            !output.status.success(),
+        );
+        if !output.status.success() {
+            run.diagnostics
+                .push(format!("Command exited with status {}", output.status));
+        }
+
+        if let Err(error) = validate_benchmark_results(
+            catalog,
+            &BenchmarkResults {
+                runs: vec![run.clone()],
+            },
+        ) {
+            return Ok(BenchmarkRun {
+                benchmark_id: request.benchmark_id.clone(),
+                run_id: request.run_id.clone(),
+                status: "normalization_error".to_string(),
+                summary: "Normalized benchmark artifact failed validation.".to_string(),
+                scores: Vec::new(),
+                diagnostics: vec![
+                    format!(
+                        "The normalized artifact for `{}` did not match the benchmark metric schema.",
+                        request.benchmark_id
+                    ),
+                    error.to_string(),
+                    format!("Artifact path: {}", output_path.display()),
+                ],
+                artifacts: Vec::new(),
+                execution: Some(execution),
+            });
+        }
+
+        return Ok(run);
+    }
+
+    let mut diagnostics = Vec::new();
+    push_command_streams(&mut diagnostics, &stdout, &stderr, true);
+    diagnostics.push(format!(
+        "Expected normalized JSON artifact at {}",
+        output_path.display()
+    ));
+    diagnostics.push(format!("Command exited with status {}", output.status));
+
+    Ok(BenchmarkRun {
+        benchmark_id: request.benchmark_id.clone(),
+        run_id: request.run_id.clone(),
+        status: if output.status.success() {
+            "normalization_error".to_string()
+        } else {
+            "runner_failed".to_string()
+        },
+        summary: if output.status.success() {
+            "Benchmark command completed without emitting a normalized artifact.".to_string()
+        } else {
+            "Benchmark command failed before emitting a normalized artifact.".to_string()
+        },
+        scores: Vec::new(),
+        diagnostics,
+        artifacts: Vec::new(),
+        execution: Some(execution),
+    })
 }
 
 fn run_plan_map(plan: Option<&BenchmarkRunPlan>) -> BTreeMap<&str, Vec<&BenchmarkRunRequest>> {
@@ -347,11 +616,56 @@ fn binary_exists(binary: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn missing_prereq_diagnostics(
+    missing_binaries: &[String],
+    missing_env_vars: &[String],
+) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    if !missing_binaries.is_empty() {
+        diagnostics.push(format!(
+            "Missing required binaries: {}",
+            missing_binaries.join(", ")
+        ));
+    }
+    if !missing_env_vars.is_empty() {
+        diagnostics.push(format!(
+            "Missing required environment variables: {}",
+            missing_env_vars.join(", ")
+        ));
+    }
+    diagnostics
+}
+
+fn push_command_streams(
+    diagnostics: &mut Vec<String>,
+    stdout: &str,
+    stderr: &str,
+    include_stdout: bool,
+) {
+    if include_stdout && !stdout.is_empty() {
+        diagnostics.push(format!("stdout: {}", truncate(stdout)));
+    }
+    if !stderr.is_empty() {
+        diagnostics.push(format!("stderr: {}", truncate(stderr)));
+    }
+}
+
+fn truncate(value: &str) -> String {
+    const MAX_CHARS: usize = 600;
+    if value.chars().count() <= MAX_CHARS {
+        return value.to_string();
+    }
+    let mut truncated = value.chars().take(MAX_CHARS).collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::benchmark::{
-        AutoResearchTargetTemplate, BenchmarkCatalog, BenchmarkMetric, BenchmarkSpec,
+        AutoResearchComponent, AutoResearchTargetTemplate, BenchmarkCatalog, BenchmarkMetric,
+        BenchmarkSpec,
     };
 
     fn sample_catalog() -> BenchmarkCatalog {
@@ -374,7 +688,13 @@ mod tests {
                     url: "https://example.com/paper".into(),
                 }],
             }],
-            autoresearch_components: vec![],
+            autoresearch_components: vec![AutoResearchComponent {
+                id: "noop".into(),
+                title: "No-op".into(),
+                prompt_fragment: "No-op component.".into(),
+                benchmark_ids: vec!["swe-qa-pro".into()],
+                tags: vec![],
+            }],
             autoresearch_targets: vec![AutoResearchTargetTemplate {
                 id: "kg-navigation".into(),
                 title: "KG navigation".into(),
@@ -449,5 +769,70 @@ mod tests {
         assert_eq!(statuses[0].benchmark_id, "swe-qa-pro");
         assert_eq!(statuses[0].local_status, "ready");
         assert_eq!(statuses[0].configured_runs, 1);
+    }
+
+    #[test]
+    fn runs_benchmark_command_and_normalizes_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("emit-result.sh");
+        fs::write(
+            &script_path,
+            r#"#!/bin/sh
+cat > "$LITKG_BENCHMARK_OUTPUT_PATH" <<'EOF'
+{
+  "status": "error",
+  "summary": "Terminal benchmark completed.",
+  "scores": [
+    {
+      "metric_id": "overall",
+      "value": 0.42,
+      "unit": "ratio"
+    }
+  ],
+  "diagnostics": ["fixture-run"],
+  "artifacts": [
+    {
+      "label": "raw-log",
+      "kind": "log",
+      "location": "artifacts/run.log"
+    }
+  ]
+}
+EOF
+"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script_path, permissions).unwrap();
+        }
+
+        let results = run_benchmarks(
+            &sample_catalog(),
+            &sample_integrations(),
+            Some(&BenchmarkRunPlan {
+                runs: vec![BenchmarkRunRequest {
+                    benchmark_id: "swe-qa-pro".into(),
+                    run_id: "baseline".into(),
+                    command: script_path.display().to_string(),
+                    workdir: Some(dir.path().display().to_string()),
+                    env: BTreeMap::new(),
+                }],
+            }),
+            &["swe-qa-pro".into()],
+        )
+        .unwrap();
+
+        assert_eq!(results.runs.len(), 1);
+        assert_eq!(results.runs[0].status, "error");
+        assert_eq!(results.runs[0].scores[0].metric_id, "overall");
+        assert_eq!(
+            results.runs[0].execution.as_ref().unwrap().runner_kind,
+            "external_command"
+        );
+        assert_eq!(results.runs[0].diagnostics[0], "fixture-run");
     }
 }

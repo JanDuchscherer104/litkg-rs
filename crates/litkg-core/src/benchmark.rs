@@ -80,6 +80,12 @@ pub struct BenchmarkRun {
     pub summary: String,
     #[serde(default)]
     pub scores: Vec<BenchmarkScore>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+    #[serde(default)]
+    pub artifacts: Vec<BenchmarkArtifact>,
+    #[serde(default)]
+    pub execution: Option<BenchmarkExecutionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -87,6 +93,20 @@ pub struct BenchmarkScore {
     pub metric_id: String,
     pub value: f64,
     pub unit: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BenchmarkArtifact {
+    pub label: String,
+    pub kind: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BenchmarkExecutionRecord {
+    pub runner_kind: String,
+    pub command: String,
+    pub workdir: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -185,6 +205,14 @@ pub fn load_benchmark_results(path: impl AsRef<Path>) -> Result<BenchmarkResults
         .with_context(|| format!("Failed to read benchmark results {}", path.display()))?;
     toml::from_str(&raw)
         .with_context(|| format!("Failed to parse benchmark results {}", path.display()))
+}
+
+pub fn write_benchmark_results(path: impl AsRef<Path>, results: &BenchmarkResults) -> Result<()> {
+    let path = path.as_ref();
+    let raw = toml::to_string_pretty(results)
+        .with_context(|| format!("Failed to serialize benchmark results {}", path.display()))?;
+    fs::write(path, raw)
+        .with_context(|| format!("Failed to write benchmark results {}", path.display()))
 }
 
 pub fn validate_benchmark_catalog(catalog: &BenchmarkCatalog) -> Result<ValidationSummary> {
@@ -377,6 +405,36 @@ pub fn validate_benchmark_results(
                 "Benchmark run `{}` must have a non-empty summary",
                 run.run_id
             );
+        }
+        for diagnostic in &run.diagnostics {
+            if diagnostic.trim().is_empty() {
+                bail!(
+                    "Benchmark run `{}` contains an empty diagnostic entry",
+                    run.run_id
+                );
+            }
+        }
+        for artifact in &run.artifacts {
+            if artifact.label.trim().is_empty()
+                || artifact.kind.trim().is_empty()
+                || artifact.location.trim().is_empty()
+            {
+                bail!(
+                    "Benchmark run `{}` contains an artifact with an empty label, kind, or location",
+                    run.run_id
+                );
+            }
+        }
+        if let Some(execution) = &run.execution {
+            if execution.runner_kind.trim().is_empty()
+                || execution.command.trim().is_empty()
+                || execution.workdir.trim().is_empty()
+            {
+                bail!(
+                    "Benchmark run `{}` contains incomplete execution metadata",
+                    run.run_id
+                );
+            }
         }
         let metric_ids: BTreeSet<&str> = benchmark
             .metrics
@@ -836,10 +894,20 @@ fn classify_run_status(status: &str) -> Result<BenchmarkRunStatusClass> {
         }
         "observed_failure" | "failure" | "failed" | "regression" | "degraded"
         | "partial_failure" | "error" => BenchmarkRunStatusClass::PromotableFailure,
-        "timeout" | "timed_out" | "pending" | "queued" | "canceled" | "cancelled"
-        | "infra_error" | "infra_failure" | "unsupported" | "skipped" => {
-            BenchmarkRunStatusClass::DeferredControl
-        }
+        "timeout"
+        | "timed_out"
+        | "pending"
+        | "queued"
+        | "canceled"
+        | "cancelled"
+        | "infra_error"
+        | "infra_failure"
+        | "unsupported"
+        | "skipped"
+        | "unconfigured"
+        | "unavailable"
+        | "runner_failed"
+        | "normalization_error" => BenchmarkRunStatusClass::DeferredControl,
         _ => bail!(
             "Classify benchmark run status `{}` before using it in autoresearch promotion",
             status
@@ -1050,6 +1118,9 @@ mod tests {
                     value: 1.0,
                     unit: "pass".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
         let result_summary = validate_benchmark_results(&catalog, &results).unwrap();
@@ -1070,6 +1141,9 @@ mod tests {
                     value: 1.0,
                     unit: "pass".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
         let rendered = render_autoresearch_target(
@@ -1103,6 +1177,9 @@ mod tests {
                     value: 0.42,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1136,6 +1213,9 @@ mod tests {
                     value: 0.91,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1163,6 +1243,9 @@ mod tests {
                 status: "timeout".into(),
                 summary: "Harness timed out before benchmark execution completed.".into(),
                 scores: vec![],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1195,6 +1278,9 @@ mod tests {
                     value: 0.42,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1227,6 +1313,9 @@ mod tests {
                     value: 0.42,
                     unit: "ratio\n# injected".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1279,6 +1368,9 @@ mod tests {
                     value: 0.1,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1302,6 +1394,9 @@ mod tests {
                     value: 1.0,
                     unit: "pass".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1323,6 +1418,9 @@ mod tests {
                     value: f64::NAN,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1344,6 +1442,9 @@ mod tests {
                     value: 0.0,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1376,6 +1477,9 @@ mod tests {
                         value: 0.2,
                         unit: "ratio".into(),
                     }],
+                    diagnostics: Vec::new(),
+                    artifacts: Vec::new(),
+                    execution: None,
                 },
                 BenchmarkRun {
                     benchmark_id: "swe-qa-pro".into(),
@@ -1387,6 +1491,9 @@ mod tests {
                         value: 0.3,
                         unit: "ratio".into(),
                     }],
+                    diagnostics: Vec::new(),
+                    artifacts: Vec::new(),
+                    execution: None,
                 },
             ],
         };
@@ -1424,6 +1531,9 @@ mod tests {
                     value: 0.42,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1459,6 +1569,9 @@ mod tests {
                     value: 1.0,
                     unit: "pass".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
         let rendered = render_autoresearch_target(
@@ -1489,6 +1602,9 @@ mod tests {
                     value: 1.0,
                     unit: "pass".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
         let rendered = render_autoresearch_target(
@@ -1520,6 +1636,9 @@ mod tests {
                     value: 0.42,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1553,6 +1672,9 @@ mod tests {
                     value: 0.0,
                     unit: "ratio".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 
@@ -1584,6 +1706,9 @@ mod tests {
                     value: 1.0,
                     unit: "pass\n# injected".into(),
                 }],
+                diagnostics: Vec::new(),
+                artifacts: Vec::new(),
+                execution: None,
             }],
         };
 

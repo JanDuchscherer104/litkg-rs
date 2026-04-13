@@ -11,14 +11,16 @@ pub mod tex;
 
 pub use benchmark::{
     load_benchmark_catalog, load_benchmark_results, render_autoresearch_target,
-    validate_benchmark_catalog, validate_benchmark_results, AutoResearchRenderFormat,
-    AutoResearchTargetTemplate, BenchmarkCatalog, BenchmarkResults, BenchmarkRun, BenchmarkScore,
-    BenchmarkSource, BenchmarkSpec, ValidationSummary,
+    validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
+    AutoResearchRenderFormat, AutoResearchTargetTemplate, BenchmarkArtifact, BenchmarkCatalog,
+    BenchmarkExecutionRecord, BenchmarkResults, BenchmarkRun, BenchmarkScore, BenchmarkSource,
+    BenchmarkSpec, ValidationSummary,
 };
 pub use benchmark_runner::{
     inspect_benchmark_support, load_benchmark_integrations, load_benchmark_run_plan,
-    validate_benchmark_integrations, validate_benchmark_run_plan, BenchmarkIntegration,
-    BenchmarkIntegrationCatalog, BenchmarkRunPlan, BenchmarkRunRequest, BenchmarkSupportStatus,
+    run_benchmarks, validate_benchmark_integrations, validate_benchmark_run_plan,
+    BenchmarkIntegration, BenchmarkIntegrationCatalog, BenchmarkRunPlan, BenchmarkRunRequest,
+    BenchmarkSupportStatus,
 };
 pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{RepoConfig, SinkMode};
