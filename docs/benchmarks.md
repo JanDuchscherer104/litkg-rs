@@ -77,3 +77,13 @@ cargo run -p litkg-cli -- render-autoresearch-target \
   --target-id kg_navigation_improvement \
   --format github-issue
 ```
+
+When a result bundle is present, the rendered target also emits a deterministic
+promotion assessment:
+
+- `validation_only` runs are deferred and treated as schema or smoke checks
+- non-success execution runs are marked as promotable inputs for the next research
+  target
+
+This keeps schema-validation fixtures from masquerading as evidence of benchmark
+deficits during overnight loops.

@@ -90,4 +90,9 @@ Benchmark metadata, validation, and autoresearch-target composition now live in 
 - validation command: `make benchmark-validate`
 - autoresearch-target rendering: `make autoresearch-target`
 
+Rendered autoresearch targets now distinguish between:
+
+- validation-only result bundles that should stay as schema/smoke evidence
+- non-success execution-bearing runs that are eligible to shape the next deterministic target
+
 The catalog covers `SWE-Bench Pro`, `SWE-QA-Pro`, `CodeRepoQA`, `StackRepoQA`, `RepoReason`, `RACE-bench`, `SWD-Bench`, `CCBench`, and `Terminal-Bench`.
