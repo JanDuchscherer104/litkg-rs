@@ -5,11 +5,15 @@ CARGO ?= cargo
 PYTHON ?= python3
 AGENTS_DB ?= python3 .agents/scripts/agents_db.py
 AGENTS_ARGS ?= rank
+KG_CODE_REPO_ROOT ?=
 KG_SRC_DIR ?=
 KG_DOC_PATHS ?=
 GRAPHITI_MODE ?= http
 BENCHMARK_CATALOG ?= examples/benchmarks/kg.toml
+BENCHMARK_INTEGRATIONS ?= examples/benchmarks/integrations.toml
 BENCHMARK_RESULTS ?= examples/benchmarks/sample-results.toml
+BENCHMARK_RESULTS_OUT ?= examples/benchmarks/latest-results.toml
+BENCHMARK_RUN_PLAN ?=
 AUTORESEARCH_TARGET_ID ?= kg_navigation_improvement
 AUTORESEARCH_TARGET_FORMAT ?= markdown
 LITKG_CONFIG ?= examples/prml-vslam.toml
@@ -21,7 +25,7 @@ LOC_ARGS ?=
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
 .PHONY: kg-up kg-down kg-index kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
 .PHONY: litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j
-.PHONY: benchmark-validate autoresearch-target
+.PHONY: benchmark-validate benchmark-support benchmark-run autoresearch-target
 
 fmt: ## Run rustfmt across the workspace
 	$(CARGO) fmt --all
@@ -76,21 +80,21 @@ kg-down: ## Stop the local Neo4j KG stack
 	./scripts/kg/down.sh
 
 kg-index: ## Reindex code graph for a repo path (set KG_SRC_DIR=<path>, default .)
-	./scripts/kg/index_code.sh "$(if $(strip $(KG_SRC_DIR)),$(KG_SRC_DIR),.)"
+	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh "$(if $(strip $(KG_SRC_DIR)),$(KG_SRC_DIR),.)"
 
 kg-ingest-docs: ## Ingest repo docs into Graphiti (optional KG_DOC_PATHS="path1 path2")
 	./scripts/kg/ingest_docs.sh $(KG_DOC_PATHS)
 
 kg-enrich: ## Refresh embeddings and code↔doc links (optional KG_SRC_DIR=<path> scopes code refresh)
-	KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
+	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
 
-kg-update: ## Reindex KG code for a repo path and refresh scoped code↔doc links (set KG_SRC_DIR=<path>)
+kg-update: ## Reindex KG code for a repo path and refresh scoped code↔doc links (set KG_SRC_DIR=<path>, optional KG_CODE_REPO_ROOT=<repo>)
 	@if [ -z "$(strip $(KG_SRC_DIR))" ]; then \
 		echo "KG_SRC_DIR is required, e.g. make kg-update KG_SRC_DIR=crates/litkg-core"; \
 		exit 2; \
 	fi
-	./scripts/kg/index_code.sh "$(KG_SRC_DIR)"
-	KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
+	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh "$(KG_SRC_DIR)"
+	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
 
 kg-graphiti: ## Start the upstream Graphiti MCP server (set GRAPHITI_MODE=http|stdio)
 	./scripts/kg/start_graphiti.sh "$(GRAPHITI_MODE)"
@@ -127,6 +131,12 @@ litkg-export-neo4j: ## Emit the Neo4j export bundle for a config
 
 benchmark-validate: ## Validate benchmark catalog and sample results
 	$(CARGO) run -p litkg-cli -- validate-benchmarks --catalog "$(BENCHMARK_CATALOG)" --results "$(BENCHMARK_RESULTS)"
+
+benchmark-support: ## Inspect benchmark support and local readiness
+	$(CARGO) run -p litkg-cli -- benchmark-support --catalog "$(BENCHMARK_CATALOG)" --integrations "$(BENCHMARK_INTEGRATIONS)" $(if $(strip $(BENCHMARK_RUN_PLAN)),--plan "$(BENCHMARK_RUN_PLAN)",)
+
+benchmark-run: ## Run configured benchmark integrations and write a results bundle
+	$(CARGO) run -p litkg-cli -- run-benchmarks --catalog "$(BENCHMARK_CATALOG)" --integrations "$(BENCHMARK_INTEGRATIONS)" $(if $(strip $(BENCHMARK_RUN_PLAN)),--plan "$(BENCHMARK_RUN_PLAN)",) --output "$(BENCHMARK_RESULTS_OUT)"
 
 autoresearch-target: ## Render an autoresearch target from the benchmark catalog/results
 	$(CARGO) run -p litkg-cli -- render-autoresearch-target --catalog "$(BENCHMARK_CATALOG)" --results "$(BENCHMARK_RESULTS)" --target-id "$(AUTORESEARCH_TARGET_ID)" --format "$(AUTORESEARCH_TARGET_FORMAT)"
