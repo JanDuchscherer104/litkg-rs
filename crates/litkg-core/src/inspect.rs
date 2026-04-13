@@ -144,16 +144,12 @@ pub fn search_papers(
     }
 
     let effective_records = effective_registry_records(registry, parsed_papers);
-    let parsed_by_id: BTreeMap<&str, &ParsedPaper> =
-        live_parsed_papers(&effective_records, parsed_papers)
-            .iter()
-            .map(|paper| (paper.metadata.paper_id.as_str(), *paper))
-            .collect();
+    let parsed_by_record_id = matched_parsed_papers(&effective_records, parsed_papers);
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
 
     for record in &effective_records {
-        let parsed = parsed_by_id.get(record.paper_id.as_str()).copied();
+        let parsed = parsed_by_record_id.get(&record.paper_id).copied();
         let mut score = 0u32;
         let mut matched_fields = BTreeSet::new();
         let mut snippet = None;
@@ -340,11 +336,18 @@ pub fn inspect_paper(
 ) -> Result<PaperInspection> {
     let effective_records = effective_registry_records(registry, parsed_papers);
     let record = resolve_record(&effective_records, selector)?;
-    let live_parsed = live_parsed_papers(&effective_records, parsed_papers);
-    let parsed = live_parsed
-        .iter()
-        .copied()
-        .find(|paper| paper.metadata.paper_id == record.paper_id);
+    let parsed_by_record_id = matched_parsed_papers(&effective_records, parsed_papers);
+    let live_parsed = unique_parsed_papers(parsed_by_record_id.values().copied().collect());
+    let parsed = parsed_by_record_id.get(&record.paper_id).copied();
+    let self_parsed_id = parsed
+        .map(|paper| paper.metadata.paper_id.as_str())
+        .unwrap_or(record.paper_id.as_str());
+    let parsed_json_path = parsed.and_then(|paper| {
+        let path = config
+            .parsed_root()
+            .join(format!("{}.json", paper.metadata.paper_id));
+        path.is_file().then_some(path)
+    });
 
     let cited_by = record
         .citation_key
@@ -353,7 +356,7 @@ pub fn inspect_paper(
             let mut incoming = live_parsed
                 .iter()
                 .copied()
-                .filter(|paper| paper.metadata.paper_id != record.paper_id)
+                .filter(|paper| paper.metadata.paper_id != self_parsed_id)
                 .filter(|paper| {
                     paper
                         .citations
@@ -373,12 +376,7 @@ pub fn inspect_paper(
 
     Ok(PaperInspection {
         metadata: record.clone(),
-        parsed_json_path: {
-            let path = config
-                .parsed_root()
-                .join(format!("{}.json", record.paper_id));
-            path.is_file().then_some(path)
-        },
+        parsed_json_path,
         materialized_markdown_path: {
             let path = config
                 .generated_docs_root
@@ -540,14 +538,11 @@ fn effective_registry_records(
     registry: &[PaperSourceRecord],
     parsed_papers: &[ParsedPaper],
 ) -> Vec<PaperSourceRecord> {
-    let parsed_by_id: BTreeMap<&str, &ParsedPaper> = live_parsed_papers(registry, parsed_papers)
-        .iter()
-        .map(|paper| (paper.metadata.paper_id.as_str(), *paper))
-        .collect();
+    let matched = matched_parsed_papers(registry, parsed_papers);
 
     registry
         .iter()
-        .map(|record| match parsed_by_id.get(record.paper_id.as_str()) {
+        .map(|record| match matched.get(&record.paper_id) {
             Some(paper) => {
                 let mut merged = record.clone();
                 if has_structured_parsed_content(paper) {
@@ -561,18 +556,69 @@ fn effective_registry_records(
         .collect()
 }
 
+fn matched_parsed_papers<'a>(
+    registry: &[PaperSourceRecord],
+    parsed_papers: &'a [ParsedPaper],
+) -> BTreeMap<String, &'a ParsedPaper> {
+    let parsed_by_id: BTreeMap<&str, &ParsedPaper> = parsed_papers
+        .iter()
+        .map(|paper| (paper.metadata.paper_id.as_str(), paper))
+        .collect();
+    let parsed_by_citation: BTreeMap<&str, &ParsedPaper> = parsed_papers
+        .iter()
+        .filter_map(|paper| {
+            paper
+                .metadata
+                .citation_key
+                .as_deref()
+                .map(|key| (key, paper))
+        })
+        .collect();
+    let parsed_by_arxiv: BTreeMap<&str, &ParsedPaper> = parsed_papers
+        .iter()
+        .filter_map(|paper| paper.metadata.arxiv_id.as_deref().map(|id| (id, paper)))
+        .collect();
+
+    registry
+        .iter()
+        .filter_map(|record| {
+            let paper = parsed_by_id
+                .get(record.paper_id.as_str())
+                .copied()
+                .or_else(|| {
+                    record
+                        .citation_key
+                        .as_deref()
+                        .and_then(|key| parsed_by_citation.get(key).copied())
+                })
+                .or_else(|| {
+                    record
+                        .arxiv_id
+                        .as_deref()
+                        .and_then(|id| parsed_by_arxiv.get(id).copied())
+                })?;
+            Some((record.paper_id.clone(), paper))
+        })
+        .collect()
+}
+
+fn unique_parsed_papers<'a>(papers: Vec<&'a ParsedPaper>) -> Vec<&'a ParsedPaper> {
+    let mut seen = BTreeSet::new();
+    papers
+        .into_iter()
+        .filter(|paper| seen.insert(paper.metadata.paper_id.clone()))
+        .collect()
+}
+
 fn live_parsed_papers<'a>(
     registry: &'a [PaperSourceRecord],
     parsed_papers: &'a [ParsedPaper],
 ) -> Vec<&'a ParsedPaper> {
-    let registry_ids = registry
-        .iter()
-        .map(|record| record.paper_id.as_str())
-        .collect::<BTreeSet<_>>();
-    parsed_papers
-        .iter()
-        .filter(|paper| registry_ids.contains(paper.metadata.paper_id.as_str()))
-        .collect()
+    unique_parsed_papers(
+        matched_parsed_papers(registry, parsed_papers)
+            .into_values()
+            .collect(),
+    )
 }
 
 #[cfg(test)]

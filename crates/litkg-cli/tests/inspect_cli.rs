@@ -200,7 +200,7 @@ fn write_stale_snapshot_config(root: &Path) -> PathBuf {
         &parsed_root,
         &[ParsedPaper {
             metadata: PaperSourceRecord {
-                paper_id: "arxiv-2601-00001".into(),
+                paper_id: "old2024paper".into(),
                 citation_key: Some("old2024paper".into()),
                 title: "Parsed Paper".into(),
                 authors: vec!["Old Author".into()],
