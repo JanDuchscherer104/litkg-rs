@@ -110,3 +110,12 @@ priority = "high"
 status = "open"
 github_issue_number = 10
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/10"
+
+[[issues]]
+id = "ISSUE-0014"
+title = "Document repo-scoped Codex skill and MCP setup"
+summary = "Add operator-facing instructions for wiring litkg-rs into Codex through repo skills and project-scoped MCP configuration for the local KG stack."
+priority = "high"
+status = "open"
+github_issue_number = 11
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/11"

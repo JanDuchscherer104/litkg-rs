@@ -15,6 +15,7 @@ The first consumer is `prml-vslam`, but this repository is intentionally not tie
 
 - [CODEOWNER.md](CODEOWNER.md) stores distilled human-owner requirements and preferences that should persist beyond one chat session.
 - [AGENTS.md](AGENTS.md) stores repo policy and operating rules for agents.
+- [docs/codex-setup.md](docs/codex-setup.md) explains how to wire the repo into Codex through repo-local skills and the optional Graphiti MCP server.
 
 ## Workspace
 
@@ -49,6 +50,22 @@ Use the local `.agents/` backlog:
 ```bash
 make agents-db
 ```
+
+## Codex Integration
+
+This repo already carries the main Codex surfaces:
+
+- `AGENTS.md` for repo-wide policy
+- `.agents/skills/litkg-rs` for toolkit-specific workflow guidance
+- `.agents/skills/autoresearch-litkg-rs` for bounded benchmark-driven autoresearch loops
+- `.agents/skills/gh-issue-lifecycle` for backlog and GitHub issue hygiene
+
+See [docs/codex-setup.md](docs/codex-setup.md) for the operator path to:
+
+- verify repo-local skill discovery
+- understand when `agents/openai.yaml` metadata is optional versus useful
+- configure the optional Graphiti MCP server for the local KG stack
+- verify that Codex can see both the skill layer and the MCP layer
 
 ## Local KG Runtime
 

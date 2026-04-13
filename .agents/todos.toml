@@ -119,3 +119,13 @@ status = "pending"
 loc_min = 100
 loc_expected = 220
 loc_max = 420
+
+[[todos]]
+id = "TODO-0013"
+title = "Write operator guide for Codex skill discovery and Graphiti MCP configuration"
+issue_ids = ["ISSUE-0014"]
+priority = "high"
+status = "done"
+loc_min = 80
+loc_expected = 180
+loc_max = 320
