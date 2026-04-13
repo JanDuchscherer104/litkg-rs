@@ -70,14 +70,7 @@ pub fn compute_corpus_stats(
     registry: &[PaperSourceRecord],
     parsed_papers: &[ParsedPaper],
 ) -> CorpusStats {
-    let registry_ids = registry
-        .iter()
-        .map(|record| record.paper_id.as_str())
-        .collect::<BTreeSet<_>>();
-    let live_parsed = parsed_papers
-        .iter()
-        .filter(|paper| registry_ids.contains(paper.metadata.paper_id.as_str()))
-        .collect::<Vec<_>>();
+    let live_parsed = live_parsed_papers(registry, parsed_papers);
     let mut source_kind_counts = BTreeMap::new();
     let mut download_mode_counts = BTreeMap::new();
     let mut parse_status_counts = BTreeMap::new();
@@ -137,7 +130,7 @@ pub fn search_papers(
         bail!("Search limit must be at least 1");
     }
     if query.is_empty() {
-        return Ok(Vec::new());
+        bail!("Search query must not be empty");
     }
 
     let parsed_by_id: BTreeMap<&str, &ParsedPaper> = parsed_papers
@@ -326,16 +319,19 @@ pub fn inspect_paper(
     selector: &str,
 ) -> Result<PaperInspection> {
     let record = resolve_record(registry, selector)?;
-    let parsed = parsed_papers
+    let live_parsed = live_parsed_papers(registry, parsed_papers);
+    let parsed = live_parsed
         .iter()
+        .copied()
         .find(|paper| paper.metadata.paper_id == record.paper_id);
 
     let cited_by = record
         .citation_key
         .as_ref()
         .map(|citation_key| {
-            let mut incoming = parsed_papers
+            let mut incoming = live_parsed
                 .iter()
+                .copied()
                 .filter(|paper| paper.metadata.paper_id != record.paper_id)
                 .filter(|paper| {
                     paper
@@ -498,6 +494,20 @@ fn truncate(text: &str, max_chars: usize) -> String {
 
 fn normalize_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn live_parsed_papers<'a>(
+    registry: &'a [PaperSourceRecord],
+    parsed_papers: &'a [ParsedPaper],
+) -> Vec<&'a ParsedPaper> {
+    let registry_ids = registry
+        .iter()
+        .map(|record| record.paper_id.as_str())
+        .collect::<BTreeSet<_>>();
+    parsed_papers
+        .iter()
+        .filter(|paper| registry_ids.contains(paper.metadata.paper_id.as_str()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -703,6 +713,11 @@ mod tests {
             .to_string();
         assert!(zero_limit_error.contains("at least 1"));
 
+        let empty_query_error = search_papers(&sample_registry(), &sample_parsed(), &[], "   ", 10)
+            .unwrap_err()
+            .to_string();
+        assert!(empty_query_error.contains("must not be empty"));
+
         let caption_hits = search_papers(
             &sample_registry(),
             &sample_parsed(),
@@ -751,13 +766,34 @@ mod tests {
     fn inspects_paper_and_builds_citation_neighborhood() {
         let dir = tempfile::tempdir().unwrap();
         let repo_config = config(dir.path());
-        let inspection = inspect_paper(
-            &repo_config,
-            &sample_registry(),
-            &sample_parsed(),
-            "smith2025alpha",
-        )
-        .unwrap();
+        let mut parsed = sample_parsed();
+        parsed.push(ParsedPaper {
+            metadata: PaperSourceRecord {
+                paper_id: "stale-citer".into(),
+                citation_key: Some("stale2025citer".into()),
+                title: "Stale Citer".into(),
+                authors: vec![],
+                year: Some("2025".into()),
+                arxiv_id: None,
+                doi: None,
+                url: None,
+                tex_dir: None,
+                pdf_file: None,
+                source_kind: SourceKind::Bib,
+                download_mode: DownloadMode::MetadataOnly,
+                has_local_tex: false,
+                has_local_pdf: false,
+                parse_status: ParseStatus::Parsed,
+            },
+            abstract_text: None,
+            sections: vec![],
+            figures: vec![],
+            tables: vec![],
+            citations: vec!["smith2025alpha".into()],
+            provenance: vec![],
+        });
+        let inspection =
+            inspect_paper(&repo_config, &sample_registry(), &parsed, "smith2025alpha").unwrap();
 
         assert_eq!(inspection.metadata.paper_id, "alpha");
         assert_eq!(inspection.sections.len(), 1);

@@ -387,7 +387,7 @@ fn render_search_results(hits: &[SearchHit], query: &str) -> String {
     let mut lines = vec![
         format!("Search results for `{query}`"),
         String::new(),
-        format!("matches: {}", hits.len()),
+        format!("showing: {}", hits.len()),
     ];
 
     for (index, hit) in hits.iter().enumerate() {

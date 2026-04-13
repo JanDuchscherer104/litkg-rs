@@ -153,6 +153,18 @@ fn search_and_show_paper_commands_work_end_to_end() {
         .assert()
         .failure();
 
+    Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "search",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--query",
+            "   ",
+        ])
+        .assert()
+        .failure();
+
     let show_output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
@@ -172,4 +184,26 @@ fn search_and_show_paper_commands_work_end_to_end() {
     let show_stdout = String::from_utf8(show_output).unwrap();
     assert!(show_stdout.contains("\"paper_id\": \"demo-paper\""));
     assert!(show_stdout.contains("\"figure_captions\""));
+}
+
+#[test]
+fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    let registry_path = dir.path().join("generated").join("registry.jsonl");
+    fs::remove_file(&registry_path).unwrap();
+
+    Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "stats",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+
+    assert!(!registry_path.exists());
 }
