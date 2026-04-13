@@ -7,7 +7,7 @@
 - `infra/neo4j/docker-compose.yml`: local Neo4j + APOC service
 - `scripts/kg/up.sh`: start Neo4j and create local data directories
 - `scripts/kg/down.sh`: stop Neo4j without deleting persisted data
-- `scripts/kg/index_code.sh`: install CodeGraphContext into a repo-local venv and index a repo path
+- `scripts/kg/index_code.sh`: check/bootstrap/index CodeGraphContext for a repo path
 - `scripts/kg/start_graphiti.sh`: clone and run the upstream Graphiti MCP server
 - `scripts/kg/ingest_docs.sh`: Ollama-backed Graphiti core ingestion for repo docs
 - `scripts/kg/enrich_embeddings.py`: local embeddings plus code↔doc `REFERS_TO_CODE` links
@@ -34,6 +34,8 @@ make kg-up
 2. Index code under the whole repo or one subtree:
 
 ```bash
+make kg-index-check
+make kg-index-bootstrap
 make kg-index
 make kg-update KG_SRC_DIR=crates/litkg-core
 make kg-update KG_CODE_REPO_ROOT=/Users/jd/repos/NBV KG_SRC_DIR=aria_nbv/aria_nbv
@@ -61,6 +63,8 @@ make kg-down
 ## Notes
 
 - `kg-update` is the main incremental refresh entrypoint for code-path changes.
+- `kg-index-check` is the non-mutating readiness gate; it reports missing prerequisites and whether Neo4j is running.
+- `kg-index-bootstrap` prepares the local CodeGraphContext runtime once and avoids repeated dependency setup churn on later indexing runs.
 - `KG_CODE_REPO_ROOT` lets the toolkit index code in another repo while still using the local Neo4j and embedding runtime. This is the path to CGC-based Python package indexing outside `litkg-rs`.
 - `kg-ingest-docs` without explicit paths ingests the repo’s README, AGENTS surface, internal DB, and authored docs/reference markdown.
 - When `KG_CODE_REPO_ROOT` points at an external repo, code embeddings still refresh, but doc linking is disabled by default to avoid attaching external code nodes to `litkg-rs` documentation. Re-enable it explicitly with `KG_ENABLE_DOC_LINKS=1` only when the matching external docs have also been ingested into the same Neo4j graph.

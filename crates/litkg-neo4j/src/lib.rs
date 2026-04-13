@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use litkg_core::{infer_enriched_edges, ParsedPaper, RepoConfig};
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -28,6 +29,7 @@ impl Neo4jSink {
             .with_context(|| format!("Failed to create {}", out_dir.display()))?;
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
+        let mut seen_citation_ids = BTreeSet::new();
 
         for paper in papers {
             let paper_id = format!("paper:{}", paper.metadata.paper_id);
@@ -68,11 +70,13 @@ impl Neo4jSink {
 
             for citation in &paper.citations {
                 let citation_id = format!("citation:{citation}");
-                nodes.push(Neo4jNode {
-                    id: citation_id.clone(),
-                    labels: vec!["Citation".into()],
-                    properties: serde_json::json!({ "citation_key": citation }),
-                });
+                if seen_citation_ids.insert(citation_id.clone()) {
+                    nodes.push(Neo4jNode {
+                        id: citation_id.clone(),
+                        labels: vec!["Citation".into()],
+                        properties: serde_json::json!({ "citation_key": citation }),
+                    });
+                }
                 edges.push(Neo4jEdge {
                     source: paper_id.clone(),
                     target: citation_id,
@@ -163,6 +167,87 @@ mod tests {
         assert_eq!(written.len(), 2);
         assert!(config.neo4j_export_root().join("nodes.jsonl").is_file());
         assert!(config.neo4j_export_root().join("edges.jsonl").is_file());
+    }
+
+    #[test]
+    fn deduplicates_shared_citation_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = RepoConfig {
+            manifest_path: dir.path().join("sources.jsonl"),
+            bib_path: dir.path().join("references.bib"),
+            tex_root: dir.path().join("tex"),
+            pdf_root: dir.path().join("pdf"),
+            generated_docs_root: dir.path().join("generated"),
+            registry_path: None,
+            parsed_root: None,
+            neo4j_export_root: None,
+            sink: SinkMode::Neo4j,
+            graphify_rebuild_command: None,
+            download_pdfs: false,
+            relevance_tags: vec![],
+        };
+        let papers = vec![
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "paper-a".into(),
+                    citation_key: Some("papera2026".into()),
+                    title: "Paper A".into(),
+                    authors: vec![],
+                    year: Some("2026".into()),
+                    arxiv_id: None,
+                    doi: None,
+                    url: None,
+                    tex_dir: None,
+                    pdf_file: None,
+                    source_kind: SourceKind::ManifestAndBib,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: None,
+                sections: vec![],
+                figures: vec![],
+                tables: vec![],
+                citations: vec!["shared2026".into()],
+                provenance: vec![],
+            },
+            ParsedPaper {
+                metadata: PaperSourceRecord {
+                    paper_id: "paper-b".into(),
+                    citation_key: Some("paperb2026".into()),
+                    title: "Paper B".into(),
+                    authors: vec![],
+                    year: Some("2026".into()),
+                    arxiv_id: None,
+                    doi: None,
+                    url: None,
+                    tex_dir: None,
+                    pdf_file: None,
+                    source_kind: SourceKind::ManifestAndBib,
+                    download_mode: DownloadMode::ManifestSource,
+                    has_local_tex: true,
+                    has_local_pdf: false,
+                    parse_status: ParseStatus::Parsed,
+                },
+                abstract_text: None,
+                sections: vec![],
+                figures: vec![],
+                tables: vec![],
+                citations: vec!["shared2026".into()],
+                provenance: vec![],
+            },
+        ];
+
+        Neo4jSink::export(&config, &papers).unwrap();
+        let nodes = fs::read_to_string(config.neo4j_export_root().join("nodes.jsonl")).unwrap();
+        let edges = fs::read_to_string(config.neo4j_export_root().join("edges.jsonl")).unwrap();
+
+        assert_eq!(nodes.matches("\"id\":\"citation:shared2026\"").count(), 1);
+        assert_eq!(
+            edges.matches("\"target\":\"citation:shared2026\"").count(),
+            2
+        );
     }
 
     #[test]

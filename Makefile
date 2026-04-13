@@ -8,6 +8,7 @@ AGENTS_ARGS ?= rank
 KG_CODE_REPO_ROOT ?=
 KG_SRC_DIR ?=
 KG_DOC_PATHS ?=
+KG_SKIP_NEO4J_CHECK ?= 0
 GRAPHITI_MODE ?= http
 BENCHMARK_CATALOG ?= examples/benchmarks/kg.toml
 BENCHMARK_INTEGRATIONS ?= examples/benchmarks/integrations.toml
@@ -23,7 +24,7 @@ LOC_ARGS ?=
 
 .PHONY: help fmt test lint lint-check cargo-check clippy ci clean agents-db
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
-.PHONY: kg-up kg-down kg-index kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
+.PHONY: kg-up kg-down kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
 .PHONY: litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j
 .PHONY: benchmark-validate benchmark-support benchmark-run autoresearch-target
 
@@ -81,6 +82,12 @@ kg-down: ## Stop the local Neo4j KG stack
 
 kg-index: ## Reindex code graph for a repo path (set KG_SRC_DIR=<path>, default .)
 	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh "$(if $(strip $(KG_SRC_DIR)),$(KG_SRC_DIR),.)"
+
+kg-index-check: ## Validate indexing prerequisites for a repo path without mutating setup
+	KG_SKIP_NEO4J_CHECK="$(KG_SKIP_NEO4J_CHECK)" KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh --check "$(if $(strip $(KG_SRC_DIR)),$(KG_SRC_DIR),.)"
+
+kg-index-bootstrap: ## Prepare/reuse the CodeGraphContext runtime without indexing code
+	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh --bootstrap
 
 kg-ingest-docs: ## Ingest repo docs into Graphiti (optional KG_DOC_PATHS="path1 path2")
 	./scripts/kg/ingest_docs.sh $(KG_DOC_PATHS)

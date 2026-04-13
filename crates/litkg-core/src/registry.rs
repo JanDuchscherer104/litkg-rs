@@ -57,27 +57,46 @@ pub fn merge_registry(
         .into_iter()
         .map(|entry| (entry.arxiv_id.clone(), entry))
         .collect();
+    let mut manifest_by_normalized_title: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (arxiv_id, entry) in &manifest_by_arxiv {
+        if let Some(title) = entry.title.as_deref() {
+            let normalized = normalize_title(title);
+            if !normalized.is_empty() {
+                manifest_by_normalized_title
+                    .entry(normalized)
+                    .or_default()
+                    .push(arxiv_id.clone());
+            }
+        }
+    }
     let mut used_manifest_ids = BTreeSet::new();
     let mut registry = Vec::new();
 
     for bib in &bib_entries {
         let bib_arxiv = bib.fields.get("eprint").cloned();
+        let bib_title_normalized = normalize_title(
+            bib.fields
+                .get("title")
+                .map(String::as_str)
+                .unwrap_or_default(),
+        );
         let matched_manifest = bib_arxiv
             .as_ref()
             .and_then(|arxiv_id| manifest_by_arxiv.get(arxiv_id))
             .cloned()
             .or_else(|| {
-                manifest_by_arxiv
-                    .values()
-                    .find(|entry| {
-                        normalize_title(entry.title.as_deref().unwrap_or_default())
-                            == normalize_title(
-                                bib.fields
-                                    .get("title")
-                                    .map(String::as_str)
-                                    .unwrap_or_default(),
-                            )
+                if bib_title_normalized.is_empty() {
+                    return None;
+                }
+                manifest_by_normalized_title
+                    .get(&bib_title_normalized)
+                    .and_then(|candidate_ids| {
+                        candidate_ids
+                            .iter()
+                            .find(|candidate_id| !used_manifest_ids.contains(*candidate_id))
+                            .or_else(|| candidate_ids.first())
                     })
+                    .and_then(|candidate_id| manifest_by_arxiv.get(candidate_id))
                     .cloned()
             });
 
@@ -325,6 +344,79 @@ mod tests {
         assert_eq!(
             registry[0].download_mode,
             DownloadMode::ManifestSourcePlusPdf
+        );
+    }
+
+    #[test]
+    fn merges_manifest_and_bib_by_normalized_title_without_eprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = sample_config(dir.path());
+        let manifest = vec![ManifestEntry {
+            title: Some("ViSTA-SLAM: Visual-Text SLAM".into()),
+            arxiv_id: "2509.01584".into(),
+            tex_dir: "vista".into(),
+            source_url: None,
+            pdf_url: None,
+            pdf_file: None,
+        }];
+        let bib = vec![BibEntry {
+            entry_type: "misc".into(),
+            citation_key: "zhang2026vistaslam".into(),
+            fields: BTreeMap::from([
+                ("title".into(), "vista slam visual text slam".into()),
+                ("author".into(), "Ganlin Zhang".into()),
+                ("year".into(), "2026".into()),
+            ]),
+        }];
+
+        let registry = merge_registry(manifest, bib, &config);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry[0].source_kind, SourceKind::ManifestAndBib);
+        assert_eq!(registry[0].arxiv_id.as_deref(), Some("2509.01584"));
+    }
+
+    #[test]
+    fn merges_large_title_only_surface_without_duplicate_manifest_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = sample_config(dir.path());
+
+        let mut manifest = Vec::new();
+        for idx in 0..400usize {
+            manifest.push(ManifestEntry {
+                title: Some(format!("Synthetic Vision Paper {idx}")),
+                arxiv_id: format!("2601.{idx:05}"),
+                tex_dir: format!("paper-{idx}"),
+                source_url: None,
+                pdf_url: None,
+                pdf_file: None,
+            });
+        }
+
+        let bib = vec![BibEntry {
+            entry_type: "misc".into(),
+            citation_key: "target-paper".into(),
+            fields: BTreeMap::from([
+                ("title".into(), "SYNTHETIC VISION PAPER 233!!!".into()),
+                ("author".into(), "Ada Lovelace".into()),
+                ("year".into(), "2026".into()),
+            ]),
+        }];
+
+        let registry = merge_registry(manifest, bib, &config);
+        let target = registry
+            .iter()
+            .find(|record| record.citation_key.as_deref() == Some("target-paper"))
+            .unwrap();
+
+        assert_eq!(target.source_kind, SourceKind::ManifestAndBib);
+        assert_eq!(target.arxiv_id.as_deref(), Some("2601.00233"));
+        assert_eq!(registry.len(), 400);
+        assert_eq!(
+            registry
+                .iter()
+                .filter(|record| record.source_kind == SourceKind::Manifest)
+                .count(),
+            399
         );
     }
 }
