@@ -119,3 +119,23 @@ status = "pending"
 loc_min = 100
 loc_expected = 220
 loc_max = 420
+
+[[todos]]
+id = "TODO-0015"
+title = "Define sink-independent graph enrichment edge model and serialization contract"
+issue_ids = ["ISSUE-0016"]
+priority = "high"
+status = "pending"
+loc_min = 120
+loc_expected = 220
+loc_max = 420
+
+[[todos]]
+id = "TODO-0016"
+title = "Implement deterministic paper-to-paper topical edge inference and export"
+issue_ids = ["ISSUE-0017", "ISSUE-0016"]
+priority = "high"
+status = "pending"
+loc_min = 140
+loc_expected = 260
+loc_max = 420

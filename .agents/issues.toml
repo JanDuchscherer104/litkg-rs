@@ -110,3 +110,21 @@ priority = "high"
 status = "open"
 github_issue_number = 10
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/10"
+
+[[issues]]
+id = "ISSUE-0016"
+title = "Add repo-independent graph enrichment overlay and edge schema"
+summary = "Move graph enrichment into a sink-independent Rust contract with typed enriched edges, provenance, and deterministic serialization instead of relying on live Neo4j-only helper writes."
+priority = "high"
+status = "open"
+github_issue_number = 17
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/17"
+
+[[issues]]
+id = "ISSUE-0017"
+title = "Add deterministic paper-to-paper topical edges from parsed literature text"
+summary = "Infer high-precision paper-to-paper topical links from parsed paper text with deterministic scoring, evidence, and export support in the Rust pipeline."
+priority = "high"
+status = "open"
+github_issue_number = 18
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/18"
