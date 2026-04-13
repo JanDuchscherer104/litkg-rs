@@ -533,8 +533,12 @@ fn render_github_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
     lines.push("## Acceptance Criteria".to_string());
     lines.push(String::new());
     lines.push("- [ ] `make benchmark-validate` passes.".to_string());
-    lines.push("- [ ] The selected autoresearch target renders cleanly in `markdown` format.".to_string());
-    lines.push("- [ ] The selected autoresearch target renders cleanly in `json` format.".to_string());
+    lines.push(
+        "- [ ] The selected autoresearch target renders cleanly in `markdown` format.".to_string(),
+    );
+    lines.push(
+        "- [ ] The selected autoresearch target renders cleanly in `json` format.".to_string(),
+    );
     lines.push(
         "- [ ] The resulting issue body stays deterministic under repeated renders.".to_string(),
     );
