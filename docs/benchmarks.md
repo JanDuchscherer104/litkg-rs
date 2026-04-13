@@ -94,8 +94,10 @@ promotion assessment:
 - `validation_only` runs are deferred and treated as schema or smoke checks
 - recognized execution failure statuses such as `observed_failure` or `failed`
   are marked as promotable inputs for the next research target
-- control-plane or unclassified statuses such as `timeout`, `pending`, or
-  `infra_error` are deferred until they are classified explicitly
+- known control-plane statuses such as `timeout`, `pending`, or `infra_error`
+  are deferred
+- unknown statuses must be classified explicitly before benchmark validation
+  passes
 
 This keeps schema-validation fixtures from masquerading as evidence of benchmark
 deficits during overnight loops.

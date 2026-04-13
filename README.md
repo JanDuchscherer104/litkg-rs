@@ -94,6 +94,8 @@ Rendered autoresearch targets now distinguish between:
 
 - validation-only result bundles that should stay as schema/smoke evidence
 - recognized execution failure runs that are eligible to shape the next deterministic target
+- status values outside the recognized promotion/control set must be classified
+  explicitly before benchmark validation passes
 
 The renderer also supports `--format issue` for an issue-ready Markdown body
 that carries the same benchmark context, promoted inputs, and component scaffold.
