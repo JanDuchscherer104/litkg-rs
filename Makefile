@@ -28,7 +28,6 @@ LOC_ARGS ?=
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
 .PHONY: kg-up kg-down kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
 .PHONY: litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j
-<<<<<<< HEAD
 .PHONY: benchmark-validate benchmark-support benchmark-run autoresearch-target inspect-graph autoresearch-issue
 
 fmt: ## Run rustfmt across the workspace

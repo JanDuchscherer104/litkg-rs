@@ -35,7 +35,7 @@ bootstrap_steps = [
   "Provide a custom evaluation command that scores your answers and writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH.",
 ]
 notes = [
-  "The upstream repository advertises the benchmark release and explicitly lists evaluation code as TODO.",
+  "As of 2026-04-13, the upstream repository advertises the benchmark release and explicitly lists evaluation code as TODO.",
 ]
 
   [[integrations.official_sources]]

@@ -1,6 +1,6 @@
 # Benchmark Catalog
 
-`litkg-rs` owns the benchmark metadata and validation surfaces used to evaluate the local KG stack and to compose benchmark-driven auto research targets.
+`litkg-rs` owns the benchmark metadata, executable integration support, and validation surfaces used to evaluate the local KG stack and to compose benchmark-driven auto research targets.
 
 ## Files
 
@@ -11,7 +11,6 @@
 - support inspection entrypoint: `cargo run -p litkg-cli -- benchmark-support --catalog ... --integrations ...`
 - execution entrypoint: `cargo run -p litkg-cli -- run-benchmarks --catalog ... --integrations ... --plan ... --output ...`
 - target rendering entrypoint: `cargo run -p litkg-cli -- render-autoresearch-target --catalog ... --results ... --target-id ...`
-- target render formats: `markdown`, `issue` (alias `github-issue`), and `json`
 - result-promotion entrypoint: `cargo run -p litkg-cli -- promote-benchmark-results --catalog ... --results ...`
 
 ## Included Benchmarks
@@ -63,14 +62,14 @@ The integration matrix makes the current execution state explicit per benchmark:
 Inspect the current machine state with:
 
 ```bash
-cargo run -p litkg-cli -- benchmark-support \
-  --catalog examples/benchmarks/kg.toml \
-  --integrations examples/benchmarks/integrations.toml
+make benchmark-support
 ```
+
+This reports whether each benchmark is merely declared in the catalog, whether a run plan is configured, and whether required local binaries are present.
 
 ## Running Benchmarks
 
-`litkg-rs` runs benchmarks through external command adapters. Each configured command receives:
+`litkg-rs` runs benchmarks through command adapters. Each configured command receives:
 
 - `LITKG_BENCHMARK_ID`
 - `LITKG_BENCHMARK_RUN_ID`
@@ -81,21 +80,21 @@ The command must write normalized JSON to `LITKG_BENCHMARK_OUTPUT_PATH` with thi
 
 ```json
 {
-  "status": "error",
+  "status": "completed",
   "summary": "Short run summary",
   "scores": [
     {
-      "metric_id": "correctness",
+      "metric_id": "task_resolution_rate",
       "value": 0.42,
-      "unit": "ratio"
+      "unit": "rate"
     }
   ],
   "diagnostics": ["optional diagnostic text"],
   "artifacts": [
     {
-      "label": "raw-log",
-      "kind": "log",
-      "location": "artifacts/run.log"
+      "label": "raw-results",
+      "kind": "json",
+      "location": "path/or/url"
     }
   ]
 }
@@ -104,33 +103,10 @@ The command must write normalized JSON to `LITKG_BENCHMARK_OUTPUT_PATH` with thi
 With a run plan in place, execute the configured adapters with:
 
 ```bash
-cargo run -p litkg-cli -- run-benchmarks \
-  --catalog examples/benchmarks/kg.toml \
-  --integrations examples/benchmarks/integrations.toml \
-  --plan /abs/path/to/run-plan.toml \
-  --output /abs/path/to/results.toml
+make benchmark-run BENCHMARK_RUN_PLAN=/abs/path/to/run-plan.toml
 ```
 
-The run-plan TOML must contain one or more `[[runs]]` entries with this shape:
-
-```toml
-[[runs]]
-benchmark_id = "swe-qa-pro"
-run_id = "swe-qa-pro-local"
-command = "python3 path/to/evaluator.py"
-workdir = "/abs/path/to/evaluator-checkout"
-
-[runs.env]
-OPENAI_API_KEY = "env-or-token"
-```
-
-Fields:
-
-- `benchmark_id`: catalog benchmark id to run
-- `run_id`: stable unique identifier for the normalized run
-- `command`: shell command invoked through `sh -c`
-- `workdir`: optional working directory for the command
-- `env`: optional environment map injected into the process
+`litkg-rs` will normalize each command into a benchmark results bundle, preserve execution diagnostics, and validate the emitted scores against the benchmark catalog before writing the output TOML.
 
 ## Auto Research Target Composition
 
@@ -144,16 +120,6 @@ cargo run -p litkg-cli -- render-autoresearch-target \
   --catalog examples/benchmarks/kg.toml \
   --results examples/benchmarks/sample-results.toml \
   --target-id kg_navigation_improvement \
-  --format issue
-```
-
-Or, with explicit benchmark/component overrides:
-
-```bash
-cargo run -p litkg-cli -- render-autoresearch-target \
-  --catalog examples/benchmarks/kg.toml \
-  --results examples/benchmarks/sample-results.toml \
-  --target-id kg_navigation_improvement \
   --component-id retrieval_ablation \
   --component-id reasoning_diagnostics \
   --benchmark-id swe-qa-pro \
@@ -162,49 +128,12 @@ cargo run -p litkg-cli -- render-autoresearch-target \
 
 This makes the benchmark-driven research prompt fragments explicitly selectable and concatenable, which is the intended contract for later overnight or autonomous research loops.
 
-When the target needs to be promoted into an issue-ready operator artifact, render it with:
-
-```bash
-cargo run -p litkg-cli -- render-autoresearch-target \
-  --catalog examples/benchmarks/kg.toml \
-  --results examples/benchmarks/sample-results.toml \
-  --target-id kg_navigation_improvement \
-  --format github-issue
-```
-
-When a result bundle is present, the rendered target also emits a deterministic
-promotion assessment:
-
-- `validation_only` runs are deferred and treated as schema or smoke checks
-- recognized execution failure statuses such as `observed_failure` or `failed`
-  are marked as promotable inputs for the next research target
-- known control-plane statuses such as `timeout`, `pending`, or `infra_error`
-  are deferred
-- unknown statuses must be classified explicitly before benchmark validation
-  passes
-
-This keeps schema-validation fixtures from masquerading as evidence of benchmark
-deficits during overnight loops.
-
-The renderer supports three stable output surfaces:
-
-- `markdown` for operator reading
-- `issue` for issue-ready bodies
-- `json` for machine consumption
-
-The JSON payload includes:
-
-- promotion counts for promotable versus deferred runs
-- sanitized run summary text plus structured score evidence
-- `result_summaries` as the canonical normalized result view for downstream
-  automation
-
 ## Result Promotion
 
 Validated benchmark bundles can also be promoted into deterministic autoresearch drafts. Promotion works as a pure transformation over the catalog plus a results bundle:
 
 - benchmark filters narrow which runs are eligible
-- status filters let operators focus on states such as `error` or `failed`
+- status filters let operators focus on states such as `needs_improvement` or `runner_failed`
 - metric thresholds use inline rules such as `correctness<=0.7` or `pass_at_1<0.5`
 - component selection policies choose whether promotion keeps the template components only, appends benchmark-matched components, or uses matched components only
 
@@ -215,39 +144,17 @@ cargo run -p litkg-cli -- promote-benchmark-results \
   --catalog examples/benchmarks/kg.toml \
   --results examples/benchmarks/sample-results.toml \
   --target-id kg_navigation_improvement \
-  --status error \
+  --status needs_improvement \
   --metric-threshold correctness<=0.7 \
+  --metric-threshold pass_at_1<=0.5 \
   --component-selection template-and-matched \
   --format github-issue
 ```
 
-## GitHub Sync
+The output formats are:
 
-When the repo has a live GitHub remote, the rendered GitHub-issue surface can be
-synced directly into GitHub:
+- `markdown`: operator-facing promoted target brief with evidence, runs, and concatenated components
+- `json`: machine-readable promoted target payloads
+- `github-issue`: issue-ready drafts with a title line plus structured summary, evidence, frozen benchmarks, and validation steps
 
-```bash
-make autoresearch-issue
-cargo run -p litkg-cli -- sync-autoresearch-target-issue \
-  --catalog examples/benchmarks/kg.toml \
-  --results examples/benchmarks/sample-results.toml \
-  --target-id kg_navigation_improvement \
-  --dry-run
-```
-
-The sync command:
-
-- renders the same deterministic issue body used by `--format github-issue`
-- infers `owner/repo` from `origin` by default, or accepts `--repo [HOST/]owner/repo`
-- can add labels with repeated `--label`
-- uses `--dry-run` to preview the title and body without opening a GitHub issue
-
-For a live issue create, drop `--dry-run` and optionally pass labels:
-
-```bash
-cargo run -p litkg-cli -- sync-autoresearch-target-issue \
-  --catalog examples/benchmarks/kg.toml \
-  --results examples/benchmarks/sample-results.toml \
-  --target-id kg_navigation_improvement \
-  --label autoresearch
-```
+This keeps benchmark-result promotion deterministic and reviewable while preserving the existing target templates as the source of truth.

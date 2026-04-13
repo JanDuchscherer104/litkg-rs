@@ -1,23 +1,30 @@
 use anyhow::{Context, Result};
 use litkg_core::{infer_enriched_edges, ParsedPaper, RepoConfig};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Serialize)]
-struct Neo4jNode {
-    id: String,
-    labels: Vec<String>,
-    properties: serde_json::Value,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Neo4jNode {
+    pub id: String,
+    pub labels: Vec<String>,
+    pub properties: serde_json::Value,
 }
 
-#[derive(Debug, Serialize)]
-struct Neo4jEdge {
-    source: String,
-    target: String,
-    rel_type: String,
-    properties: serde_json::Value,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Neo4jEdge {
+    pub source: String,
+    pub target: String,
+    pub rel_type: String,
+    pub properties: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Neo4jExportBundle {
+    pub root: PathBuf,
+    pub nodes: Vec<Neo4jNode>,
+    pub edges: Vec<Neo4jEdge>,
 }
 
 pub struct Neo4jSink;
@@ -113,6 +120,41 @@ fn jsonl<T: Serialize>(items: &[T]) -> Result<String> {
         lines.push(serde_json::to_string(item)?);
     }
     Ok(lines.join("\n") + "\n")
+}
+
+pub fn load_export_bundle(root: impl AsRef<Path>) -> Result<Neo4jExportBundle> {
+    let root = root.as_ref();
+    let nodes_path = root.join("nodes.jsonl");
+    let edges_path = root.join("edges.jsonl");
+    Ok(Neo4jExportBundle {
+        root: root.to_path_buf(),
+        nodes: read_jsonl(&nodes_path)?,
+        edges: read_jsonl(&edges_path)?,
+    })
+}
+
+fn read_jsonl<T>(path: &Path) -> Result<Vec<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let mut items = Vec::new();
+    for (line_number, line) in raw.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let item = serde_json::from_str(trimmed).with_context(|| {
+            format!(
+                "Failed to parse JSONL record {} from {}",
+                line_number + 1,
+                path.display()
+            )
+        })?;
+        items.push(item);
+    }
+    Ok(items)
 }
 
 #[cfg(test)]

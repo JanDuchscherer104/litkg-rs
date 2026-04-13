@@ -1,56 +1,86 @@
 [[runs]]
 benchmark_id = "swe-qa-pro"
 run_id = "catalog-validation-smoke"
-status = "validation_only"
-summary = "Smoke result used to validate the benchmark schema and autoresearch-target plumbing before integrating external benchmark harnesses."
+status = "needs_improvement"
+summary = "Repository-grounded QA still drops supporting files under cross-module retrieval pressure, so this sample run now acts as a promotion example as well as a schema check."
 
   [[runs.scores]]
   metric_id = "correctness"
-  value = 1.0
-  unit = "pass"
+  value = 0.62
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "completeness"
-  value = 1.0
-  unit = "pass"
+  value = 0.58
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "relevance"
-  value = 1.0
-  unit = "pass"
+  value = 0.71
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "clarity"
-  value = 1.0
-  unit = "pass"
+  value = 0.76
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "reasoning_quality"
-  value = 1.0
-  unit = "pass"
+  value = 0.54
+  unit = "score"
+
+diagnostics = [
+  "Missed one supporting file while answering a multi-hop repository question.",
+  "Grounding degraded when retrieval returned both README and code evidence in the same pass.",
+]
+
+  [[runs.artifacts]]
+  label = "qa-trace"
+  kind = "log"
+  location = "artifacts/swe-qa-pro/catalog-validation-smoke.log"
+
+  [runs.execution]
+  runner_kind = "mock-runner"
+  command = "cargo run -p litkg-cli -- run-benchmarks --benchmark-id swe-qa-pro"
+  workdir = "/Users/jd/repos/litgraph-rs"
 
 [[runs]]
 benchmark_id = "reporeason"
 run_id = "diagnostic-schema-smoke"
-status = "validation_only"
-summary = "Schema-level smoke result confirming that white-box reasoning metrics can be attached to autoresearch targets."
+status = "needs_improvement"
+summary = "White-box reasoning diagnostics show the stack still pays too much integration cost before it locks onto the right files and task steps."
 
   [[runs.scores]]
   metric_id = "pass_at_1"
-  value = 1.0
-  unit = "pass"
+  value = 0.47
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "esv"
-  value = 1.0
-  unit = "validated"
+  value = 0.61
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "mcl"
-  value = 1.0
-  unit = "validated"
+  value = 0.82
+  unit = "score"
 
   [[runs.scores]]
   metric_id = "dfi"
-  value = 1.0
-  unit = "validated"
+  value = 0.69
+  unit = "score"
+
+diagnostics = [
+  "Execution slice widened before the agent found the relevant subsystem.",
+  "Intermediate reasoning recovered late and left no margin for answer cleanup.",
+]
+
+  [[runs.artifacts]]
+  label = "diagnostic-json"
+  kind = "json"
+  location = "artifacts/reporeason/diagnostic-schema-smoke.json"
+
+  [runs.execution]
+  runner_kind = "mock-runner"
+  command = "cargo run -p litkg-cli -- run-benchmarks --benchmark-id reporeason"
+  workdir = "/Users/jd/repos/litgraph-rs"
