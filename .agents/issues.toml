@@ -6,6 +6,8 @@ title = "Evaluate Memory-Palace-MCP as an MCP-native comparison target"
 summary = "Assess zeyynepkaraduman/Memory-Palace-MCP for MCP-native memory UX, extension points, and issue-tracker comparisons against litkg-rs."
 priority = "medium"
 status = "open"
+github_issue_number = 1
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/1"
 
 [[issues]]
 id = "ISSUE-0002"
@@ -34,6 +36,8 @@ title = "Add native Auto Research mode optimized for Codex overnight execution"
 summary = "Design a native Auto Research capability that can run throughout the night in Codex with target functions, stop conditions, review gates, and resumable state."
 priority = "critical"
 status = "open"
+github_issue_number = 2
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/2"
 
 [[issues]]
 id = "ISSUE-0006"
@@ -41,6 +45,8 @@ title = "Add sub-agent PR review fan-out and review aggregation loop"
 summary = "Trigger sub-agent code review on every pull request, aggregate findings, and feed accepted changes back into the main execution loop."
 priority = "critical"
 status = "open"
+github_issue_number = 3
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/3"
 
 [[issues]]
 id = "ISSUE-0007"
@@ -48,6 +54,8 @@ title = "Add strict AGENTS, README, and REQUIREMENTS initialization templates fo
 summary = "Create strict initialization templates influenced by aria-nbv and prml-vslam so downstream repos can bootstrap agent scaffolding consistently."
 priority = "high"
 status = "open"
+github_issue_number = 4
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/4"
 
 [[issues]]
 id = "ISSUE-0008"
@@ -55,6 +63,8 @@ title = "Add Codex UI-assisted review loop for visual outputs"
 summary = "Create a review loop that lets Codex agents inspect human-relevant visual outputs through UI/CUA surfaces and propose improvements."
 priority = "high"
 status = "open"
+github_issue_number = 5
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/5"
 
 [[issues]]
 id = "ISSUE-0009"
@@ -62,6 +72,8 @@ title = "Add a native Rust viewer and exploration tool optimized for Apple Silic
 summary = "Design and integrate a high-performance local viewer for graph and embedding exploration, prioritizing Apple Silicon-native performance and UX."
 priority = "high"
 status = "open"
+github_issue_number = 6
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/6"
 
 [[issues]]
 id = "ISSUE-0010"
@@ -69,6 +81,8 @@ title = "Add instruction-capture mode to generalize user guidance into agent sca
 summary = "Define a mode where subsequent user instructions are evaluated and promoted into root scaffolding, nested scaffolding, or skills as durable operational guidance."
 priority = "high"
 status = "open"
+github_issue_number = 7
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/7"
 
 [[issues]]
 id = "ISSUE-0013"
@@ -76,6 +90,8 @@ title = "Promote benchmark results into selectable autoresearch targets and GitH
 summary = "Extend the benchmark-result layer so validated result bundles can feed overnight autoresearch targets directly and sync issue-ready target proposals into GitHub once the repo has a real remote."
 priority = "high"
 status = "open"
+github_issue_number = 8
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/8"
 
 [[issues]]
 id = "ISSUE-0011"
@@ -83,6 +99,8 @@ title = "Add visual inspection workflow for graph visualization quality"
 summary = "Review the graph visualization itself as a first-class product surface, inspect layouts and visual outputs, and use that feedback to improve graph exploration quality."
 priority = "high"
 status = "open"
+github_issue_number = 9
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/9"
 
 [[issues]]
 id = "ISSUE-0012"
@@ -90,3 +108,5 @@ title = "Add easy local query path powered by Ollama embeddings or Gemma"
 summary = "Support simple local semantic querying over the KG using Ollama-hosted embeddings and Gemma-class local models without requiring remote services."
 priority = "high"
 status = "open"
+github_issue_number = 10
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/10"

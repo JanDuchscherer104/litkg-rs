@@ -106,7 +106,11 @@ def render_ranked_text(kind: str, ranked: dict[str, list[dict[str, Any]]], limit
         lines.append("Issues")
         issue_items = ranked["issues"][:limit] if limit is not None else ranked["issues"]
         for index, issue in enumerate(issue_items, start=1):
-            lines.append(f"{index}. {issue['id']} [{issue['priority']}/{issue['status']}] {issue['title']}")
+            github_number = issue.get("github_issue_number")
+            github_suffix = f" gh=#{github_number}" if github_number is not None else ""
+            lines.append(
+                f"{index}. {issue['id']} [{issue['priority']}/{issue['status']}] {issue['title']}{github_suffix}"
+            )
             lines.append(f"   {issue['summary']}")
     if kind in {"todos", "all"}:
         if lines:

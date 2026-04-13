@@ -1,0 +1,94 @@
+name: Backlog Item
+description: Create a concrete, testable repo work item with evidence and acceptance criteria.
+title: "[ISSUE-XXXX] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use the stronger `prml-vslam` issue pattern here: explain the current problem first, then the required change, then the acceptance criteria and tests.
+  - type: input
+    id: local_stack_id
+    attributes:
+      label: Local stack ID
+      description: Local backlog ID such as ISSUE-0012 or TODO-0011.
+      placeholder: ISSUE-XXXX
+  - type: input
+    id: target
+    attributes:
+      label: Target
+      description: Branch or baseline this issue targets.
+      placeholder: origin/main
+    validations:
+      required: true
+  - type: textarea
+    id: current_problem
+    attributes:
+      label: Current problem
+      description: Describe the current broken, missing, or misleading behavior. Include concrete evidence.
+      placeholder: |
+        The current repo state ...
+    validations:
+      required: true
+  - type: textarea
+    id: required_change
+    attributes:
+      label: Required change
+      description: State what the implementation should do.
+      placeholder: |
+        Required change:
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Falsifiable conditions that tell us the issue is done.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: test_expectations
+    attributes:
+      label: Test expectations
+      description: Required validation and regression coverage.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: related_issues
+    attributes:
+      label: Related issues and local TODOs
+      description: Link umbrella issues, dependencies, and local TODO IDs.
+      placeholder: |
+        - #123
+        - TODO-0011
+  - type: textarea
+    id: change_budget
+    attributes:
+      label: Change budget
+      description: Optional rough scope bounds for autonomous execution.
+      placeholder: |
+        | Metric | Expected | Max |
+        | --- | ---: | ---: |
+        | #LOC affected | ~120 | ~240 |
+  - type: textarea
+    id: touch_set
+    attributes:
+      label: Expected touch set
+      description: Optional list of files or modules expected to change.
+      placeholder: |
+        - path/to/file
+        - path/to/other
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources
+      description: Optional references, docs, or prior issues that informed this ticket.
+      placeholder: |
+        - https://docs.github.com/...
+        - #45
