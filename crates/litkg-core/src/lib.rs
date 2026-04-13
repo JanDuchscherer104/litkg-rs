@@ -1,4 +1,5 @@
 pub mod benchmark;
+pub mod benchmark_runner;
 pub mod bibtex;
 pub mod config;
 pub mod download;
@@ -13,6 +14,11 @@ pub use benchmark::{
     validate_benchmark_catalog, validate_benchmark_results, AutoResearchRenderFormat,
     AutoResearchTargetTemplate, BenchmarkCatalog, BenchmarkResults, BenchmarkRun, BenchmarkScore,
     BenchmarkSource, BenchmarkSpec, ValidationSummary,
+};
+pub use benchmark_runner::{
+    inspect_benchmark_support, load_benchmark_integrations, load_benchmark_run_plan,
+    validate_benchmark_integrations, validate_benchmark_run_plan, BenchmarkIntegration,
+    BenchmarkIntegrationCatalog, BenchmarkRunPlan, BenchmarkRunRequest, BenchmarkSupportStatus,
 };
 pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{RepoConfig, SinkMode};

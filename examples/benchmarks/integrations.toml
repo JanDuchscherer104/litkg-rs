@@ -1,0 +1,188 @@
+[[integrations]]
+benchmark_id = "swe-bench-pro"
+upstream_status = "official_harness"
+runner_kind = "external_command"
+summary = "ScaleAI publishes an open-source evaluation repo plus a Hugging Face dataset. Local runs require a patch-generation harness and Docker-backed evaluation."
+required_binaries = ["python3", "docker"]
+bootstrap_steps = [
+  "Clone https://github.com/scaleapi/SWE-bench_Pro-os and install its Python requirements.",
+  "Prepare patch predictions with a compatible agent harness, then run swe_bench_pro_eval.py.",
+  "Wrap the evaluation command so it writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH.",
+]
+example_commands = [
+  "python swe_bench_pro_eval.py --raw_sample_path <csv> --patch_path <patches.json> --output_dir \"$LITKG_BENCHMARK_ARTIFACT_DIR\"",
+]
+notes = [
+  "The official repo supports Modal or local Docker evaluation.",
+  "litkg-rs does not generate patches itself; it normalizes benchmark execution around external harness commands.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/scaleapi/SWE-bench_Pro-os"
+
+  [[integrations.official_sources]]
+  label = "dataset"
+  url = "https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro"
+
+[[integrations]]
+benchmark_id = "swe-qa-pro"
+upstream_status = "dataset_only"
+runner_kind = "external_command"
+summary = "The public benchmark dataset is available, but the upstream README says evaluation code is still pending release."
+bootstrap_steps = [
+  "Download the benchmark dataset from the upstream Hugging Face entry.",
+  "Provide a custom evaluation command that scores your answers and writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH.",
+]
+notes = [
+  "The upstream repository advertises the benchmark release and explicitly lists evaluation code as TODO.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/TIGER-AI-Lab/SWE-QA-Pro"
+
+  [[integrations.official_sources]]
+  label = "dataset"
+  url = "https://huggingface.co/datasets/TIGER-Lab/SWE-QA-Pro-Bench"
+
+[[integrations]]
+benchmark_id = "coderepoqa"
+upstream_status = "dataset_only"
+runner_kind = "external_command"
+summary = "The upstream repository currently distributes the dataset and repository list, but not a packaged evaluation harness for litkg-rs to invoke directly."
+bootstrap_steps = [
+  "Download the dataset from the upstream repository or linked storage.",
+  "Provide a lexical-metric evaluation command that emits normalized JSON for BLEU, ROUGE, and edit similarity.",
+]
+notes = [
+  "Use litkg-rs run plans to integrate a local evaluator without widening the core benchmark schema.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/kinesiatricssxilm14/CodeRepoQA"
+
+[[integrations]]
+benchmark_id = "stackrepoqa"
+upstream_status = "paper_only"
+runner_kind = "external_command"
+summary = "The repo catalog currently points to the paper and DOI only, so local execution must be supplied through a custom run-plan command."
+bootstrap_steps = [
+  "Acquire the benchmark assets from the paper authors or a later release.",
+  "Add a run-plan command that writes normalized JSON with the documented judge metrics.",
+]
+notes = [
+  "No public harness repo is referenced in the current litkg-rs benchmark catalog.",
+]
+
+  [[integrations.official_sources]]
+  label = "paper"
+  url = "https://arxiv.org/abs/2603.26567"
+
+  [[integrations.official_sources]]
+  label = "doi"
+  url = "https://doi.org/10.1145/3803846.3807467"
+
+[[integrations]]
+benchmark_id = "reporeason"
+upstream_status = "official_pipeline"
+runner_kind = "external_command"
+summary = "The upstream RepoReasoner repository includes dataset-generation and evaluation scripts, but expects a separate checkout plus Python and Docker setup."
+required_binaries = ["python3", "docker"]
+bootstrap_steps = [
+  "Clone https://github.com/DeepSoftwareAnalytics/RepoReasoner and install its project dependencies.",
+  "Populate the expected repository inputs and API configuration described by the upstream README.",
+  "Wrap the chosen evaluation script so it writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH.",
+]
+example_commands = [
+  "python evaluation_output_prediction.py",
+  "python evaluation_callchain_prediction.py",
+]
+notes = [
+  "The upstream repo is a benchmark pipeline rather than a single packaged CLI.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/DeepSoftwareAnalytics/RepoReasoner"
+
+  [[integrations.official_sources]]
+  label = "paper"
+  url = "https://arxiv.org/abs/2601.03731"
+
+[[integrations]]
+benchmark_id = "race-bench"
+upstream_status = "paper_only"
+runner_kind = "external_command"
+summary = "The current litkg-rs catalog references the paper only, so the local system needs a custom adapter command until an upstream harness is available."
+bootstrap_steps = [
+  "Acquire the benchmark data and scoring assets from the paper authors or a later release.",
+  "Provide a run-plan command that emits normalized JSON for the localization and decomposition metrics.",
+]
+notes = [
+  "Use the normalized JSON contract to keep RACE-bench-specific logic out of litkg-core.",
+]
+
+  [[integrations.official_sources]]
+  label = "paper"
+  url = "https://arxiv.org/abs/2603.26337"
+
+[[integrations]]
+benchmark_id = "swd-bench"
+upstream_status = "paper_only"
+runner_kind = "external_command"
+summary = "The catalog currently exposes SWD-Bench through the paper only, so litkg-rs needs a custom command adapter to execute it locally."
+bootstrap_steps = [
+  "Acquire the benchmark dataset and scorer from the authors or a later public release.",
+  "Supply a run-plan command that writes normalized JSON with b_acc, mcc, f1, iou, and em.",
+]
+notes = [
+  "This benchmark is the main docs-plus-code target in the autoresearch catalog, so the adapter must preserve its documented metrics.",
+]
+
+  [[integrations.official_sources]]
+  label = "paper"
+  url = "https://arxiv.org/abs/2604.06793"
+
+[[integrations]]
+benchmark_id = "ccbench"
+upstream_status = "benchmark_site"
+runner_kind = "external_command"
+summary = "CCBench is referenced as a benchmark site in the catalog, so local execution currently depends on a custom adapter or later official harness release."
+bootstrap_steps = [
+  "Obtain the benchmark assets or API access from the benchmark site or its maintainers.",
+  "Provide a run-plan command that writes normalized JSON for success_rate.",
+]
+notes = [
+  "Treat this as a contamination-resistant external target, not as a built-in litkg-rs workload.",
+]
+
+  [[integrations.official_sources]]
+  label = "site"
+  url = "https://ccbench.org/"
+
+[[integrations]]
+benchmark_id = "terminal-bench"
+upstream_status = "official_harness"
+runner_kind = "external_command"
+summary = "Terminal-Bench ships a public CLI harness (`tb`) plus dataset registry. Local runs require the Terminal-Bench package and Docker."
+required_binaries = ["tb", "docker"]
+bootstrap_steps = [
+  "Install Terminal-Bench with `uv tool install terminal-bench` or `pip install terminal-bench`.",
+  "Run `tb run ...` against the desired dataset and adapt the result artifact into normalized JSON.",
+]
+example_commands = [
+  "tb run --agent <agent> --model <model> --dataset-name terminal-bench-core --dataset-version 0.1.1",
+]
+notes = [
+  "The upstream maintainers now recommend the Harbor framework for new users, but the `tb` CLI remains the official runnable surface.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/harbor-framework/terminal-bench"
+
+  [[integrations.official_sources]]
+  label = "docs"
+  url = "https://www.tbench.ai/docs"
