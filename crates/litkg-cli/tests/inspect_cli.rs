@@ -361,7 +361,7 @@ fn search_and_show_paper_commands_work_end_to_end() {
         .clone();
     let show_json: Value = serde_json::from_slice(&show_output).unwrap();
     assert_eq!(show_json["metadata"]["paper_id"], "demo2025paper");
-    assert_eq!(show_json["metadata"]["title"], "Parsed Demo Paper");
+    assert_eq!(show_json["metadata"]["title"], "Demo Paper");
     assert_eq!(show_json["metadata"]["parse_status"], "Parsed");
     assert_eq!(show_json["figure_captions"][0], "Caption token figure");
 }

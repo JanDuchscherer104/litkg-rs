@@ -172,6 +172,17 @@ pub fn search_papers(
             &query_lower,
             &mut snippet,
         );
+        if let Some(paper) = parsed {
+            add_text_match(
+                &mut score,
+                &mut matched_fields,
+                "parsed_title",
+                80,
+                &paper.metadata.title,
+                &query_lower,
+                &mut snippet,
+            );
+        }
         if let Some(citation_key) = &record.citation_key {
             add_text_match(
                 &mut score,
@@ -335,8 +346,8 @@ pub fn inspect_paper(
     selector: &str,
 ) -> Result<PaperInspection> {
     let effective_records = effective_registry_records(registry, parsed_papers);
-    let record = resolve_record(&effective_records, selector)?;
     let parsed_by_record_id = matched_parsed_papers(&effective_records, parsed_papers);
+    let record = resolve_record(&effective_records, &parsed_by_record_id, selector)?;
     let live_parsed = unique_parsed_papers(parsed_by_record_id.values().copied().collect());
     let parsed = parsed_by_record_id.get(&record.paper_id).copied();
     let self_parsed_id = parsed
@@ -437,6 +448,7 @@ pub fn inspect_paper(
 
 fn resolve_record<'a>(
     registry: &'a [PaperSourceRecord],
+    parsed_by_record_id: &BTreeMap<String, &'a ParsedPaper>,
     selector: &str,
 ) -> Result<&'a PaperSourceRecord> {
     let selector = selector.trim();
@@ -457,6 +469,9 @@ fn resolve_record<'a>(
                     .as_deref()
                     .is_some_and(|arxiv_id| arxiv_id.eq_ignore_ascii_case(selector))
                 || record.title.eq_ignore_ascii_case(selector)
+                || parsed_by_record_id
+                    .get(&record.paper_id)
+                    .is_some_and(|paper| paper.metadata.title.eq_ignore_ascii_case(selector))
         })
         .collect::<Vec<_>>();
 
@@ -546,7 +561,6 @@ fn effective_registry_records(
             Some(paper) => {
                 let mut merged = record.clone();
                 if has_structured_parsed_content(paper) {
-                    merged.title = paper.metadata.title.clone();
                     merged.parse_status = ParseStatus::Parsed;
                 }
                 merged
@@ -898,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn search_prefers_parsed_metadata_for_titles_and_status() {
+    fn search_matches_parsed_titles_but_preserves_current_metadata_title() {
         let registry = vec![PaperSourceRecord {
             paper_id: "demo-paper".into(),
             citation_key: Some("demo2025paper".into()),
@@ -936,8 +950,12 @@ mod tests {
         }];
 
         let results = search_papers(&registry, &parsed, &[], "Parsed Title", 10).unwrap();
-        assert_eq!(results.hits[0].title, "Parsed Title");
+        assert_eq!(results.hits[0].title, "Bib Title");
         assert_eq!(results.hits[0].parse_status, ParseStatus::Parsed);
+        assert!(results.hits[0]
+            .matched_fields
+            .iter()
+            .any(|field| field == "parsed_title"));
     }
 
     #[test]
@@ -1062,8 +1080,12 @@ mod tests {
         ];
 
         let results = search_papers(&registry, &parsed, &[], "Parsed Paper", 10).unwrap();
-        assert_eq!(results.hits[0].title, "Parsed Paper");
+        assert_eq!(results.hits[0].title, "Current Manifest Paper");
         assert_eq!(results.hits[0].parse_status, ParseStatus::Parsed);
+        assert!(results.hits[0]
+            .matched_fields
+            .iter()
+            .any(|field| field == "parsed_title"));
     }
 
     #[test]
@@ -1243,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn inspect_paper_prefers_parsed_metadata_for_resolution_and_output() {
+    fn inspect_paper_resolves_by_parsed_title_but_preserves_metadata_title() {
         let dir = tempfile::tempdir().unwrap();
         let repo_config = config(dir.path());
         let registry = vec![PaperSourceRecord {
@@ -1283,7 +1305,7 @@ mod tests {
         }];
 
         let inspection = inspect_paper(&repo_config, &registry, &parsed, "Parsed Title").unwrap();
-        assert_eq!(inspection.metadata.title, "Parsed Title");
+        assert_eq!(inspection.metadata.title, "Bib Title");
         assert_eq!(inspection.metadata.parse_status, ParseStatus::Parsed);
     }
 }
