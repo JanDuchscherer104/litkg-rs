@@ -112,3 +112,5 @@ The JSON payload includes:
 
 - promotion counts for promotable versus deferred runs
 - sanitized run summary text plus structured score evidence
+- `result_summaries` as the canonical normalized result view for downstream
+  automation

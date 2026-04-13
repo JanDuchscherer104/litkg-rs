@@ -111,6 +111,18 @@ pub struct RenderedAutoResearchTarget {
     pub result_summaries: Vec<PromotedRunSummary>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+struct RenderedAutoResearchJsonTarget {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+    pub benchmarks: Vec<BenchmarkSpec>,
+    pub components: Vec<AutoResearchComponent>,
+    pub has_results_bundle: bool,
+    pub promotion_summary: PromotionSummary,
+    pub result_summaries: Vec<PromotedRunSummary>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoResearchRenderFormat {
     Markdown,
@@ -474,8 +486,10 @@ pub fn render_autoresearch_target(
     match format {
         AutoResearchRenderFormat::Markdown => Ok(render_markdown_target(&rendered)),
         AutoResearchRenderFormat::Issue => Ok(render_issue_target(&rendered)),
-        AutoResearchRenderFormat::Json => serde_json::to_string_pretty(&rendered)
-            .context("Failed to serialize autoresearch target as JSON"),
+        AutoResearchRenderFormat::Json => {
+            serde_json::to_string_pretty(&RenderedAutoResearchJsonTarget::from_rendered(&rendered))
+                .context("Failed to serialize autoresearch target as JSON")
+        }
         AutoResearchRenderFormat::GitHubIssue => Ok(render_github_issue_target(&rendered)),
     }
 }
@@ -505,15 +519,14 @@ fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
             let score_summary = if run.scores.is_empty() {
                 "no scores recorded".to_string()
             } else {
-                run.scores
-                    .iter()
-                    .map(|score| format!("{}={} {}", score.metric_id, score.value, score.unit))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                format_score_summary_from_scores(&run.scores)
             };
             lines.push(format!(
                 "- `{}` on `{}` [{}]: {}",
-                run.run_id, run.benchmark_id, run.status, score_summary
+                run.run_id,
+                run.benchmark_id,
+                sanitize_inline_markdown(&run.status),
+                score_summary
             ));
         }
     }
@@ -718,6 +731,7 @@ fn summarize_runs_for_promotion(
 }
 
 fn summarize_run_for_promotion(run: &BenchmarkRun) -> PromotedRunSummary {
+    let normalized_status = run.status.trim().to_ascii_lowercase();
     let status_class = classify_run_status(&run.status)
         .expect("benchmark results should be validated before rendering");
     let sanitized_summary = sanitize_inline_markdown(&run.summary);
@@ -747,7 +761,7 @@ fn summarize_run_for_promotion(run: &BenchmarkRun) -> PromotedRunSummary {
     PromotedRunSummary {
         benchmark_id: run.benchmark_id.clone(),
         run_id: run.run_id.clone(),
-        status: run.status.clone(),
+        status: normalized_status,
         disposition,
         reason,
         summary: sanitized_summary,
@@ -820,6 +834,21 @@ fn format_score_evidence_list(evidence: &[PromotedRunScoreEvidence]) -> String {
         .join("; ")
 }
 
+fn format_score_summary_from_scores(scores: &[BenchmarkScore]) -> String {
+    scores
+        .iter()
+        .map(|score| {
+            format!(
+                "{}={} {}",
+                sanitize_inline_markdown(&score.metric_id),
+                score.value,
+                sanitize_inline_markdown(&score.unit)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn render_score_evidence_suffix(summary: &PromotedRunSummary) -> String {
     if summary.score_evidence.is_empty() {
         String::new()
@@ -828,6 +857,21 @@ fn render_score_evidence_suffix(summary: &PromotedRunSummary) -> String {
             " Evidence: {}",
             format_score_evidence_list(&summary.score_evidence)
         )
+    }
+}
+
+impl RenderedAutoResearchJsonTarget {
+    fn from_rendered(rendered: &RenderedAutoResearchTarget) -> Self {
+        Self {
+            id: rendered.id.clone(),
+            title: rendered.title.clone(),
+            summary: rendered.summary.clone(),
+            benchmarks: rendered.benchmarks.clone(),
+            components: rendered.components.clone(),
+            has_results_bundle: rendered.has_results_bundle,
+            promotion_summary: rendered.promotion_summary.clone(),
+            result_summaries: rendered.result_summaries.clone(),
+        }
     }
 }
 
@@ -1389,6 +1433,69 @@ mod tests {
         assert!(rendered.contains("\"promotable_count\": 1"));
         assert!(rendered.contains("\"has_promotable_results\": true"));
         assert!(rendered.contains("\"score_evidence\""));
+        assert!(!rendered.contains("\"runs\""));
+    }
+
+    #[test]
+    fn normalizes_status_strings_in_promoted_results() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "runner-failure".into(),
+                status: " FAILED ".into(),
+                summary: "Runner failed to complete the benchmark.".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 0.0,
+                    unit: "ratio".into(),
+                }],
+            }],
+        };
+
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::Issue,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("[failed]"));
+        assert!(!rendered.contains("[ FAILED ]"));
+    }
+
+    #[test]
+    fn sanitizes_available_results_score_fields() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "baseline".into(),
+                status: "validation_only".into(),
+                summary: "Catalog validated".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 1.0,
+                    unit: "pass\n# injected".into(),
+                }],
+            }],
+        };
+
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::Markdown,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("overall=1 pass # injected"));
+        assert!(!rendered.contains("\n# injected"));
     }
 
     #[test]

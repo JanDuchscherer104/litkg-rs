@@ -100,6 +100,7 @@ Rendered autoresearch targets now distinguish between:
 The renderer also supports `--format issue` for an issue-ready Markdown body
 that carries the same benchmark context, promoted inputs, and component scaffold.
 `--format json` now includes promotion counts, sanitized run summary text, and
-structured score evidence.
+structured score evidence under `result_summaries`; downstream automation should
+consume that normalized view rather than the raw source bundle.
 
 The catalog covers `SWE-Bench Pro`, `SWE-QA-Pro`, `CodeRepoQA`, `StackRepoQA`, `RepoReason`, `RACE-bench`, `SWD-Bench`, `CCBench`, and `Terminal-Bench`.
