@@ -172,6 +172,12 @@ def main() -> None:
         )
     if args.status == "keep" and not guardrail_status.startswith("pass"):
         raise SystemExit("A keep result must have guardrail_status starting with 'pass'.")
+    if args.status == "baseline" and args.set_best and not guardrail_status.startswith(
+        "pass"
+    ):
+        raise SystemExit(
+            "A baseline marked as best must have guardrail_status starting with 'pass'."
+        )
     state = load_state(state_path)
 
     row = [
@@ -208,7 +214,7 @@ def main() -> None:
     should_update_best = False
     if args.status == "keep":
         should_update_best = True
-    elif args.status == "baseline" and (
+    elif args.status == "baseline" and guardrail_status.startswith("pass") and (
         args.set_best or state.get("best_experiment_id") is None
     ):
         should_update_best = True
