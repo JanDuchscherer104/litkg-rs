@@ -7,6 +7,7 @@ use litkg_core::{
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
+use litkg_viewer::run_bundle as run_viewer_bundle;
 use std::process::Command;
 
 #[derive(Parser)]
@@ -26,6 +27,7 @@ enum Commands {
     RebuildGraph(ConfigArg),
     Pipeline(DownloadCommand),
     ExportNeo4j(ConfigArg),
+    InspectGraph(ConfigArg),
     ValidateBenchmarks(BenchmarkCatalogArg),
     RenderAutoresearchTarget(AutoResearchTargetCommand),
 }
@@ -176,6 +178,10 @@ fn main() -> Result<()> {
                     .join("\n")
             );
         }
+        Commands::InspectGraph(args) => {
+            let config = RepoConfig::load(&args.config)?;
+            inspect_graph(&config)?;
+        }
         Commands::ValidateBenchmarks(args) => {
             let catalog = litkg_core::load_benchmark_catalog(&args.catalog)?;
             let mut summary = validate_benchmark_catalog(&catalog)?;
@@ -201,6 +207,7 @@ fn main() -> Result<()> {
             let format = match args.format.as_str() {
                 "markdown" => AutoResearchRenderFormat::Markdown,
                 "json" => AutoResearchRenderFormat::Json,
+                "github-issue" | "issue" => AutoResearchRenderFormat::GitHubIssue,
                 other => anyhow::bail!("Unsupported autoresearch target format `{other}`"),
             };
             let rendered = litkg_core::render_autoresearch_target(
@@ -274,4 +281,27 @@ fn rebuild_graph(config: &RepoConfig) -> Result<()> {
     }
     println!("Rebuilt graph with `{command}`");
     Ok(())
+}
+
+fn inspect_graph(config: &RepoConfig) -> Result<()> {
+    let bundle_root = config.neo4j_export_root();
+    let nodes_path = bundle_root.join("nodes.jsonl");
+    let edges_path = bundle_root.join("edges.jsonl");
+
+    if !(nodes_path.exists() && edges_path.exists()) {
+        let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
+        if papers.is_empty() {
+            anyhow::bail!(
+                "No parsed papers found under {}; run parse/materialize first or export the Neo4j bundle before inspecting.",
+                config.parsed_root().display()
+            );
+        }
+        Neo4jSink::export(config, &papers)?;
+        println!(
+            "Generated Neo4j export bundle under {}",
+            bundle_root.display()
+        );
+    }
+
+    run_viewer_bundle(&bundle_root)
 }

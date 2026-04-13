@@ -8,10 +8,11 @@ BENCHMARK_CATALOG ?= examples/benchmarks/kg.toml
 BENCHMARK_RESULTS ?= examples/benchmarks/sample-results.toml
 AUTORESEARCH_TARGET_ID ?= kg_navigation_improvement
 AUTORESEARCH_TARGET_FORMAT ?= markdown
+GRAPH_CONFIG ?= examples/prml-vslam.toml
 
 .PHONY: help fmt test lint agents-db
 .PHONY: kg-up kg-down kg-index kg-ingest-docs kg-enrich kg-update
-.PHONY: benchmark-validate autoresearch-target
+.PHONY: benchmark-validate autoresearch-target inspect-graph
 
 fmt: ## Run rustfmt across the workspace
 	cargo fmt --all
@@ -54,6 +55,9 @@ benchmark-validate: ## Validate benchmark catalog and sample results
 
 autoresearch-target: ## Render an autoresearch target from the benchmark catalog/results
 	cargo run -p litkg-cli -- render-autoresearch-target --catalog "$(BENCHMARK_CATALOG)" --results "$(BENCHMARK_RESULTS)" --target-id "$(AUTORESEARCH_TARGET_ID)" --format "$(AUTORESEARCH_TARGET_FORMAT)"
+
+inspect-graph: ## Launch the native graph inspector for one litkg config
+	cargo run -p litkg-cli -- inspect-graph --config "$(GRAPH_CONFIG)"
 
 help: ## Show this help message
 	@echo "Usage: make <target>"

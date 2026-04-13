@@ -35,6 +35,7 @@ This repository owns a repo-independent Rust toolkit for downloading research li
 
 ## Instruction Capture Mode
 
+- When work begins on an item from `.agents/issues.toml` or `.agents/todos.toml`, persist that active resolution state in durable repo scaffolding such as backlog status fields and/or `.agents/work/` notes instead of leaving it only in transient chat context.
 - When the user explicitly asks to generalize an instruction into scaffolding, capture it in the smallest durable surface that fits.
 - Route repo policy and workflow to `AGENTS.md`.
 - Route broader human-owner intent and preferences to `CODEOWNER.md`.

@@ -8,6 +8,7 @@
 - sample results bundle: `examples/benchmarks/sample-results.toml`
 - validation entrypoint: `cargo run -p litkg-cli -- validate-benchmarks --catalog ... --results ...`
 - target rendering entrypoint: `cargo run -p litkg-cli -- render-autoresearch-target --catalog ... --results ... --target-id ...`
+- target render formats: `markdown`, `json`, and `github-issue`
 
 ## Included Benchmarks
 
@@ -66,3 +67,13 @@ cargo run -p litkg-cli -- render-autoresearch-target \
 ```
 
 This makes the benchmark-driven research prompt fragments explicitly selectable and concatenable, which is the intended contract for later overnight or autonomous research loops.
+
+When the target needs to be promoted into an issue-ready operator artifact, render it with:
+
+```bash
+cargo run -p litkg-cli -- render-autoresearch-target \
+  --catalog examples/benchmarks/kg.toml \
+  --results examples/benchmarks/sample-results.toml \
+  --target-id kg_navigation_improvement \
+  --format github-issue
+```

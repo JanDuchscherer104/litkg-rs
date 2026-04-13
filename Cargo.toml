@@ -4,6 +4,7 @@ members = [
   "crates/litkg-core",
   "crates/litkg-graphify",
   "crates/litkg-neo4j",
+  "crates/litkg-viewer",
 ]
 resolver = "2"
 
@@ -16,8 +17,10 @@ version = "0.1.0"
 [workspace.dependencies]
 anyhow = "1.0"
 clap = { version = "=4.5.23", features = ["derive"] }
+eframe = { version = "0.27.2", default-features = false, features = ["default_fonts", "glow"] }
 flate2 = "1.0"
-indexmap = "=2.2.6"
+indexmap = "=2.11.4"
+petgraph = "0.6.5"
 regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

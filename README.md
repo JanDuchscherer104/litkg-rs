@@ -30,6 +30,7 @@ Downstream repos can start from the strict templates under [templates/bootstrap/
 - `litkg-cli`: CLI binary `litkg`
 - `litkg-graphify`: graphify-friendly Markdown corpus adapter
 - `litkg-neo4j`: optional Neo4j export bundle adapter
+- `litkg-viewer`: native `egui`/`petgraph` graph inspector over the repo-owned Neo4j export bundle
 
 ## Platform Bias
 
@@ -44,11 +45,14 @@ cargo run -p litkg-cli -- download --config examples/prml-vslam.toml --download-
 cargo run -p litkg-cli -- parse --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- materialize --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- rebuild-graph --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- inspect-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- validate-benchmarks --catalog examples/benchmarks/kg.toml --results examples/benchmarks/sample-results.toml
 cargo run -p litkg-cli -- render-autoresearch-target --catalog examples/benchmarks/kg.toml --results examples/benchmarks/sample-results.toml --target-id kg_navigation_improvement
 ```
 
 If the consumer repo does not have `graphify` installed, `rebuild-graph` degrades cleanly and leaves the generated corpus intact.
+
+`inspect-graph` launches the repo-owned native viewer. If the Neo4j export bundle is missing, the command generates `nodes.jsonl` and `edges.jsonl` from the parsed paper set before opening the viewer.
 
 ## Backlog
 

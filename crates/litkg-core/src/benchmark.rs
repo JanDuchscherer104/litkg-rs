@@ -112,6 +112,7 @@ pub struct RenderedAutoResearchTarget {
 pub enum AutoResearchRenderFormat {
     Markdown,
     Json,
+    GitHubIssue,
 }
 
 pub fn load_benchmark_catalog(path: impl AsRef<Path>) -> Result<BenchmarkCatalog> {
@@ -420,6 +421,7 @@ pub fn render_autoresearch_target(
         AutoResearchRenderFormat::Markdown => Ok(render_markdown_target(&rendered)),
         AutoResearchRenderFormat::Json => serde_json::to_string_pretty(&rendered)
             .context("Failed to serialize autoresearch target as JSON"),
+        AutoResearchRenderFormat::GitHubIssue => Ok(render_github_issue_target(&rendered)),
     }
 }
 
@@ -470,6 +472,72 @@ fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
         lines.push(component.prompt_fragment.clone());
         lines.push(String::new());
     }
+
+    lines.join("\n")
+}
+
+fn render_github_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
+    let mut lines = vec![
+        format!("Suggested issue title: [AutoResearch] {}", rendered.title),
+        String::new(),
+        "## Summary".to_string(),
+        String::new(),
+        rendered.summary.clone(),
+        String::new(),
+        "## Benchmarks In Scope".to_string(),
+        String::new(),
+    ];
+
+    for benchmark in &rendered.benchmarks {
+        lines.push(format!(
+            "- `{}` (`{}`): {}. Task scale: {}",
+            benchmark.id, benchmark.name, benchmark.best_use, benchmark.task_scale
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("## Current Signals".to_string());
+    lines.push(String::new());
+    if rendered.runs.is_empty() {
+        lines.push("- No benchmark results were provided for this target render.".to_string());
+    } else {
+        for run in &rendered.runs {
+            let score_summary = if run.scores.is_empty() {
+                "no scores recorded".to_string()
+            } else {
+                run.scores
+                    .iter()
+                    .map(|score| format!("{}={} {}", score.metric_id, score.value, score.unit))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            lines.push(format!(
+                "- `{}` on `{}` [{}]: {}",
+                run.run_id, run.benchmark_id, run.status, score_summary
+            ));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("## Proposed Work".to_string());
+    lines.push(String::new());
+    for component in &rendered.components {
+        lines.push(format!(
+            "- [ ] **{}**: {}",
+            component.title,
+            component.prompt_fragment.trim()
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("## Acceptance Criteria".to_string());
+    lines.push(String::new());
+    lines.push("- [ ] `make benchmark-validate` passes.".to_string());
+    lines.push("- [ ] The selected autoresearch target renders cleanly in `markdown` format.".to_string());
+    lines.push("- [ ] The selected autoresearch target renders cleanly in `json` format.".to_string());
+    lines.push(
+        "- [ ] The resulting issue body stays deterministic under repeated renders.".to_string(),
+    );
 
     lines.join("\n")
 }
@@ -603,6 +671,37 @@ mod tests {
         assert!(rendered.contains("Auto Research Target: KG navigation"));
         assert!(rendered.contains("Compare graph-only with hybrid retrieval."));
         assert!(rendered.contains("baseline"));
+    }
+
+    #[test]
+    fn renders_target_as_github_issue_body() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "baseline".into(),
+                status: "validation_only".into(),
+                summary: "Catalog validated".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 1.0,
+                    unit: "pass".into(),
+                }],
+            }],
+        };
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::GitHubIssue,
+        )
+        .unwrap();
+        assert!(rendered.contains("Suggested issue title: [AutoResearch] KG navigation"));
+        assert!(rendered.contains("## Proposed Work"));
+        assert!(rendered.contains("- [ ] **Ablation**"));
+        assert!(rendered.contains("## Acceptance Criteria"));
     }
 
     #[test]
