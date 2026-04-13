@@ -26,20 +26,31 @@ resolve_repo_path() {
   fi
 }
 
+resolve_against_root() {
+  local root_path="$1"
+  local raw_path="$2"
+  if [[ "${raw_path}" = /* ]]; then
+    printf '%s\n' "${raw_path}"
+  else
+    printf '%s\n' "${root_path}/${raw_path#./}"
+  fi
+}
+
 repo_relative_path() {
-  local raw_path="$1"
+  local root_path="$1"
+  local raw_path="$2"
   local abs_path
-  abs_path="$(resolve_repo_path "${raw_path}")"
-  if [[ "${abs_path}" == "${REPO_ROOT}" ]]; then
+  abs_path="$(resolve_against_root "${root_path}" "${raw_path}")"
+  if [[ "${abs_path}" == "${root_path}" ]]; then
     printf '.\n'
     return
   fi
   case "${abs_path}" in
-    "${REPO_ROOT}"/*)
-      printf '%s\n' "${abs_path#${REPO_ROOT}/}"
+    "${root_path}"/*)
+      printf '%s\n' "${abs_path#${root_path}/}"
       ;;
     *)
-      echo "Target path must live under the repo root: ${raw_path}" >&2
+      echo "Target path must live under the code repo root: ${raw_path}" >&2
       exit 2
       ;;
   esac
@@ -57,13 +68,20 @@ load_env
 require_cmd python3
 require_cmd docker
 
+CODE_REPO_ROOT_INPUT="${KG_CODE_REPO_ROOT:-.}"
+CODE_REPO_ROOT_ABS="$(resolve_repo_path "${CODE_REPO_ROOT_INPUT}")"
+if [[ ! -d "${CODE_REPO_ROOT_ABS}" ]]; then
+  echo "Code repo root does not exist or is not a directory: ${CODE_REPO_ROOT_INPUT}" >&2
+  exit 2
+fi
+
 INDEX_TARGET_INPUT="${1:-.}"
-INDEX_TARGET_ABS="$(resolve_repo_path "${INDEX_TARGET_INPUT}")"
+INDEX_TARGET_ABS="$(resolve_against_root "${CODE_REPO_ROOT_ABS}" "${INDEX_TARGET_INPUT}")"
 if [[ ! -e "${INDEX_TARGET_ABS}" ]]; then
   echo "Index target does not exist: ${INDEX_TARGET_INPUT}" >&2
   exit 2
 fi
-INDEX_TARGET_REL="$(repo_relative_path "${INDEX_TARGET_ABS}")"
+INDEX_TARGET_REL="$(repo_relative_path "${CODE_REPO_ROOT_ABS}" "${INDEX_TARGET_ABS}")"
 
 CGC_VENV_DIR_ABS="$(resolve_repo_path "${CGC_VENV_DIR:-.cache/kg/venvs/cgc}")"
 mkdir -p "$(dirname "${CGC_VENV_DIR_ABS}")"
@@ -82,8 +100,9 @@ export NEO4J_USER="${NEO4J_USER:-${NEO4J_USERNAME}}"
 export NEO4J_PASSWORD="${NEO4J_PASSWORD:-litkglocal}"
 export NEO4J_DATABASE="${NEO4J_DATABASE:-neo4j}"
 
-cd "${REPO_ROOT}"
+cd "${CODE_REPO_ROOT_ABS}"
 echo "Indexing code graph for: ${INDEX_TARGET_REL}"
+echo "Code repo root: ${CODE_REPO_ROOT_ABS}"
 "${CGC_VENV_DIR_ABS}/bin/cgc" index "${INDEX_TARGET_REL}"
 "${CGC_VENV_DIR_ABS}/bin/cgc" list
 

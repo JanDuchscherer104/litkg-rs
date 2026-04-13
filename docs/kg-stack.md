@@ -36,6 +36,7 @@ make kg-up
 ```bash
 make kg-index
 make kg-update KG_SRC_DIR=crates/litkg-core
+make kg-update KG_CODE_REPO_ROOT=/Users/jd/repos/NBV KG_SRC_DIR=aria_nbv/aria_nbv
 ```
 
 3. Ingest docs:
@@ -60,5 +61,6 @@ make kg-down
 ## Notes
 
 - `kg-update` is the main incremental refresh entrypoint for code-path changes.
+- `KG_CODE_REPO_ROOT` lets the toolkit index code in another repo while still using the local Neo4j and embedding runtime. This is the path to CGC-based Python package indexing outside `litkg-rs`.
 - `kg-ingest-docs` without explicit paths ingests the repo’s README, AGENTS surface, internal DB, and authored docs/reference markdown.
-- Current symbol coverage for Rust code depends on CodeGraphContext support. Even when symbol coverage is partial, the local stack remains useful for file- and document-level routing.
+- When `KG_CODE_REPO_ROOT` points at an external repo, code embeddings still refresh, but doc linking is disabled by default to avoid attaching external code nodes to `litkg-rs` documentation. Re-enable it explicitly with `KG_ENABLE_DOC_LINKS=1` only when the matching external docs have also been ingested into the same Neo4j graph.
