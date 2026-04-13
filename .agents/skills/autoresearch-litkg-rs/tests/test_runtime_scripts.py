@@ -11,6 +11,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[4]
 INIT_RUN = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/init_run.py"
 RECORD_RESULT = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/record_result.py"
+RESUME_RUN = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/resume_run.py"
 
 
 class RuntimeScriptsTest(unittest.TestCase):
@@ -237,6 +238,90 @@ class RuntimeScriptsTest(unittest.TestCase):
             )
             self.assertNotEqual(duplicate.returncode, 0)
             self.assertIn("already recorded", duplicate.stderr)
+
+    def test_resume_run_summarizes_state_and_recent_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir)
+            init = self.run_cmd(
+                str(INIT_RUN),
+                "--tag",
+                "test-run",
+                "--question",
+                "Does the runtime initialize correctly?",
+                "--primary-metric",
+                "runtime-helper score",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(init.returncode, 0, init.stderr)
+
+            baseline = self.run_cmd(
+                str(RECORD_RESULT),
+                "--tag",
+                "test-run",
+                "--experiment-id",
+                "00-baseline",
+                "--commit",
+                "abc1234",
+                "--status",
+                "baseline",
+                "--primary-metric",
+                "0",
+                "--guardrail-status",
+                "pass",
+                "--description",
+                "baseline",
+                "--set-best",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(baseline.returncode, 0, baseline.stderr)
+
+            keep = self.run_cmd(
+                str(RECORD_RESULT),
+                "--tag",
+                "test-run",
+                "--experiment-id",
+                "01-tests",
+                "--commit",
+                "def5678",
+                "--status",
+                "keep",
+                "--primary-metric",
+                "1",
+                "--guardrail-status",
+                "pass",
+                "--description",
+                "tests pass",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(keep.returncode, 0, keep.stderr)
+
+            resume = self.run_cmd(
+                str(RESUME_RUN),
+                "--tag",
+                "test-run",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(resume.returncode, 0, resume.stderr)
+            self.assertIn("Run tag: test-run", resume.stdout)
+            self.assertIn("Recommended action: continue from the winner branch", resume.stdout)
+            self.assertIn("01-tests [keep]", resume.stdout)
+
+            resume_json = self.run_cmd(
+                str(RESUME_RUN),
+                "--tag",
+                "test-run",
+                "--repo-root",
+                str(repo_root),
+                "--json",
+            )
+            self.assertEqual(resume_json.returncode, 0, resume_json.stderr)
+            payload = json.loads(resume_json.stdout)
+            self.assertEqual(payload["best_experiment_id"], "01-tests")
+            self.assertFalse(payload["needs_pivot"])
 
 
 if __name__ == "__main__":
