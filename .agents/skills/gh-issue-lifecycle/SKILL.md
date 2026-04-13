@@ -49,13 +49,14 @@ Use the later `prml-vslam` issues as the model, not the earlier checklist-only w
 
 1. Start from the GitHub issue plus the linked local stack entry.
 2. Before coding, restate the acceptance criteria in your own words and verify the issue is still specific enough.
-3. Implement the change and run the relevant repo validation.
-4. Update the local stack:
+3. Leave a short TODO or status comment on the GitHub issue that states the planned change and whether execution is happening in the local checkout or an isolated worktree.
+4. Implement the change and run the relevant repo validation.
+5. Update the local stack:
    - mark the `TODO-*` as `done`
    - mark the `ISSUE-*` as `closed` when fully satisfied
    - add the IDs to `.agents/resolved.toml`
-5. When opening or updating a PR, include `Closes #<number>` in the PR body or commit history targeting the default branch so GitHub closes the issue automatically after merge.
-6. Leave a short closing comment or PR summary that maps the final change back to the issue’s acceptance criteria.
+6. When opening or updating a PR, include `Closes #<number>` in the PR body or commit history targeting the default branch so GitHub closes the issue automatically after merge.
+7. Leave a short closing comment or PR summary that maps the final change back to the issue’s acceptance criteria.
 
 ## Sync Local Backlog And GitHub
 

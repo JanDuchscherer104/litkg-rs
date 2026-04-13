@@ -31,6 +31,8 @@ and narrower than generic autoresearch skills:
   target prompt
 - keep/discard decisions must separate the winning metric from safety guards
 - repeated non-wins should trigger a pivot instead of blind retry loops
+- candidate winning experiments must clear the repo-local review gate before
+  promotion
 - winning changes must still respect repo rules such as `cargo fmt --all`,
   `cargo test`, `make benchmark-validate`, and `make agents-db`
 
@@ -283,6 +285,18 @@ local edits.
 
 Do not stage or commit `.logs/autoresearch/` artifacts.
 
+## Review Gate
+
+Before promoting a trial into the winner branch:
+
+1. Review the exact evaluated diff with `.agents/skills/code-review-litkg-rs/SKILL.md`.
+2. Do not promote changes with unresolved `P0` or `P1` findings.
+3. If only `P2` or `P3` findings remain, either fix them in the same trial or
+   record the debt explicitly in `.logs/autoresearch/<tag>/results.tsv`, the
+   linked issue, or `.agents/todos.toml`.
+4. When the run is backed by a GitHub PR, inspect unresolved review comments or
+   threads before closing the loop.
+
 ## Experiment Loop
 
 Repeat until the declared budget is exhausted:
@@ -300,17 +314,20 @@ Repeat until the declared budget is exhausted:
 8. If the idea changes benchmark schema, rendered target semantics, or
    operator-facing contracts, update the matching docs in the same winning
    experiment.
-9. Record the outcome with
-   `python3 .agents/skills/autoresearch-litkg-rs/scripts/record_result.py ...`.
+9. For any candidate `keep`, run the repo-local review gate before promotion.
 10. Decide:
-   - `keep` if the primary metric improves
-   - `keep` if the primary metric is equal and the result is materially simpler
+   - `keep` if the primary metric improves and review has no unresolved `P0` or
+     `P1` findings
+   - `keep` if the primary metric is equal, the result is materially simpler,
+     and review has no unresolved `P0` or `P1` findings
    - `discard` otherwise
-11. If the metric is noisy or rubric-based, confirm a candidate win with a
+11. Record the outcome with
+    `python3 .agents/skills/autoresearch-litkg-rs/scripts/record_result.py ...`.
+12. If the metric is noisy or rubric-based, confirm a candidate win with a
     second run or an explicit rubric note before keeping it.
-12. If three experiments in a row end in `discard` or `crash`, pivot to a
+13. If three experiments in a row end in `discard` or `crash`, pivot to a
     materially different idea instead of brute-force retries.
-13. If two pivots still do not produce a new `keep`, stop and summarize the
+14. If two pivots still do not produce a new `keep`, stop and summarize the
     blocker.
 
 When the loop ends and the user wants a final deliverable:
