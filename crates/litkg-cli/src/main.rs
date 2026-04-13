@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litkg_core::{
-    download_registry_sources, load_registry, parse_registry_papers, sync_registry,
-    validate_benchmark_catalog, validate_benchmark_results, write_parsed_papers,
-    AutoResearchRenderFormat, BenchmarkCatalog, BenchmarkResults, DownloadOptions, RepoConfig,
-    SinkMode,
+    download_registry_sources, inspect_benchmark_support, load_registry, parse_registry_papers,
+    promote_benchmark_results, render_promoted_targets, run_benchmarks, sync_registry,
+    validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
+    write_parsed_papers, AutoResearchRenderFormat, BenchmarkCatalog, BenchmarkPromotionRequest,
+    BenchmarkResults, BenchmarkSupportStatus, DownloadOptions, MetricThresholdComparison,
+    MetricThresholdRule, PromotionComponentSelection, RepoConfig, SinkMode,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
@@ -30,7 +32,10 @@ enum Commands {
     ExportNeo4j(ConfigArg),
     InspectGraph(ConfigArg),
     ValidateBenchmarks(BenchmarkCatalogArg),
+    BenchmarkSupport(BenchmarkSupportCommand),
+    RunBenchmarks(BenchmarkRunCommand),
     RenderAutoresearchTarget(AutoResearchTargetCommand),
+    PromoteBenchmarkResults(PromoteBenchmarkResultsCommand),
     SyncAutoresearchTargetIssue(AutoResearchIssueSyncCommand),
 }
 
@@ -90,6 +95,54 @@ struct AutoResearchIssueSyncCommand {
     labels: Vec<String>,
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+}
+
+#[derive(Args, Clone)]
+struct BenchmarkExecutionArgs {
+    #[arg(long)]
+    catalog: String,
+    #[arg(long)]
+    integrations: String,
+    #[arg(long)]
+    plan: Option<String>,
+    #[arg(long = "benchmark-id")]
+    benchmark_ids: Vec<String>,
+}
+
+#[derive(Args, Clone)]
+struct BenchmarkSupportCommand {
+    #[command(flatten)]
+    execution: BenchmarkExecutionArgs,
+    #[arg(long, default_value = "text")]
+    format: String,
+}
+
+#[derive(Args, Clone)]
+struct BenchmarkRunCommand {
+    #[command(flatten)]
+    execution: BenchmarkExecutionArgs,
+    #[arg(long)]
+    output: String,
+}
+
+#[derive(Args, Clone)]
+struct PromoteBenchmarkResultsCommand {
+    #[command(flatten)]
+    catalog: BenchmarkCatalogArg,
+    #[arg(long = "target-id")]
+    target_ids: Vec<String>,
+    #[arg(long = "benchmark-id")]
+    benchmark_ids: Vec<String>,
+    #[arg(long = "component-id")]
+    component_ids: Vec<String>,
+    #[arg(long = "status")]
+    status_filters: Vec<String>,
+    #[arg(long = "metric-threshold")]
+    metric_thresholds: Vec<String>,
+    #[arg(long, default_value = "template-only")]
+    component_selection: String,
+    #[arg(long, default_value = "markdown")]
+    format: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -238,6 +291,47 @@ fn main() -> Result<()> {
                 summary.run_count,
             );
         }
+        Commands::BenchmarkSupport(args) => {
+            let catalog = litkg_core::load_benchmark_catalog(&args.execution.catalog)?;
+            let integrations =
+                litkg_core::load_benchmark_integrations(&args.execution.integrations)?;
+            let plan = match &args.execution.plan {
+                Some(path) => Some(litkg_core::load_benchmark_run_plan(path)?),
+                None => None,
+            };
+            let statuses = inspect_benchmark_support(
+                &catalog,
+                &integrations,
+                plan.as_ref(),
+                &args.execution.benchmark_ids,
+            )?;
+            match args.format.as_str() {
+                "text" => println!("{}", render_support_statuses(&statuses)),
+                "json" => println!("{}", serde_json::to_string_pretty(&statuses)?),
+                other => anyhow::bail!("Unsupported benchmark support format `{other}`"),
+            }
+        }
+        Commands::RunBenchmarks(args) => {
+            let catalog = litkg_core::load_benchmark_catalog(&args.execution.catalog)?;
+            let integrations =
+                litkg_core::load_benchmark_integrations(&args.execution.integrations)?;
+            let plan = match &args.execution.plan {
+                Some(path) => Some(litkg_core::load_benchmark_run_plan(path)?),
+                None => None,
+            };
+            let results = run_benchmarks(
+                &catalog,
+                &integrations,
+                plan.as_ref(),
+                &args.execution.benchmark_ids,
+            )?;
+            write_benchmark_results(&args.output, &results)?;
+            let summary = validate_benchmark_results(&catalog, &results)?;
+            println!(
+                "Ran benchmark integrations: {} benchmarks, {} runs written to {}",
+                summary.benchmark_count, summary.run_count, args.output,
+            );
+        }
         Commands::RenderAutoresearchTarget(args) => {
             let (catalog, results) = load_benchmark_inputs(&args.catalog)?;
             let rendered = litkg_core::render_autoresearch_target(
@@ -248,6 +342,30 @@ fn main() -> Result<()> {
                 &args.benchmark_ids,
                 args.format.into(),
             )?;
+            println!("{rendered}");
+        }
+        Commands::PromoteBenchmarkResults(args) => {
+            let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog)?;
+            let results_path = args
+                .catalog
+                .results
+                .as_ref()
+                .context("`promote-benchmark-results` requires --results")?;
+            let results = litkg_core::load_benchmark_results(results_path)?;
+            let request = BenchmarkPromotionRequest {
+                target_ids: args.target_ids,
+                benchmark_ids: args.benchmark_ids,
+                status_filters: args.status_filters,
+                metric_thresholds: args
+                    .metric_thresholds
+                    .iter()
+                    .map(|raw| parse_metric_threshold(raw))
+                    .collect::<Result<Vec<_>>>()?,
+                component_selection: parse_component_selection(&args.component_selection)?,
+                component_ids: args.component_ids,
+            };
+            let promoted = promote_benchmark_results(&catalog, &results, &request)?;
+            let rendered = render_promoted_targets(&promoted, parse_render_format(&args.format)?)?;
             println!("{rendered}");
         }
         Commands::SyncAutoresearchTargetIssue(args) => {
@@ -295,6 +413,81 @@ fn load_benchmark_inputs(
         None => None,
     };
     Ok((catalog, results))
+}
+
+fn parse_render_format(raw: &str) -> Result<AutoResearchRenderFormat> {
+    match raw {
+        "markdown" => Ok(AutoResearchRenderFormat::Markdown),
+        "json" => Ok(AutoResearchRenderFormat::Json),
+        "github-issue" | "issue" => Ok(AutoResearchRenderFormat::GitHubIssue),
+        other => anyhow::bail!("Unsupported autoresearch target format `{other}`"),
+    }
+}
+
+fn parse_component_selection(raw: &str) -> Result<PromotionComponentSelection> {
+    match raw {
+        "template-only" => Ok(PromotionComponentSelection::TemplateOnly),
+        "template-and-matched" => Ok(PromotionComponentSelection::TemplateAndMatched),
+        "matched-only" => Ok(PromotionComponentSelection::MatchedOnly),
+        other => anyhow::bail!("Unsupported component selection policy `{other}`"),
+    }
+}
+
+fn parse_metric_threshold(raw: &str) -> Result<MetricThresholdRule> {
+    let operators = [
+        ("<=", MetricThresholdComparison::LessThanOrEqual),
+        (">=", MetricThresholdComparison::GreaterThanOrEqual),
+        ("<", MetricThresholdComparison::LessThan),
+        (">", MetricThresholdComparison::GreaterThan),
+    ];
+    for (operator, comparison) in operators {
+        if let Some((metric_id, value)) = raw.split_once(operator) {
+            let metric_id = metric_id.trim();
+            let value = value.trim();
+            if metric_id.is_empty() {
+                anyhow::bail!("Metric threshold `{raw}` is missing a metric id");
+            }
+            return Ok(MetricThresholdRule {
+                metric_id: metric_id.to_string(),
+                comparison,
+                value: value.parse::<f64>().with_context(|| {
+                    format!("Metric threshold `{raw}` has an invalid numeric value")
+                })?,
+            });
+        }
+    }
+    anyhow::bail!(
+        "Metric threshold `{raw}` must use one of `<`, `<=`, `>`, or `>=`, for example `correctness<0.7`"
+    )
+}
+
+fn render_support_statuses(statuses: &[BenchmarkSupportStatus]) -> String {
+    let mut lines = vec!["Benchmark support snapshot:".to_string()];
+    for status in statuses {
+        let mut detail = format!(
+            "- `{}` [{} / {}] local=`{}` configured_runs={}",
+            status.benchmark_id,
+            status.upstream_status,
+            status.runner_kind,
+            status.local_status,
+            status.configured_runs
+        );
+        if !status.missing_binaries.is_empty() {
+            detail.push_str(&format!(
+                " missing_binaries={}",
+                status.missing_binaries.join(",")
+            ));
+        }
+        if !status.missing_env_vars.is_empty() {
+            detail.push_str(&format!(
+                " missing_env_vars={}",
+                status.missing_env_vars.join(",")
+            ));
+        }
+        lines.push(detail);
+        lines.push(format!("  {}", status.summary));
+    }
+    lines.join("\n")
 }
 
 fn extract_issue_title(body: &str) -> Result<String> {
@@ -564,6 +757,68 @@ mod tests {
                 assert_eq!(command.labels, vec!["autoresearch"]);
                 assert!(command.dry_run);
                 assert_eq!(command.target_id, "kg_navigation_improvement");
+            }
+            other => panic!(
+                "unexpected command parsed: {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn cli_parses_benchmark_support_command() {
+        let cli = Cli::try_parse_from([
+            "litkg",
+            "benchmark-support",
+            "--catalog",
+            "examples/benchmarks/kg.toml",
+            "--integrations",
+            "examples/benchmarks/integrations.toml",
+            "--benchmark-id",
+            "swe-qa-pro",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::BenchmarkSupport(command) => {
+                assert_eq!(command.execution.benchmark_ids, vec!["swe-qa-pro"]);
+                assert_eq!(command.format, "json");
+            }
+            other => panic!(
+                "unexpected command parsed: {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn cli_parses_promote_benchmark_results_command() {
+        let cli = Cli::try_parse_from([
+            "litkg",
+            "promote-benchmark-results",
+            "--catalog",
+            "examples/benchmarks/kg.toml",
+            "--results",
+            "examples/benchmarks/sample-results.toml",
+            "--target-id",
+            "kg_navigation_improvement",
+            "--status",
+            "error",
+            "--metric-threshold",
+            "correctness<=0.7",
+            "--format",
+            "github-issue",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::PromoteBenchmarkResults(command) => {
+                assert_eq!(command.target_ids, vec!["kg_navigation_improvement"]);
+                assert_eq!(command.status_filters, vec!["error"]);
+                assert_eq!(command.metric_thresholds, vec!["correctness<=0.7"]);
+                assert_eq!(command.format, "github-issue");
             }
             other => panic!(
                 "unexpected command parsed: {:?}",

@@ -143,6 +143,24 @@ struct RenderedAutoResearchJsonTarget {
     pub result_summaries: Vec<PromotedRunSummary>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct PromotedAutoResearchTarget {
+    pub id: String,
+    pub title: String,
+    pub summary: String,
+    pub benchmarks: Vec<BenchmarkSpec>,
+    pub components: Vec<AutoResearchComponent>,
+    pub runs: Vec<BenchmarkRun>,
+    pub evidence: Vec<PromotionEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PromotionEvidence {
+    pub benchmark_id: String,
+    pub run_id: String,
+    pub reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoResearchRenderFormat {
     Markdown,
@@ -181,6 +199,44 @@ pub struct PromotedRunScoreEvidence {
     pub metric_id: String,
     pub value: f64,
     pub unit: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromotionComponentSelection {
+    TemplateOnly,
+    TemplateAndMatched,
+    MatchedOnly,
+}
+
+impl Default for PromotionComponentSelection {
+    fn default() -> Self {
+        Self::TemplateOnly
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricThresholdComparison {
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricThresholdRule {
+    pub metric_id: String,
+    pub comparison: MetricThresholdComparison,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BenchmarkPromotionRequest {
+    pub target_ids: Vec<String>,
+    pub benchmark_ids: Vec<String>,
+    pub status_filters: Vec<String>,
+    pub metric_thresholds: Vec<MetricThresholdRule>,
+    pub component_selection: PromotionComponentSelection,
+    pub component_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -565,6 +621,167 @@ pub fn render_autoresearch_target(
     }
 }
 
+pub fn promote_benchmark_results(
+    catalog: &BenchmarkCatalog,
+    results: &BenchmarkResults,
+    request: &BenchmarkPromotionRequest,
+) -> Result<Vec<PromotedAutoResearchTarget>> {
+    validate_benchmark_results(catalog, results)?;
+
+    let benchmark_by_id = benchmark_map(catalog);
+    let component_by_id = component_map(catalog);
+    let target_filter = requested_id_set(&request.target_ids, "autoresearch target")?;
+    let benchmark_filter = requested_id_set(&request.benchmark_ids, "benchmark")?;
+    let status_filter = requested_status_set(&request.status_filters);
+
+    if let Some(target_filter) = &target_filter {
+        for target_id in target_filter {
+            if !catalog
+                .autoresearch_targets
+                .iter()
+                .any(|target| target.id == *target_id)
+            {
+                bail!("Unknown autoresearch target `{target_id}`");
+            }
+        }
+    }
+    if let Some(benchmark_filter) = &benchmark_filter {
+        for benchmark_id in benchmark_filter {
+            if !benchmark_by_id.contains_key(benchmark_id) {
+                bail!("Unknown benchmark `{benchmark_id}`");
+            }
+        }
+    }
+
+    let matched_runs = results
+        .runs
+        .iter()
+        .filter_map(|run| {
+            promotion_evidence_for_run(
+                run,
+                benchmark_filter.as_ref(),
+                status_filter.as_ref(),
+                &request.metric_thresholds,
+            )
+            .map(|evidence| (run.clone(), evidence))
+        })
+        .collect::<Vec<_>>();
+
+    let matched_benchmark_ids = matched_runs
+        .iter()
+        .map(|(run, _)| run.benchmark_id.clone())
+        .collect::<BTreeSet<_>>();
+    let selected_targets = catalog
+        .autoresearch_targets
+        .iter()
+        .filter(|target| {
+            target_filter
+                .as_ref()
+                .map(|filter| filter.contains(&target.id))
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+    let mut promoted = Vec::new();
+
+    for target in selected_targets {
+        let selected_benchmark_ids = target
+            .benchmark_ids
+            .iter()
+            .filter(|benchmark_id| matched_benchmark_ids.contains(*benchmark_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if selected_benchmark_ids.is_empty() {
+            continue;
+        }
+
+        let benchmarks = selected_benchmark_ids
+            .iter()
+            .map(|benchmark_id| {
+                benchmark_by_id
+                    .get(benchmark_id)
+                    .cloned()
+                    .with_context(|| format!("Unknown benchmark `{benchmark_id}`"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let component_ids =
+            select_component_ids(catalog, target, &selected_benchmark_ids, request)?;
+        let components = component_ids
+            .iter()
+            .map(|component_id| {
+                component_by_id
+                    .get(component_id)
+                    .cloned()
+                    .with_context(|| format!("Unknown autoresearch component `{component_id}`"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let benchmark_order = selected_benchmark_ids
+            .iter()
+            .enumerate()
+            .map(|(index, benchmark_id)| (benchmark_id.clone(), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut runs = matched_runs
+            .iter()
+            .filter(|(run, _)| selected_benchmark_ids.contains(&run.benchmark_id))
+            .map(|(run, _)| run.clone())
+            .collect::<Vec<_>>();
+        runs.sort_by(|left, right| {
+            benchmark_order
+                .get(&left.benchmark_id)
+                .cmp(&benchmark_order.get(&right.benchmark_id))
+                .then_with(|| left.run_id.cmp(&right.run_id))
+        });
+
+        let evidence = runs
+            .iter()
+            .filter_map(|run| {
+                matched_runs
+                    .iter()
+                    .find(|(candidate, _)| {
+                        candidate.run_id == run.run_id && candidate.benchmark_id == run.benchmark_id
+                    })
+                    .map(|(_, evidence)| evidence.clone())
+            })
+            .collect::<Vec<_>>();
+
+        promoted.push(PromotedAutoResearchTarget {
+            id: target.id.clone(),
+            title: target.title.clone(),
+            summary: target.summary.clone(),
+            benchmarks,
+            components,
+            runs,
+            evidence,
+        });
+    }
+
+    Ok(promoted)
+}
+
+pub fn render_promoted_targets(
+    targets: &[PromotedAutoResearchTarget],
+    format: AutoResearchRenderFormat,
+) -> Result<String> {
+    if targets.is_empty() {
+        bail!("No autoresearch targets matched the supplied promotion filters");
+    }
+
+    match format {
+        AutoResearchRenderFormat::Markdown => Ok(targets
+            .iter()
+            .map(render_promoted_target_markdown)
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n")),
+        AutoResearchRenderFormat::Json => serde_json::to_string_pretty(targets)
+            .context("Failed to serialize promoted autoresearch targets as JSON"),
+        AutoResearchRenderFormat::Issue | AutoResearchRenderFormat::GitHubIssue => Ok(targets
+            .iter()
+            .map(render_promoted_target_as_github_issue)
+            .collect::<Vec<_>>()
+            .join("\n\n---\n\n")),
+    }
+}
+
 fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
     let mut lines = vec![
         format!("# Auto Research Target: {}", rendered.title),
@@ -668,6 +885,148 @@ fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
 
 fn render_github_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
     render_issue_target(rendered)
+}
+
+fn render_promoted_target_markdown(target: &PromotedAutoResearchTarget) -> String {
+    let mut lines = vec![
+        format!("# Promoted Auto Research Target: {}", target.title),
+        String::new(),
+        target.summary.clone(),
+        String::new(),
+        "## Triggering Evidence".to_string(),
+        String::new(),
+    ];
+
+    for evidence in &target.evidence {
+        lines.push(format!(
+            "- `{}` on `{}`: {}",
+            evidence.run_id,
+            evidence.benchmark_id,
+            evidence.reasons.join("; ")
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("## Selected Benchmarks".to_string());
+    lines.push(String::new());
+    for benchmark in &target.benchmarks {
+        lines.push(format!(
+            "- `{}`: {}. Task scale: {}",
+            benchmark.id, benchmark.best_use, benchmark.task_scale
+        ));
+    }
+
+    if !target.runs.is_empty() {
+        lines.push(String::new());
+        lines.push("## Promoted Runs".to_string());
+        lines.push(String::new());
+        for run in &target.runs {
+            append_run_details(&mut lines, run);
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("## Concatenated Components".to_string());
+    lines.push(String::new());
+    for (index, component) in target.components.iter().enumerate() {
+        lines.push(format!("### {}. {}", index + 1, component.title));
+        lines.push(String::new());
+        lines.push(component.prompt_fragment.clone());
+        lines.push(String::new());
+    }
+
+    lines.join("\n")
+}
+
+fn render_promoted_target_as_github_issue(target: &PromotedAutoResearchTarget) -> String {
+    let benchmarks = target
+        .benchmarks
+        .iter()
+        .map(|benchmark| format!("- `{}`: {}", benchmark.id, benchmark.summary))
+        .collect::<Vec<_>>();
+    let evidence = target
+        .evidence
+        .iter()
+        .map(|evidence| {
+            format!(
+                "- `{}` on `{}`: {}",
+                evidence.run_id,
+                evidence.benchmark_id,
+                evidence.reasons.join("; ")
+            )
+        })
+        .collect::<Vec<_>>();
+    let components = target
+        .components
+        .iter()
+        .enumerate()
+        .map(|(index, component)| format!("{}. {}", index + 1, component.title))
+        .collect::<Vec<_>>();
+
+    let mut lines = vec![
+        format!("Title: Auto Research: {}", target.title),
+        String::new(),
+        "## Summary".to_string(),
+        target.summary.clone(),
+        String::new(),
+        "## Triggering Evidence".to_string(),
+    ];
+    lines.extend(evidence);
+    lines.push(String::new());
+    lines.push("## Benchmarks To Keep Frozen".to_string());
+    lines.extend(benchmarks);
+    lines.push(String::new());
+    lines.push("## Proposed Work".to_string());
+    lines.extend(components);
+    lines.push(String::new());
+    lines.push("## Validation".to_string());
+    lines.push(
+        "- `cargo run -p litkg-cli -- validate-benchmarks --catalog ... --results ...`".to_string(),
+    );
+    lines.push(
+        "- `cargo run -p litkg-cli -- render-autoresearch-target --catalog ... --results ... --target-id ...`"
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn append_run_details(lines: &mut Vec<String>, run: &BenchmarkRun) {
+    let score_summary = if run.scores.is_empty() {
+        "no scores recorded".to_string()
+    } else {
+        run.scores
+            .iter()
+            .map(|score| format!("{}={} {}", score.metric_id, score.value, score.unit))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    lines.push(format!(
+        "- `{}` on `{}` [{}]: {}",
+        run.run_id, run.benchmark_id, run.status, score_summary
+    ));
+    if !run.diagnostics.is_empty() {
+        lines.push(format!("  diagnostics: {}", run.diagnostics.join(" | ")));
+    }
+    if !run.artifacts.is_empty() {
+        lines.push(format!(
+            "  artifacts: {}",
+            run.artifacts
+                .iter()
+                .map(|artifact| format!(
+                    "{} ({}) -> {}",
+                    artifact.label, artifact.kind, artifact.location
+                ))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ));
+    }
+    if let Some(execution) = &run.execution {
+        lines.push(format!(
+            "  execution: {} via `{}` in `{}`",
+            execution.runner_kind, execution.command, execution.workdir
+        ));
+    }
+    lines.push(format!("  summary: {}", run.summary));
 }
 
 fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
@@ -983,6 +1342,167 @@ fn render_score_evidence_suffix(summary: &PromotedRunSummary) -> String {
             " Evidence: {}",
             format_score_evidence_list(&summary.score_evidence)
         )
+    }
+}
+
+fn requested_id_set(ids: &[String], label: &str) -> Result<Option<BTreeSet<String>>> {
+    if ids.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ensure_unique_named_items(
+        ids.iter().map(|id| id.as_str()),
+        label,
+    )?))
+}
+
+fn requested_status_set(statuses: &[String]) -> Option<BTreeSet<String>> {
+    if statuses.is_empty() {
+        return None;
+    }
+    Some(
+        statuses
+            .iter()
+            .map(|status| status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .collect(),
+    )
+}
+
+fn promotion_evidence_for_run(
+    run: &BenchmarkRun,
+    benchmark_filter: Option<&BTreeSet<String>>,
+    status_filter: Option<&BTreeSet<String>>,
+    metric_thresholds: &[MetricThresholdRule],
+) -> Option<PromotionEvidence> {
+    if benchmark_filter
+        .map(|filter| !filter.contains(&run.benchmark_id))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    if status_filter
+        .map(|filter| !filter.contains(&run.status))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let mut reasons = Vec::new();
+    if status_filter.is_some() {
+        reasons.push(format!("status `{}` matched promotion filter", run.status));
+    }
+
+    let threshold_reasons = matched_threshold_reasons(run, metric_thresholds);
+    if !metric_thresholds.is_empty() && threshold_reasons.is_empty() {
+        return None;
+    }
+    reasons.extend(threshold_reasons);
+    if reasons.is_empty() {
+        reasons.push("selected by benchmark filter".to_string());
+    }
+
+    Some(PromotionEvidence {
+        benchmark_id: run.benchmark_id.clone(),
+        run_id: run.run_id.clone(),
+        reasons,
+    })
+}
+
+fn matched_threshold_reasons(run: &BenchmarkRun, rules: &[MetricThresholdRule]) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for score in &run.scores {
+        for rule in rules {
+            if score.metric_id != rule.metric_id {
+                continue;
+            }
+            if metric_matches_rule(score.value, rule) {
+                reasons.push(format!(
+                    "{} {} {} (observed {})",
+                    rule.metric_id,
+                    rule.comparison.symbol(),
+                    rule.value,
+                    score.value
+                ));
+            }
+        }
+    }
+    reasons
+}
+
+fn metric_matches_rule(value: f64, rule: &MetricThresholdRule) -> bool {
+    match rule.comparison {
+        MetricThresholdComparison::LessThan => value < rule.value,
+        MetricThresholdComparison::LessThanOrEqual => value <= rule.value,
+        MetricThresholdComparison::GreaterThan => value > rule.value,
+        MetricThresholdComparison::GreaterThanOrEqual => value >= rule.value,
+    }
+}
+
+fn select_component_ids(
+    catalog: &BenchmarkCatalog,
+    target: &AutoResearchTargetTemplate,
+    benchmark_ids: &[String],
+    request: &BenchmarkPromotionRequest,
+) -> Result<Vec<String>> {
+    let mut component_ids = Vec::new();
+    match request.component_selection {
+        PromotionComponentSelection::TemplateOnly => {
+            for component_id in &target.component_ids {
+                push_unique(&mut component_ids, component_id.clone());
+            }
+        }
+        PromotionComponentSelection::TemplateAndMatched => {
+            for component_id in &target.component_ids {
+                push_unique(&mut component_ids, component_id.clone());
+            }
+            for component in &catalog.autoresearch_components {
+                if component
+                    .benchmark_ids
+                    .iter()
+                    .any(|benchmark_id| benchmark_ids.contains(benchmark_id))
+                {
+                    push_unique(&mut component_ids, component.id.clone());
+                }
+            }
+        }
+        PromotionComponentSelection::MatchedOnly => {
+            for component in &catalog.autoresearch_components {
+                if component
+                    .benchmark_ids
+                    .iter()
+                    .any(|benchmark_id| benchmark_ids.contains(benchmark_id))
+                {
+                    push_unique(&mut component_ids, component.id.clone());
+                }
+            }
+        }
+    }
+    for component_id in &request.component_ids {
+        push_unique(&mut component_ids, component_id.clone());
+    }
+    if component_ids.is_empty() {
+        bail!(
+            "Promotion for autoresearch target `{}` selected no components",
+            target.id
+        );
+    }
+    Ok(component_ids)
+}
+
+fn push_unique(values: &mut Vec<String>, candidate: String) {
+    if !values.contains(&candidate) {
+        values.push(candidate);
+    }
+}
+
+impl MetricThresholdComparison {
+    fn symbol(self) -> &'static str {
+        match self {
+            MetricThresholdComparison::LessThan => "<",
+            MetricThresholdComparison::LessThanOrEqual => "<=",
+            MetricThresholdComparison::GreaterThan => ">",
+            MetricThresholdComparison::GreaterThanOrEqual => ">=",
+        }
     }
 }
 
@@ -1656,6 +2176,92 @@ mod tests {
         assert!(rendered.contains("\"has_promotable_results\": true"));
         assert!(rendered.contains("\"score_evidence\""));
         assert!(!rendered.contains("\"runs\""));
+    }
+
+    #[test]
+    fn promotes_results_into_issue_ready_targets() {
+        let catalog = BenchmarkCatalog {
+            benchmarks: sample_catalog().benchmarks,
+            autoresearch_components: vec![
+                AutoResearchComponent {
+                    id: "ablation".into(),
+                    title: "Ablation".into(),
+                    prompt_fragment: "Compare graph-only with hybrid retrieval.".into(),
+                    benchmark_ids: vec!["swe-qa-pro".into()],
+                    tags: vec!["retrieval".into()],
+                },
+                AutoResearchComponent {
+                    id: "docs".into(),
+                    title: "Docs".into(),
+                    prompt_fragment: "Tighten README and project memory surfaces.".into(),
+                    benchmark_ids: vec!["swe-qa-pro".into()],
+                    tags: vec!["docs".into()],
+                },
+            ],
+            autoresearch_targets: vec![AutoResearchTargetTemplate {
+                id: "kg-navigation".into(),
+                title: "KG navigation".into(),
+                summary: "Improve repository navigation quality.".into(),
+                benchmark_ids: vec!["swe-qa-pro".into()],
+                component_ids: vec!["ablation".into()],
+            }],
+        };
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "baseline".into(),
+                status: "error".into(),
+                summary: "Grounding fell off on cross-file questions.".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 0.42,
+                    unit: "score".into(),
+                }],
+                diagnostics: vec![
+                    "Missed one supporting file during answer synthesis.".into(),
+                    "Reasoning trace lost citation backreferences.".into(),
+                ],
+                artifacts: vec![BenchmarkArtifact {
+                    label: "run-log".into(),
+                    kind: "log".into(),
+                    location: "artifacts/baseline.log".into(),
+                }],
+                execution: Some(BenchmarkExecutionRecord {
+                    runner_kind: "mock-runner".into(),
+                    command: "cargo run --example bench".into(),
+                    workdir: "/tmp/litkg".into(),
+                }),
+            }],
+        };
+
+        let promoted = promote_benchmark_results(
+            &catalog,
+            &results,
+            &BenchmarkPromotionRequest {
+                target_ids: vec!["kg-navigation".into()],
+                benchmark_ids: vec![],
+                status_filters: vec!["error".into()],
+                metric_thresholds: vec![MetricThresholdRule {
+                    metric_id: "overall".into(),
+                    comparison: MetricThresholdComparison::LessThanOrEqual,
+                    value: 0.5,
+                }],
+                component_selection: PromotionComponentSelection::TemplateAndMatched,
+                component_ids: vec![],
+            },
+        )
+        .unwrap();
+        assert_eq!(promoted.len(), 1);
+        assert_eq!(promoted[0].components.len(), 2);
+        assert!(promoted[0].evidence[0]
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("overall <= 0.5")));
+
+        let rendered =
+            render_promoted_targets(&promoted, AutoResearchRenderFormat::GitHubIssue).unwrap();
+        assert!(rendered.contains("Title: Auto Research: KG navigation"));
+        assert!(rendered.contains("status `error` matched promotion filter"));
     }
 
     #[test]

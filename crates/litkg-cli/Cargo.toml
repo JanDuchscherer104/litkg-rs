@@ -12,3 +12,4 @@ litkg-core = { path = "../litkg-core" }
 litkg-graphify = { path = "../litkg-graphify" }
 litkg-neo4j = { path = "../litkg-neo4j" }
 litkg-viewer = { path = "../litkg-viewer" }
+serde_json.workspace = true

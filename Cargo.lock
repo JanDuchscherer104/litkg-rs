@@ -1095,6 +1095,7 @@ dependencies = [
  "litkg-graphify",
  "litkg-neo4j",
  "litkg-viewer",
+ "serde_json",
 ]
 
 [[package]]

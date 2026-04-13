@@ -10,11 +10,13 @@ pub mod registry;
 pub mod tex;
 
 pub use benchmark::{
-    load_benchmark_catalog, load_benchmark_results, render_autoresearch_target,
-    validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
-    AutoResearchRenderFormat, AutoResearchTargetTemplate, BenchmarkArtifact, BenchmarkCatalog,
-    BenchmarkExecutionRecord, BenchmarkResults, BenchmarkRun, BenchmarkScore, BenchmarkSource,
-    BenchmarkSpec, ValidationSummary,
+    load_benchmark_catalog, load_benchmark_results, promote_benchmark_results,
+    render_autoresearch_target, render_promoted_targets, validate_benchmark_catalog,
+    validate_benchmark_results, write_benchmark_results, AutoResearchRenderFormat,
+    AutoResearchTargetTemplate, BenchmarkArtifact, BenchmarkCatalog, BenchmarkExecutionRecord,
+    BenchmarkPromotionRequest, BenchmarkResults, BenchmarkRun, BenchmarkScore, BenchmarkSource,
+    BenchmarkSpec, MetricThresholdComparison, MetricThresholdRule, PromotedAutoResearchTarget,
+    PromotionComponentSelection, PromotionEvidence, ValidationSummary,
 };
 pub use benchmark_runner::{
     inspect_benchmark_support, load_benchmark_integrations, load_benchmark_run_plan,
