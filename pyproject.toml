@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin==1.6.0"]
+build-backend = "maturin"
+
+[project]
+name = "litkg-rs"
+version = "0.1.0"
+description = "Python bindings for litkg-rs core tabular exports."
+requires-python = ">=3.9"
+
+[tool.maturin]
+manifest-path = "crates/litkg-py/Cargo.toml"
+python-source = "python"
+module-name = "litkg_rs._native"
+locked = true

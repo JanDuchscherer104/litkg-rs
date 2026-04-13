@@ -7,7 +7,9 @@ pub mod enrich;
 pub mod manifest;
 pub mod materialize;
 pub mod model;
+pub mod notebook;
 pub mod registry;
+pub mod tabular;
 pub mod tex;
 
 pub use benchmark::{
@@ -35,8 +37,18 @@ pub use materialize::{
     write_parsed_papers,
 };
 pub use model::{
-    DownloadMode, MaterializedDoc, PaperFigure, PaperSection, PaperSourceRecord, PaperTable,
-    ParseStatus, ParsedPaper, SourceKind,
+    DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind, NotebookDocument, PaperFigure,
+    PaperSection, PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper, ResearchMetadata,
+    ResearchPaper, SourceKind,
+};
+pub use notebook::{
+    ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,
 };
 pub use registry::{load_registry, sync_registry, write_registry};
+pub use tabular::{
+    build_tabular_bundle, build_tabular_bundle_from_parsed,
+    build_tabular_bundle_from_parsed_with_notebooks, research_papers_from_parsed,
+    write_tabular_exports, CitationTableRow, EdgeTableRow, NotebookCellTableRow, NotebookTableRow,
+    PaperTableRow, SectionTableRow, TabularBundle, TabularExportPaths,
+};
 pub use tex::parse_registry_papers;

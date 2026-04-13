@@ -7,24 +7,72 @@ use regex::Regex;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, OnceLock};
+use std::thread;
 use walkdir::WalkDir;
+
+const MAX_PARSE_THREADS: usize = 8;
 
 pub fn parse_registry_papers(
     config: &RepoConfig,
     registry: &[PaperSourceRecord],
 ) -> Result<Vec<ParsedPaper>> {
-    let mut parsed = Vec::new();
-    for record in registry {
-        if let Some(tex_dir) = &record.tex_dir {
-            let root_dir = config.tex_root.join(tex_dir);
-            if path_has_files(&root_dir) {
-                parsed.push(parse_paper_dir(record, &root_dir)?);
-                continue;
+    if registry.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let worker_count = thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(registry.len())
+        .min(MAX_PARSE_THREADS);
+
+    if worker_count <= 1 {
+        let mut parsed = Vec::with_capacity(registry.len());
+        for record in registry {
+            parsed.push(parse_registry_record(config, record)?);
+        }
+        return Ok(parsed);
+    }
+
+    let (sender, receiver) = mpsc::channel::<Vec<(usize, Result<ParsedPaper>)>>();
+    let mut by_index: Vec<Option<Result<ParsedPaper>>> =
+        (0..registry.len()).map(|_| None).collect();
+
+    thread::scope(|scope| {
+        for worker_index in 0..worker_count {
+            let sender = sender.clone();
+            scope.spawn(move || {
+                let mut batch = Vec::new();
+                for index in (worker_index..registry.len()).step_by(worker_count) {
+                    batch.push((index, parse_registry_record(config, &registry[index])));
+                }
+                let _ = sender.send(batch);
+            });
+        }
+        drop(sender);
+        for batch in receiver {
+            for (index, parsed) in batch {
+                by_index[index] = Some(parsed);
             }
         }
-        parsed.push(metadata_only_paper(record));
+    });
+
+    let mut parsed = Vec::with_capacity(registry.len());
+    for entry in by_index {
+        parsed.push(entry.expect("parse worker did not return a result")?);
     }
     Ok(parsed)
+}
+
+fn parse_registry_record(config: &RepoConfig, record: &PaperSourceRecord) -> Result<ParsedPaper> {
+    if let Some(tex_dir) = &record.tex_dir {
+        let root_dir = config.tex_root.join(tex_dir);
+        if path_has_files(&root_dir) {
+            return parse_paper_dir(record, &root_dir);
+        }
+    }
+    Ok(metadata_only_paper(record))
 }
 
 fn parse_paper_dir(record: &PaperSourceRecord, root_dir: &Path) -> Result<ParsedPaper> {
@@ -101,10 +149,9 @@ fn inline_tex_file(
     let text = fs::read_to_string(&canonical)
         .with_context(|| format!("Failed to read {}", canonical.display()))?;
     let stripped = strip_comments(&text);
-    let include_re = Regex::new(r"\\(?:input|include)\{([^}]+)\}").unwrap();
     let mut result = String::new();
     let mut last_end = 0usize;
-    for capture in include_re.captures_iter(&stripped) {
+    for capture in include_regex().captures_iter(&stripped) {
         let matched = capture.get(0).unwrap();
         result.push_str(&stripped[last_end..matched.start()]);
         let include_path = resolve_include_path(
@@ -147,16 +194,15 @@ fn strip_comments(text: &str) -> String {
 }
 
 fn extract_environment(text: &str, env: &str) -> Option<String> {
-    let pattern = format!(r"\\begin\{{{env}\}}(?s)(.*?)\\end\{{{env}\}}");
-    let re = Regex::new(&pattern).unwrap();
-    re.captures(text)
-        .and_then(|cap| cap.get(1))
-        .map(|value| cleanup_tex(value.as_str()))
+    let start_marker = format!(r"\begin{{{env}}}");
+    let end_marker = format!(r"\end{{{env}}}");
+    let start = text.find(&start_marker)? + start_marker.len();
+    let end = text[start..].find(&end_marker)? + start;
+    Some(cleanup_tex(&text[start..end]))
 }
 
 fn extract_sections(text: &str) -> Vec<PaperSection> {
-    let re = Regex::new(r"\\(section|subsection|subsubsection)\*?\{([^}]*)\}").unwrap();
-    let matches: Vec<_> = re
+    let matches: Vec<_> = section_regex()
         .captures_iter(text)
         .filter_map(|cap| {
             let full = cap.get(0)?;
@@ -187,9 +233,8 @@ fn extract_sections(text: &str) -> Vec<PaperSection> {
 }
 
 fn extract_figure_captions(text: &str) -> Vec<String> {
-    let figure_re = Regex::new(r"\\begin\{figure\}(?s)(.*?)\\end\{figure\}").unwrap();
     let mut captions = Vec::new();
-    for capture in figure_re.captures_iter(text) {
+    for capture in figure_block_regex().captures_iter(text) {
         if let Some(block) = capture.get(1) {
             captions.extend(extract_command_values(block.as_str(), "caption"));
         }
@@ -198,9 +243,8 @@ fn extract_figure_captions(text: &str) -> Vec<String> {
 }
 
 fn extract_table_captions(text: &str) -> Vec<String> {
-    let table_re = Regex::new(r"\\begin\{table\}(?s)(.*?)\\end\{table\}").unwrap();
     let mut captions = Vec::new();
-    for capture in table_re.captures_iter(text) {
+    for capture in table_block_regex().captures_iter(text) {
         if let Some(block) = capture.get(1) {
             captions.extend(extract_command_values(block.as_str(), "caption"));
         }
@@ -209,9 +253,8 @@ fn extract_table_captions(text: &str) -> Vec<String> {
 }
 
 fn extract_citations(text: &str) -> Vec<String> {
-    let re = Regex::new(r"\\cite[a-zA-Z*]*\{([^}]*)\}").unwrap();
     let mut citations = BTreeSet::new();
-    for capture in re.captures_iter(text) {
+    for capture in citation_regex().captures_iter(text) {
         if let Some(keys) = capture.get(1) {
             for key in keys.as_str().split(',') {
                 let trimmed = key.trim();
@@ -229,35 +272,48 @@ fn extract_command_value(text: &str, command: &str) -> Option<String> {
 }
 
 fn extract_command_values(text: &str, command: &str) -> Vec<String> {
-    let pattern = format!(r"\\{command}\*?\{{");
-    let re = Regex::new(&pattern).unwrap();
+    let plain = format!(r"\{command}");
     let mut values = Vec::new();
-    for matched in re.find_iter(text) {
-        let brace_index = matched.end() - 1;
-        if let Some((value, _)) = extract_balanced_braces(text, brace_index) {
+    let mut cursor = 0usize;
+    while let Some(relative_start) = text[cursor..].find(&plain) {
+        let command_start = cursor + relative_start;
+        let mut brace_index = command_start + plain.len();
+        if text[brace_index..].starts_with('*') {
+            brace_index += 1;
+        }
+        if !text[brace_index..].starts_with('{') {
+            cursor = command_start + 1;
+            continue;
+        }
+        if let Some((value, end_index)) = extract_balanced_braces(text, brace_index) {
             values.push(cleanup_tex(&value));
+            cursor = end_index;
+        } else {
+            break;
         }
     }
     values
 }
 
 fn extract_balanced_braces(text: &str, opening_index: usize) -> Option<(String, usize)> {
-    let chars: Vec<char> = text.chars().collect();
+    let bytes = text.as_bytes();
+    if bytes.get(opening_index).copied() != Some(b'{') {
+        return None;
+    }
     let mut depth = 0i32;
-    let mut start = None;
-    for index in opening_index..chars.len() {
-        match chars[index] {
-            '{' => {
+    let mut start = opening_index + 1;
+    for (index, byte) in bytes.iter().enumerate().skip(opening_index) {
+        match byte {
+            b'{' => {
                 depth += 1;
                 if depth == 1 {
-                    start = Some(index + 1);
+                    start = index + 1;
                 }
             }
-            '}' => {
+            b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    let content = chars[start?..index].iter().collect::<String>();
-                    return Some((content, index + 1));
+                    return Some((text[start..index].to_string(), index + 1));
                 }
             }
             _ => {}
@@ -267,8 +323,7 @@ fn extract_balanced_braces(text: &str, opening_index: usize) -> Option<(String, 
 }
 
 fn cleanup_tex(text: &str) -> String {
-    let command_re = Regex::new(r"\\[a-zA-Z]+\*?").unwrap();
-    let cleaned = command_re.replace_all(text, "");
+    let cleaned = latex_command_regex().replace_all(text, "");
     cleaned
         .replace('\n', " ")
         .replace('{', "")
@@ -293,9 +348,40 @@ fn path_has_files(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
+fn include_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\\(?:input|include)\{([^}]+)\}").unwrap())
+}
+
+fn section_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\\(section|subsection|subsubsection)\*?\{([^}]*)\}").unwrap())
+}
+
+fn figure_block_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\\begin\{figure\}(?s)(.*?)\\end\{figure\}").unwrap())
+}
+
+fn table_block_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\\begin\{table\}(?s)(.*?)\\end\{table\}").unwrap())
+}
+
+fn citation_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\\cite[a-zA-Z*]*\{([^}]*)\}").unwrap())
+}
+
+fn latex_command_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\\[a-zA-Z]+\*?").unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SinkMode;
     use crate::model::{DownloadMode, SourceKind};
 
     fn sample_record() -> PaperSourceRecord {
@@ -315,6 +401,23 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+        }
+    }
+
+    fn sample_config(root: &Path) -> RepoConfig {
+        RepoConfig {
+            manifest_path: root.join("sources.jsonl"),
+            bib_path: root.join("references.bib"),
+            tex_root: root.join("tex"),
+            pdf_root: root.join("pdf"),
+            generated_docs_root: root.join("generated"),
+            registry_path: None,
+            parsed_root: None,
+            neo4j_export_root: None,
+            sink: SinkMode::Graphify,
+            graphify_rebuild_command: None,
+            download_pdfs: true,
+            relevance_tags: vec![],
         }
     }
 
@@ -353,5 +456,55 @@ Overview text.
         assert_eq!(parsed.sections.len(), 2);
         assert_eq!(parsed.figures[0].caption, "A frontend figure.");
         assert_eq!(parsed.citations, vec!["bar".to_string(), "foo".to_string()]);
+    }
+
+    #[test]
+    fn parses_large_registry_surface_deterministically() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = sample_config(dir.path());
+        fs::create_dir_all(&config.tex_root).unwrap();
+
+        let mut registry = Vec::new();
+        for idx in 0..64usize {
+            let tex_dir = format!("paper-{idx}");
+            let root = config.tex_root.join(&tex_dir);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(
+                root.join("main.tex"),
+                format!(
+                    "\\documentclass{{article}}
+\\title{{Synthetic {idx}}}
+\\begin{{document}}
+\\begin{{abstract}}Abstract {idx}.\\end{{abstract}}
+\\section{{Method}}Method {idx}.
+\\cite{{c{idx},shared}}
+\\end{{document}}"
+                ),
+            )
+            .unwrap();
+
+            let mut record = sample_record();
+            record.paper_id = format!("paper-{idx:03}");
+            record.citation_key = Some(format!("paper{idx}"));
+            record.title = format!("Synthetic {idx}");
+            record.tex_dir = Some(tex_dir);
+            registry.push(record);
+        }
+
+        let parsed = parse_registry_papers(&config, &registry).unwrap();
+        assert_eq!(parsed.len(), registry.len());
+        for (idx, paper) in parsed.iter().enumerate() {
+            assert_eq!(paper.metadata.paper_id, registry[idx].paper_id);
+            assert_eq!(paper.metadata.parse_status, ParseStatus::Parsed);
+            assert_eq!(
+                paper.citations,
+                vec![format!("c{idx}"), "shared".to_string()]
+            );
+            let expected_abstract = format!("Abstract {idx}.");
+            assert_eq!(
+                paper.abstract_text.as_ref().map(String::as_str),
+                Some(expected_abstract.as_str())
+            );
+        }
     }
 }

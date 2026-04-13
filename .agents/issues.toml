@@ -80,7 +80,7 @@ id = "ISSUE-0010"
 title = "Add instruction-capture mode to generalize user guidance into agent scaffolding"
 summary = "Define a mode where subsequent user instructions are evaluated and promoted into root scaffolding, nested scaffolding, or skills as durable operational guidance."
 priority = "high"
-status = "open"
+status = "closed"
 github_issue_number = 7
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/7"
 
@@ -112,6 +112,24 @@ github_issue_number = 10
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/10"
 
 [[issues]]
+id = "ISSUE-0014"
+title = "Document repo-scoped Codex skill and MCP setup"
+summary = "Add an operator-facing guide that explains how litkg-rs repo skills and the optional Graphiti/Neo4j MCP stack should be wired into Codex."
+priority = "high"
+status = "closed"
+github_issue_number = 11
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/11"
+
+[[issues]]
+id = "ISSUE-0015"
+title = "Integrate and run the full benchmark catalog against the local stack"
+summary = "Turn the benchmark catalog into an executable integration layer that can inspect support and run every benchmark declared in the repo through normalized local adapters."
+priority = "high"
+status = "open"
+github_issue_number = 12
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/12"
+
+[[issues]]
 id = "ISSUE-0016"
 title = "Add repo-independent graph enrichment overlay and edge schema"
 summary = "Move graph enrichment into a sink-independent Rust contract with typed enriched edges, provenance, and deterministic serialization instead of relying on live Neo4j-only helper writes."
@@ -128,3 +146,165 @@ priority = "high"
 status = "open"
 github_issue_number = 18
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/18"
+
+[[issues]]
+id = "ISSUE-0018"
+title = "Add pluggable literature source provider interface for sync and one-shot imports"
+summary = "Introduce a trait-based provider registry and config model so new literature sources can be added as sync-managed or one-shot imports without hard-wiring manifest, BibTeX, and arXiv logic into the core pipeline."
+priority = "high"
+status = "open"
+github_issue_number = 19
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/19"
+
+[[issues]]
+id = "ISSUE-0029"
+title = "Integrate arXiv MCP-backed source discovery and snapshot import"
+summary = "Add a built-in arXiv MCP provider on top of the new source-provider interface so live arXiv discovery can feed deterministic sync-managed or one-shot literature snapshots."
+priority = "high"
+status = "open"
+github_issue_number = 30
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/30"
+
+[[issues]]
+id = "ISSUE-0030"
+title = "Add paper-to-code grounding for Python ML repos"
+summary = "Link normalized paper records to Python files, symbols, and config artifacts through a sink-independent grounding layer with explicit evidence and provenance."
+priority = "high"
+status = "open"
+github_issue_number = 31
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/31"
+
+[[issues]]
+id = "ISSUE-0031"
+title = "Extract structured reproduction facts and render experiment checklists"
+summary = "Add deterministic extraction of datasets, metrics, model families, and related reproduction facts from parsed papers, then render those into reproducibility-oriented outputs."
+priority = "high"
+status = "open"
+github_issue_number = 32
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/32"
+
+[[issues]]
+id = "ISSUE-0032"
+title = "Ground the local query path in paper and code entities for repo-aware answers"
+summary = "Turn the general local-query direction into a repo-aware paper-plus-code query surface with explicit query types and provenance-rich answers."
+priority = "high"
+status = "open"
+github_issue_number = 33
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/33"
+
+[[issues]]
+id = "ISSUE-0033"
+title = "Add benchmark-aware experiment planning from literature, code, and results"
+summary = "Combine paper facts, code grounding, and benchmark results into deterministic experiment plans, missing baselines, and issue-ready follow-up proposals."
+priority = "high"
+status = "open"
+github_issue_number = 34
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/34"
+
+[[issues]]
+id = "ISSUE-0034"
+title = "Add source watchlists and deterministic literature update tracking"
+summary = "Track saved queries, authors, topics, and watched papers through provider-backed watchlists that emit deterministic change reports over time."
+priority = "high"
+status = "open"
+github_issue_number = 35
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/35"
+
+[[issues]]
+id = "ISSUE-0035"
+title = "Add notebook and repo-doc ingestion for Python ML research repos"
+summary = "Ingest Jupyter notebooks and repo-local docs as first-class knowledge inputs with stable provenance so they can join the same graph and query surfaces as papers."
+priority = "high"
+status = "open"
+github_issue_number = 36
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/36"
+
+[[issues]]
+id = "ISSUE-0019"
+title = "Speed up title-only registry merge with indexed manifest matching"
+summary = "Avoid O(n*m) manifest scans when BibTeX rows have no eprint and litkg-rs must fall back to title-based matching."
+priority = "high"
+status = "closed"
+github_issue_number = 20
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/20"
+
+[[issues]]
+id = "ISSUE-0020"
+title = "Deduplicate citation nodes and stabilize citation graph export"
+summary = "Model shared citations once in the Neo4j export bundle instead of emitting duplicate citation nodes for every citation occurrence."
+priority = "high"
+status = "closed"
+github_issue_number = 21
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/21"
+
+[[issues]]
+id = "ISSUE-0021"
+title = "Improve parser throughput for large local literature corpora"
+summary = "Reduce parse latency for multi-thousand-paper corpora by removing avoidable per-paper overhead and adding a visible performance regression surface."
+priority = "high"
+status = "closed"
+github_issue_number = 22
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/22"
+
+[[issues]]
+id = "ISSUE-0022"
+title = "Add Arrow and Parquet export surfaces for Python and ML workflows"
+summary = "Expose litkg-rs output as stable tabular datasets that Python ML tooling can consume directly instead of only Markdown and per-paper JSON."
+priority = "high"
+status = "closed"
+github_issue_number = 23
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/23"
+
+[[issues]]
+id = "ISSUE-0023"
+title = "Publish litkg-rs as a Python package with a first-class API surface"
+summary = "Make litkg-rs directly usable from Python environments instead of requiring Python users to shell out to the Rust CLI for every workflow."
+priority = "high"
+status = "closed"
+github_issue_number = 24
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/24"
+
+[[issues]]
+id = "ISSUE-0024"
+title = "Add MLflow tracking for pipeline and benchmark runs"
+summary = "Capture ingestion, parsing, export, and benchmark runs as searchable MLflow experiments instead of leaving them as only local files and console output."
+priority = "medium"
+status = "closed"
+github_issue_number = 25
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/25"
+
+[[issues]]
+id = "ISSUE-0025"
+title = "Expand the normalized paper schema for ML research metadata and code links"
+summary = "Capture the research metadata that Python and ML users actually query instead of limiting the normalized model mostly to titles, citations, and flattened text."
+priority = "high"
+status = "closed"
+github_issue_number = 26
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/26"
+
+[[issues]]
+id = "ISSUE-0026"
+title = "Add Jupyter notebook ingestion and notebook-aware graph support"
+summary = "Treat notebooks as first-class research artifacts so Python users can connect papers, experiments, and notebook code in the same local KG workflow."
+priority = "medium"
+status = "closed"
+github_issue_number = 27
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/27"
+
+[[issues]]
+id = "ISSUE-0027"
+title = "Replace path-spam CLI output with concise summaries and JSON modes"
+summary = "Make litkg-cli outputs usable for automation and large corpora by reporting structured summaries instead of printing every generated file path."
+priority = "medium"
+status = "closed"
+github_issue_number = 28
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/28"
+
+[[issues]]
+id = "ISSUE-0028"
+title = "Productize Python repo indexing and KG refresh workflows"
+summary = "Turn the current Python repo indexing path from a shell-script bundle into a stable, repeatable operator workflow."
+priority = "high"
+status = "closed"
+github_issue_number = 29
+github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/29"

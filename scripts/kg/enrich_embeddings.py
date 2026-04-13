@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -56,12 +57,21 @@ def code_repo_root(host_root: Path) -> Path:
 
 
 def list_ollama_models() -> list[str]:
-    listing = subprocess.run(
-        ["ollama", "list"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
+    if shutil.which("ollama") is None:
+        raise RuntimeError(
+            "Missing required command: ollama. Install Ollama and ensure `ollama` is on PATH."
+        )
+    try:
+        listing = subprocess.run(
+            ["ollama", "list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        detail = f": {stderr}" if stderr else ""
+        raise RuntimeError(f"`ollama list` failed{detail}") from exc
     return [line.split()[0] for line in listing[1:] if line.strip()]
 
 

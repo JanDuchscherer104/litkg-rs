@@ -1,4 +1,33 @@
 meta = { updated_on = "2026-04-13" }
 
-resolved_issues = ["ISSUE-0002", "ISSUE-0003", "ISSUE-0004", "ISSUE-0007", "ISSUE-0010", "ISSUE-0013", "ISSUE-0014"]
-resolved_todos = ["TODO-0001", "TODO-0002", "TODO-0003", "TODO-0004", "TODO-0007", "TODO-0008", "TODO-0009", "TODO-0012", "TODO-0013", "TODO-0014"]
+resolved_issues = [
+  "ISSUE-0002",
+  "ISSUE-0003",
+  "ISSUE-0004",
+  "ISSUE-0007",
+  "ISSUE-0010",
+  "ISSUE-0013",
+  "ISSUE-0014",
+  "ISSUE-0019",
+  "ISSUE-0020",
+  "ISSUE-0021",
+  "ISSUE-0022",
+  "ISSUE-0023",
+  "ISSUE-0024",
+  "ISSUE-0025",
+  "ISSUE-0026",
+  "ISSUE-0027",
+  "ISSUE-0028",
+]
+resolved_todos = [
+  "TODO-0001",
+  "TODO-0002",
+  "TODO-0003",
+  "TODO-0004",
+  "TODO-0007",
+  "TODO-0008",
+  "TODO-0009",
+  "TODO-0012",
+  "TODO-0013",
+  "TODO-0014",
+]
