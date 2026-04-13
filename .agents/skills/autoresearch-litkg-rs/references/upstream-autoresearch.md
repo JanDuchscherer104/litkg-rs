@@ -4,6 +4,10 @@ Source repository:
 
 - [karpathy/autoresearch](https://github.com/karpathy/autoresearch)
 
+For comparison with other public autoresearch repos and the rationale for what
+this repo does and does not borrow from them, see
+[repo-comparison.md](repo-comparison.md).
+
 Key upstream files:
 
 - [README.md](https://github.com/karpathy/autoresearch/blob/master/README.md)
