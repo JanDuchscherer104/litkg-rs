@@ -5,7 +5,7 @@ use litkg_core::{
     load_parsed_papers, load_registry, parse_registry_papers, search_papers, sync_registry,
     validate_benchmark_catalog, validate_benchmark_results, write_parsed_papers,
     AutoResearchRenderFormat, BenchmarkResults, CorpusStats, DownloadOptions, PaperInspection,
-    PaperSourceRecord, RepoConfig, SearchHit, SinkMode,
+    PaperSourceRecord, RepoConfig, SearchResults, SinkMode,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
@@ -238,9 +238,7 @@ fn main() -> Result<()> {
                 &args.query,
                 args.limit,
             )?;
-            print_structured_output(&hits, args.format, |hits| {
-                render_search_results(hits, &args.query)
-            })?;
+            print_structured_output(&hits, args.format, render_search_results)?;
         }
         Commands::ShowPaper(args) => {
             let config = RepoConfig::load(&args.config.config)?;
@@ -379,18 +377,25 @@ fn render_stats(stats: &CorpusStats) -> String {
     lines.join("\n")
 }
 
-fn render_search_results(hits: &[SearchHit], query: &str) -> String {
-    if hits.is_empty() {
-        return format!("No papers matched query `{query}`.");
+fn render_search_results(results: &SearchResults) -> String {
+    if results.hits.is_empty() {
+        return format!("No papers matched query `{}`.", results.query);
     }
 
     let mut lines = vec![
-        format!("Search results for `{query}`"),
+        format!("Search results for `{}`", results.query),
         String::new(),
-        format!("showing: {}", hits.len()),
+        format!(
+            "showing: {} of {}",
+            results.hits.len(),
+            results.total_matches
+        ),
     ];
+    if results.has_more {
+        lines.push(format!("limit: {}", results.limit));
+    }
 
-    for (index, hit) in hits.iter().enumerate() {
+    for (index, hit) in results.hits.iter().enumerate() {
         lines.push(String::new());
         lines.push(format!("{}. {} ({})", index + 1, hit.title, hit.paper_id));
         lines.push(format!(
@@ -461,7 +466,11 @@ fn render_paper_inspection(inspection: &PaperInspection) -> String {
         format!("  parsed_json: {}", inspection.parsed_json_path.display()),
         format!(
             "  materialized_markdown: {}",
-            inspection.materialized_markdown_path.display()
+            inspection
+                .materialized_markdown_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "n/a".to_string())
         ),
         format!(
             "  local_tex_dir: {}",

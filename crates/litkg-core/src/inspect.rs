@@ -37,6 +37,15 @@ pub struct SearchHit {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SearchResults {
+    pub query: String,
+    pub limit: usize,
+    pub total_matches: usize,
+    pub has_more: bool,
+    pub hits: Vec<SearchHit>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PaperReference {
     pub paper_id: String,
     pub citation_key: Option<String>,
@@ -53,7 +62,7 @@ pub struct SectionHeading {
 pub struct PaperInspection {
     pub metadata: PaperSourceRecord,
     pub parsed_json_path: PathBuf,
-    pub materialized_markdown_path: PathBuf,
+    pub materialized_markdown_path: Option<PathBuf>,
     pub local_tex_dir: Option<PathBuf>,
     pub local_pdf_path: Option<PathBuf>,
     pub abstract_text: Option<String>,
@@ -70,12 +79,13 @@ pub fn compute_corpus_stats(
     registry: &[PaperSourceRecord],
     parsed_papers: &[ParsedPaper],
 ) -> CorpusStats {
-    let live_parsed = live_parsed_papers(registry, parsed_papers);
+    let effective_records = effective_registry_records(registry, parsed_papers);
+    let live_parsed = live_parsed_papers(&effective_records, parsed_papers);
     let mut source_kind_counts = BTreeMap::new();
     let mut download_mode_counts = BTreeMap::new();
     let mut parse_status_counts = BTreeMap::new();
 
-    for record in registry {
+    for record in &effective_records {
         *source_kind_counts
             .entry(format!("{:?}", record.source_kind))
             .or_insert(0) += 1;
@@ -88,7 +98,7 @@ pub fn compute_corpus_stats(
     }
 
     CorpusStats {
-        total_papers: registry.len(),
+        total_papers: effective_records.len(),
         papers_with_parsed_content: live_parsed
             .iter()
             .filter(|paper| {
@@ -100,11 +110,11 @@ pub fn compute_corpus_stats(
                     || !paper.citations.is_empty()
             })
             .count(),
-        papers_with_local_tex: registry
+        papers_with_local_tex: effective_records
             .iter()
             .filter(|record| record.has_local_tex)
             .count(),
-        papers_with_local_pdf: registry
+        papers_with_local_pdf: effective_records
             .iter()
             .filter(|record| record.has_local_pdf)
             .count(),
@@ -124,7 +134,7 @@ pub fn search_papers(
     relevance_tags: &[String],
     query: &str,
     limit: usize,
-) -> Result<Vec<SearchHit>> {
+) -> Result<SearchResults> {
     let query = query.trim();
     if limit == 0 {
         bail!("Search limit must be at least 1");
@@ -133,14 +143,16 @@ pub fn search_papers(
         bail!("Search query must not be empty");
     }
 
-    let parsed_by_id: BTreeMap<&str, &ParsedPaper> = parsed_papers
-        .iter()
-        .map(|paper| (paper.metadata.paper_id.as_str(), paper))
-        .collect();
+    let effective_records = effective_registry_records(registry, parsed_papers);
+    let parsed_by_id: BTreeMap<&str, &ParsedPaper> =
+        live_parsed_papers(&effective_records, parsed_papers)
+            .iter()
+            .map(|paper| (paper.metadata.paper_id.as_str(), *paper))
+            .collect();
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
 
-    for record in registry {
+    for record in &effective_records {
         let parsed = parsed_by_id.get(record.paper_id.as_str()).copied();
         let mut score = 0u32;
         let mut matched_fields = BTreeSet::new();
@@ -308,8 +320,16 @@ pub fn search_papers(
             .cmp(&left.score)
             .then_with(|| left.paper_id.cmp(&right.paper_id))
     });
+    let total_matches = results.len();
+    let has_more = total_matches > limit;
     results.truncate(limit);
-    Ok(results)
+    Ok(SearchResults {
+        query: query.to_string(),
+        limit,
+        total_matches,
+        has_more,
+        hits: results,
+    })
 }
 
 pub fn inspect_paper(
@@ -318,8 +338,9 @@ pub fn inspect_paper(
     parsed_papers: &[ParsedPaper],
     selector: &str,
 ) -> Result<PaperInspection> {
-    let record = resolve_record(registry, selector)?;
-    let live_parsed = live_parsed_papers(registry, parsed_papers);
+    let effective_records = effective_registry_records(registry, parsed_papers);
+    let record = resolve_record(&effective_records, selector)?;
+    let live_parsed = live_parsed_papers(&effective_records, parsed_papers);
     let parsed = live_parsed
         .iter()
         .copied()
@@ -355,9 +376,12 @@ pub fn inspect_paper(
         parsed_json_path: config
             .parsed_root()
             .join(format!("{}.json", record.paper_id)),
-        materialized_markdown_path: config
-            .generated_docs_root
-            .join(format!("{}.md", record.paper_id)),
+        materialized_markdown_path: {
+            let path = config
+                .generated_docs_root
+                .join(format!("{}.md", record.paper_id));
+            path.is_file().then_some(path)
+        },
         local_tex_dir: record.tex_dir.as_ref().map(|dir| config.tex_root.join(dir)),
         local_pdf_path: record
             .pdf_file
@@ -494,6 +518,26 @@ fn truncate(text: &str, max_chars: usize) -> String {
 
 fn normalize_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn effective_registry_records(
+    registry: &[PaperSourceRecord],
+    parsed_papers: &[ParsedPaper],
+) -> Vec<PaperSourceRecord> {
+    let parsed_by_id: BTreeMap<&str, &ParsedPaper> = live_parsed_papers(registry, parsed_papers)
+        .iter()
+        .map(|paper| (paper.metadata.paper_id.as_str(), *paper))
+        .collect();
+
+    registry
+        .iter()
+        .map(|record| {
+            parsed_by_id
+                .get(record.paper_id.as_str())
+                .map(|paper| paper.metadata.clone())
+                .unwrap_or_else(|| record.clone())
+        })
+        .collect()
 }
 
 fn live_parsed_papers<'a>(
@@ -685,14 +729,19 @@ mod tests {
             10,
         )
         .unwrap();
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].paper_id, "alpha");
-        assert!(hits[0]
+        assert_eq!(hits.total_matches, 2);
+        assert!(!hits.has_more);
+        assert_eq!(hits.hits.len(), 2);
+        assert_eq!(hits.hits[0].paper_id, "alpha");
+        assert!(hits.hits[0]
             .matched_fields
             .iter()
             .any(|field| field == "paper_id"));
-        assert!(hits[0].matched_fields.iter().any(|field| field == "title"));
-        assert!(hits[0].relevance_tags.iter().any(|tag| tag == "ADVIO"));
+        assert!(hits.hits[0]
+            .matched_fields
+            .iter()
+            .any(|field| field == "title"));
+        assert!(hits.hits[0].relevance_tags.iter().any(|tag| tag == "ADVIO"));
 
         let content_hits = search_papers(
             &sample_registry(),
@@ -702,8 +751,8 @@ mod tests {
             10,
         )
         .unwrap();
-        assert_eq!(content_hits[0].paper_id, "alpha");
-        assert!(content_hits[0]
+        assert_eq!(content_hits.hits[0].paper_id, "alpha");
+        assert!(content_hits.hits[0]
             .snippet
             .as_deref()
             .is_some_and(|snippet| snippet.contains("loop closure")));
@@ -726,11 +775,54 @@ mod tests {
             10,
         )
         .unwrap();
-        assert_eq!(caption_hits[0].paper_id, "alpha");
-        assert!(caption_hits[0]
+        assert_eq!(caption_hits.hits[0].paper_id, "alpha");
+        assert!(caption_hits.hits[0]
             .matched_fields
             .iter()
             .any(|field| field == "table_captions"));
+    }
+
+    #[test]
+    fn search_prefers_parsed_metadata_for_titles_and_status() {
+        let registry = vec![PaperSourceRecord {
+            paper_id: "demo-paper".into(),
+            citation_key: Some("demo2025paper".into()),
+            title: "Bib Title".into(),
+            authors: vec![],
+            year: Some("2025".into()),
+            arxiv_id: None,
+            doi: None,
+            url: None,
+            tex_dir: None,
+            pdf_file: None,
+            source_kind: SourceKind::Bib,
+            download_mode: DownloadMode::MetadataOnly,
+            has_local_tex: false,
+            has_local_pdf: false,
+            parse_status: ParseStatus::MetadataOnly,
+        }];
+        let parsed = vec![ParsedPaper {
+            metadata: PaperSourceRecord {
+                title: "Parsed Title".into(),
+                parse_status: ParseStatus::Parsed,
+                has_local_tex: true,
+                ..registry[0].clone()
+            },
+            abstract_text: Some("parsed abstract".into()),
+            sections: vec![PaperSection {
+                level: 1,
+                title: "Parsed section".into(),
+                content: "content".into(),
+            }],
+            figures: vec![],
+            tables: vec![],
+            citations: vec![],
+            provenance: vec![],
+        }];
+
+        let results = search_papers(&registry, &parsed, &[], "Parsed Title", 10).unwrap();
+        assert_eq!(results.hits[0].title, "Parsed Title");
+        assert_eq!(results.hits[0].parse_status, ParseStatus::Parsed);
     }
 
     #[test]
@@ -812,5 +904,50 @@ mod tests {
             .relevance_tags
             .iter()
             .any(|tag| tag == "loop closure"));
+    }
+
+    #[test]
+    fn inspect_paper_prefers_parsed_metadata_for_resolution_and_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_config = config(dir.path());
+        let registry = vec![PaperSourceRecord {
+            paper_id: "demo-paper".into(),
+            citation_key: Some("demo2025paper".into()),
+            title: "Bib Title".into(),
+            authors: vec![],
+            year: Some("2025".into()),
+            arxiv_id: None,
+            doi: None,
+            url: None,
+            tex_dir: None,
+            pdf_file: None,
+            source_kind: SourceKind::Bib,
+            download_mode: DownloadMode::MetadataOnly,
+            has_local_tex: false,
+            has_local_pdf: false,
+            parse_status: ParseStatus::MetadataOnly,
+        }];
+        let parsed = vec![ParsedPaper {
+            metadata: PaperSourceRecord {
+                title: "Parsed Title".into(),
+                parse_status: ParseStatus::Parsed,
+                has_local_tex: true,
+                ..registry[0].clone()
+            },
+            abstract_text: Some("parsed abstract".into()),
+            sections: vec![PaperSection {
+                level: 1,
+                title: "Parsed section".into(),
+                content: "content".into(),
+            }],
+            figures: vec![],
+            tables: vec![],
+            citations: vec![],
+            provenance: vec![],
+        }];
+
+        let inspection = inspect_paper(&repo_config, &registry, &parsed, "Parsed Title").unwrap();
+        assert_eq!(inspection.metadata.title, "Parsed Title");
+        assert_eq!(inspection.metadata.parse_status, ParseStatus::Parsed);
     }
 }

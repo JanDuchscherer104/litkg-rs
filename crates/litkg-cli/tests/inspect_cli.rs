@@ -3,6 +3,7 @@ use litkg_core::{
     write_parsed_papers, write_registry, DownloadMode, PaperFigure, PaperSection,
     PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper, SourceKind,
 };
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,10 +20,14 @@ fn write_test_config(root: &Path) -> PathBuf {
     fs::create_dir_all(&pdf_root).unwrap();
     fs::create_dir_all(&generated_docs_root).unwrap();
     fs::write(&manifest_path, "").unwrap();
-    fs::write(&bib_path, "").unwrap();
+    fs::write(
+        &bib_path,
+        "@article{demo2025paper,\n  title = {Bib Demo Paper},\n  author = {Dana Demo},\n  year = {2025}\n}\n",
+    )
+    .unwrap();
 
     let registry = vec![PaperSourceRecord {
-        paper_id: "demo-paper".into(),
+        paper_id: "demo2025paper".into(),
         citation_key: Some("demo2025paper".into()),
         title: "Demo Paper".into(),
         authors: vec!["Dana Demo".into()],
@@ -41,7 +46,10 @@ fn write_test_config(root: &Path) -> PathBuf {
     write_registry(&registry_path, &registry).unwrap();
 
     let parsed = vec![ParsedPaper {
-        metadata: registry[0].clone(),
+        metadata: PaperSourceRecord {
+            title: "Parsed Demo Paper".into(),
+            ..registry[0].clone()
+        },
         abstract_text: Some("A demo abstract about retrieval.".into()),
         sections: vec![PaperSection {
             level: 1,
@@ -109,9 +117,10 @@ fn stats_command_supports_json_output() {
         .stdout
         .clone();
 
-    let stdout = String::from_utf8(output).unwrap();
-    assert!(stdout.contains("\"total_papers\": 1"));
-    assert!(stdout.contains("\"papers_with_parsed_content\": 1"));
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["total_papers"], 1);
+    assert_eq!(json["papers_with_parsed_content"], 1);
+    assert_eq!(json["parse_status_counts"]["Parsed"], 1);
 }
 
 #[test]
@@ -135,9 +144,15 @@ fn search_and_show_paper_commands_work_end_to_end() {
         .get_output()
         .stdout
         .clone();
-    let search_stdout = String::from_utf8(search_output).unwrap();
-    assert!(search_stdout.contains("\"paper_id\": \"demo-paper\""));
-    assert!(search_stdout.contains("\"table_captions\""));
+    let search_json: Value = serde_json::from_slice(&search_output).unwrap();
+    assert_eq!(search_json["query"], "caption token table");
+    assert_eq!(search_json["total_matches"], 1);
+    assert_eq!(search_json["has_more"], false);
+    assert_eq!(search_json["hits"][0]["paper_id"], "demo2025paper");
+    assert_eq!(
+        search_json["hits"][0]["matched_fields"][0],
+        "table_captions"
+    );
 
     Command::cargo_bin("litkg-cli")
         .unwrap()
@@ -172,7 +187,7 @@ fn search_and_show_paper_commands_work_end_to_end() {
             "--config",
             config_path.to_str().unwrap(),
             "--paper",
-            "demo2025paper",
+            "Parsed Demo Paper",
             "--format",
             "json",
         ])
@@ -181,9 +196,11 @@ fn search_and_show_paper_commands_work_end_to_end() {
         .get_output()
         .stdout
         .clone();
-    let show_stdout = String::from_utf8(show_output).unwrap();
-    assert!(show_stdout.contains("\"paper_id\": \"demo-paper\""));
-    assert!(show_stdout.contains("\"figure_captions\""));
+    let show_json: Value = serde_json::from_slice(&show_output).unwrap();
+    assert_eq!(show_json["metadata"]["paper_id"], "demo2025paper");
+    assert_eq!(show_json["metadata"]["title"], "Parsed Demo Paper");
+    assert_eq!(show_json["metadata"]["parse_status"], "Parsed");
+    assert_eq!(show_json["figure_captions"][0], "Caption token figure");
 }
 
 #[test]
@@ -206,4 +223,42 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
         .success();
 
     assert!(!registry_path.exists());
+
+    let search_output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "search",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--query",
+            "Searchable section body",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let search_json: Value = serde_json::from_slice(&search_output).unwrap();
+    assert_eq!(search_json["hits"][0]["parse_status"], "Parsed");
+
+    let show_output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "show-paper",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--paper",
+            "Parsed Demo Paper",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let show_json: Value = serde_json::from_slice(&show_output).unwrap();
+    assert_eq!(show_json["metadata"]["parse_status"], "Parsed");
 }

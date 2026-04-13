@@ -20,7 +20,7 @@ pub use config::{RepoConfig, SinkMode};
 pub use download::{download_registry_sources, DownloadOptions};
 pub use inspect::{
     compute_corpus_stats, inspect_paper, search_papers, CorpusStats, PaperInspection,
-    PaperReference, SearchHit, SectionHeading,
+    PaperReference, SearchHit, SearchResults, SectionHeading,
 };
 pub use manifest::{load_manifest, ManifestEntry};
 pub use materialize::{
