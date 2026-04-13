@@ -112,6 +112,7 @@ pub struct RenderedAutoResearchTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoResearchRenderFormat {
     Markdown,
+    Issue,
     Json,
     GitHubIssue,
 }
@@ -437,6 +438,7 @@ pub fn render_autoresearch_target(
 
     match format {
         AutoResearchRenderFormat::Markdown => Ok(render_markdown_target(&rendered)),
+        AutoResearchRenderFormat::Issue => Ok(render_issue_target(&rendered)),
         AutoResearchRenderFormat::Json => serde_json::to_string_pretty(&rendered)
             .context("Failed to serialize autoresearch target as JSON"),
         AutoResearchRenderFormat::GitHubIssue => Ok(render_github_issue_target(&rendered)),
@@ -525,72 +527,72 @@ fn render_markdown_target(rendered: &RenderedAutoResearchTarget) -> String {
 }
 
 fn render_github_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
+    render_issue_target(rendered)
+}
+
+fn render_issue_target(rendered: &RenderedAutoResearchTarget) -> String {
     let mut lines = vec![
-        format!("Suggested issue title: [AutoResearch] {}", rendered.title),
-        String::new(),
-        "## Summary".to_string(),
+        format!("# Autoresearch Target: {}", rendered.title),
         String::new(),
         rendered.summary.clone(),
         String::new(),
-        "## Benchmarks In Scope".to_string(),
+        "## Benchmark Context".to_string(),
         String::new(),
     ];
 
     for benchmark in &rendered.benchmarks {
-        lines.push(format!(
-            "- `{}` (`{}`): {}. Task scale: {}",
-            benchmark.id, benchmark.name, benchmark.best_use, benchmark.task_scale
-        ));
+        lines.push(format!("- `{}`: {}", benchmark.id, benchmark.best_use));
     }
 
+    let promoted = rendered
+        .result_summaries
+        .iter()
+        .filter(|summary| matches!(summary.disposition, AutoResearchResultDisposition::Promote))
+        .collect::<Vec<_>>();
+    let deferred = rendered
+        .result_summaries
+        .iter()
+        .filter(|summary| matches!(summary.disposition, AutoResearchResultDisposition::Defer))
+        .collect::<Vec<_>>();
+
     lines.push(String::new());
-    lines.push("## Current Signals".to_string());
+    lines.push("## Promoted Result Inputs".to_string());
     lines.push(String::new());
-    if rendered.runs.is_empty() {
-        lines.push("- No benchmark results were provided for this target render.".to_string());
+    if promoted.is_empty() {
+        lines.push(
+            "No promotable result inputs are currently available. Use the component scaffold below as the next bounded experiment."
+                .to_string(),
+        );
     } else {
-        for run in &rendered.runs {
-            let score_summary = if run.scores.is_empty() {
-                "no scores recorded".to_string()
-            } else {
-                run.scores
-                    .iter()
-                    .map(|score| format!("{}={} {}", score.metric_id, score.value, score.unit))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
+        for summary in promoted {
             lines.push(format!(
                 "- `{}` on `{}` [{}]: {}",
-                run.run_id, run.benchmark_id, run.status, score_summary
+                summary.run_id, summary.benchmark_id, summary.status, summary.reason
+            ));
+        }
+    }
+
+    if !deferred.is_empty() {
+        lines.push(String::new());
+        lines.push("## Deferred Result Inputs".to_string());
+        lines.push(String::new());
+        for summary in deferred {
+            lines.push(format!(
+                "- `{}` on `{}` [{}]: {}",
+                summary.run_id, summary.benchmark_id, summary.status, summary.reason
             ));
         }
     }
 
     lines.push(String::new());
-    lines.push("## Proposed Work".to_string());
+    lines.push("## Proposed Research Work".to_string());
     lines.push(String::new());
-    for component in &rendered.components {
-        lines.push(format!(
-            "- [ ] **{}**: {}",
-            component.title,
-            component.prompt_fragment.trim()
-        ));
+    for (index, component) in rendered.components.iter().enumerate() {
+        lines.push(format!("### {}. {}", index + 1, component.title));
+        lines.push(String::new());
+        lines.push(component.prompt_fragment.clone());
+        lines.push(String::new());
     }
-
-    lines.push(String::new());
-    lines.push("## Acceptance Criteria".to_string());
-    lines.push(String::new());
-    lines.push("- [ ] `make benchmark-validate` passes.".to_string());
-    lines.push(
-        "- [ ] The selected autoresearch target renders cleanly in `markdown` format.".to_string(),
-    );
-    lines.push(
-        "- [ ] The selected autoresearch target renders cleanly in `json` format.".to_string(),
-    );
-    lines.push(
-        "- [ ] The resulting issue body stays deterministic under repeated renders.".to_string(),
-    );
-
     lines.join("\n")
 }
 
@@ -850,6 +852,68 @@ mod tests {
     }
 
     #[test]
+    fn renders_issue_format_with_promoted_inputs() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "retrieval-regression".into(),
+                status: "observed_failure".into(),
+                summary: "Hybrid retrieval missed the expected file cluster.".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 0.42,
+                    unit: "ratio".into(),
+                }],
+            }],
+        };
+
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::Issue,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("## Promoted Result Inputs"));
+        assert!(rendered.contains("retrieval-regression"));
+        assert!(rendered.contains("## Proposed Research Work"));
+    }
+
+    #[test]
+    fn renders_issue_format_with_deferred_only_results() {
+        let catalog = sample_catalog();
+        let results = BenchmarkResults {
+            runs: vec![BenchmarkRun {
+                benchmark_id: "swe-qa-pro".into(),
+                run_id: "baseline".into(),
+                status: "validation_only".into(),
+                summary: "Catalog validated".into(),
+                scores: vec![BenchmarkScore {
+                    metric_id: "overall".into(),
+                    value: 1.0,
+                    unit: "pass".into(),
+                }],
+            }],
+        };
+        let rendered = render_autoresearch_target(
+            &catalog,
+            Some(&results),
+            "kg-navigation",
+            &[],
+            &[],
+            AutoResearchRenderFormat::GitHubIssue,
+        )
+        .unwrap();
+        assert!(rendered.contains("No promotable result inputs are currently available."));
+        assert!(rendered.contains("## Deferred Result Inputs"));
+        assert!(rendered.contains("## Proposed Research Work"));
+    }
+
+    #[test]
     fn renders_target_as_github_issue_body() {
         let catalog = sample_catalog();
         let results = BenchmarkResults {
@@ -874,10 +938,9 @@ mod tests {
             AutoResearchRenderFormat::GitHubIssue,
         )
         .unwrap();
-        assert!(rendered.contains("Suggested issue title: [AutoResearch] KG navigation"));
-        assert!(rendered.contains("## Proposed Work"));
-        assert!(rendered.contains("- [ ] **Ablation**"));
-        assert!(rendered.contains("## Acceptance Criteria"));
+
+        assert!(rendered.contains("# Autoresearch Target: KG navigation"));
+        assert!(rendered.contains("## Deferred Result Inputs"));
     }
 
     #[test]

@@ -206,6 +206,7 @@ fn main() -> Result<()> {
             };
             let format = match args.format.as_str() {
                 "markdown" => AutoResearchRenderFormat::Markdown,
+                "issue" => AutoResearchRenderFormat::Issue,
                 "json" => AutoResearchRenderFormat::Json,
                 "github-issue" | "issue" => AutoResearchRenderFormat::GitHubIssue,
                 other => anyhow::bail!("Unsupported autoresearch target format `{other}`"),

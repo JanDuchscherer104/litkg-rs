@@ -24,6 +24,7 @@ Purpose: a compact operational memory surface for this toolkit repo. Record stab
 - The scaffolding should support explicit capture of user instructions into durable repo memory or skills when requested.
 - Benchmark metadata, benchmark-result validation, and benchmark-driven autoresearch-target composition now live in `litkg-core::benchmark` and are surfaced through `litkg-cli`.
 - Rendered autoresearch targets now classify selected benchmark runs into deferred validation-only or successful evidence versus promotable non-success execution-bearing runs.
+- `render-autoresearch-target` supports `markdown`, `issue`/`github-issue`, and `json` outputs over the same deterministic target selection.
 - The bounded benchmark-driven autoresearch operator workflow lives under `.agents/skills/autoresearch-litkg-rs/` and writes run briefs, results, and resumable state under `.logs/autoresearch/`.
 - The repo-local code review workflow lives under `.agents/skills/code-review-litkg-rs/` and covers working-tree review, GitHub PR review, and autoresearch winner review gates.
 - The local Neo4j and Graphiti runtime scripts under `scripts/kg/` are reusable repo tooling, not client-specific pipeline logic.

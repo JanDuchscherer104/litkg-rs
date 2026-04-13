@@ -60,6 +60,16 @@ cargo run -p litkg-cli -- render-autoresearch-target \
   --catalog examples/benchmarks/kg.toml \
   --results examples/benchmarks/sample-results.toml \
   --target-id kg_navigation_improvement \
+  --format issue
+```
+
+Or, with explicit benchmark/component overrides:
+
+```bash
+cargo run -p litkg-cli -- render-autoresearch-target \
+  --catalog examples/benchmarks/kg.toml \
+  --results examples/benchmarks/sample-results.toml \
+  --target-id kg_navigation_improvement \
   --component-id retrieval_ablation \
   --component-id reasoning_diagnostics \
   --benchmark-id swe-qa-pro \
@@ -87,3 +97,9 @@ promotion assessment:
 
 This keeps schema-validation fixtures from masquerading as evidence of benchmark
 deficits during overnight loops.
+
+The renderer supports three stable output surfaces:
+
+- `markdown` for operator reading
+- `issue` for issue-ready bodies
+- `json` for machine consumption
