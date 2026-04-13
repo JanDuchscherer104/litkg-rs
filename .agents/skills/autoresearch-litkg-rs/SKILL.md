@@ -146,6 +146,11 @@ python3 .agents/skills/autoresearch-litkg-rs/scripts/record_result.py \
 
 If the baseline fails, stop. Fix the harness, inputs, or branch isolation first.
 
+7. For resumable runtime work, prefer using the helper scripts directly:
+
+- `python3 .agents/skills/autoresearch-litkg-rs/scripts/resume_run.py --tag <tag>`
+- `python3 .agents/skills/autoresearch-litkg-rs/scripts/next_trial.py --tag <tag>`
+
 ## Research Brief Rules
 
 Every run must freeze these decisions up front.
@@ -451,6 +456,9 @@ If the run is interrupted:
 5. Resume from the best-known branch state, not from an abandoned trial branch.
 6. If `state.json` says `needs_pivot: true`, begin with a new direction rather
    than another small variation of the last failed idea.
+7. Use `resume_run.py` for a deterministic summary and `next_trial.py` to
+   allocate the next experiment id and suggested branch name instead of
+   inventing those by hand.
 
 ## Repo-Specific Differences From Upstream
 

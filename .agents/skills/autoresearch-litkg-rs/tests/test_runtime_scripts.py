@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 INIT_RUN = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/init_run.py"
 RECORD_RESULT = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/record_result.py"
 RESUME_RUN = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/resume_run.py"
+NEXT_TRIAL = REPO_ROOT / ".agents/skills/autoresearch-litkg-rs/scripts/next_trial.py"
 
 
 class RuntimeScriptsTest(unittest.TestCase):
@@ -322,6 +323,132 @@ class RuntimeScriptsTest(unittest.TestCase):
             payload = json.loads(resume_json.stdout)
             self.assertEqual(payload["best_experiment_id"], "01-tests")
             self.assertFalse(payload["needs_pivot"])
+
+    def test_next_trial_allocates_incrementing_ids_and_branch_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir)
+            init = self.run_cmd(
+                str(INIT_RUN),
+                "--tag",
+                "test-run",
+                "--question",
+                "Does the runtime initialize correctly?",
+                "--primary-metric",
+                "runtime-helper score",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(init.returncode, 0, init.stderr)
+
+            baseline = self.run_cmd(
+                str(RECORD_RESULT),
+                "--tag",
+                "test-run",
+                "--experiment-id",
+                "00-baseline",
+                "--commit",
+                "abc1234",
+                "--status",
+                "baseline",
+                "--primary-metric",
+                "0",
+                "--guardrail-status",
+                "pass",
+                "--description",
+                "baseline",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(baseline.returncode, 0, baseline.stderr)
+
+            suggestion = self.run_cmd(
+                str(NEXT_TRIAL),
+                "--tag",
+                "test-run",
+                "--slug",
+                "resume-helper",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(suggestion.returncode, 0, suggestion.stderr)
+            self.assertIn("Next experiment id: 01-resume-helper", suggestion.stdout)
+            self.assertIn(
+                "Suggested branch: codex/autoresearch-test-run-trial-01",
+                suggestion.stdout,
+            )
+
+    def test_next_trial_reflects_pivot_requirement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir)
+            init = self.run_cmd(
+                str(INIT_RUN),
+                "--tag",
+                "test-run",
+                "--question",
+                "Does the runtime initialize correctly?",
+                "--primary-metric",
+                "runtime-helper score",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(init.returncode, 0, init.stderr)
+
+            baseline = self.run_cmd(
+                str(RECORD_RESULT),
+                "--tag",
+                "test-run",
+                "--experiment-id",
+                "00-baseline",
+                "--commit",
+                "abc1234",
+                "--status",
+                "baseline",
+                "--primary-metric",
+                "0",
+                "--guardrail-status",
+                "pass",
+                "--description",
+                "baseline",
+                "--repo-root",
+                str(repo_root),
+            )
+            self.assertEqual(baseline.returncode, 0, baseline.stderr)
+
+            for experiment_id in ("01-a", "02-b", "03-c"):
+                discard = self.run_cmd(
+                    str(RECORD_RESULT),
+                    "--tag",
+                    "test-run",
+                    "--experiment-id",
+                    experiment_id,
+                    "--commit",
+                    "-",
+                    "--status",
+                    "discard",
+                    "--primary-metric",
+                    "0",
+                    "--guardrail-status",
+                    "fail:verify",
+                    "--description",
+                    "did not help",
+                    "--repo-root",
+                    str(repo_root),
+                )
+                self.assertEqual(discard.returncode, 0, discard.stderr)
+
+            suggestion = self.run_cmd(
+                str(NEXT_TRIAL),
+                "--tag",
+                "test-run",
+                "--repo-root",
+                str(repo_root),
+                "--json",
+            )
+            self.assertEqual(suggestion.returncode, 0, suggestion.stderr)
+            payload = json.loads(suggestion.stdout)
+            self.assertTrue(payload["needs_pivot"])
+            self.assertEqual(payload["recommended_action"], "pivot before starting this trial")
+            self.assertEqual(payload["experiment_id"], "04-candidate")
 
 
 if __name__ == "__main__":

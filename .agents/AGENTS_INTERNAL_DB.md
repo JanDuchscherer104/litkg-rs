@@ -29,6 +29,7 @@ Purpose: a compact operational memory surface for this toolkit repo. Record stab
 - Benchmark validation rejects unknown run statuses until they are classified into promotion or control-plane behavior explicitly.
 - JSON target renders now expose promotion counts, sanitized run summary text, and structured score evidence.
 - The bounded benchmark-driven autoresearch operator workflow lives under `.agents/skills/autoresearch-litkg-rs/` and writes run briefs, results, and resumable state under `.logs/autoresearch/`.
+- The autoresearch skill now carries repo-local helper scripts for deterministic resume summaries and next-trial allocation over `.logs/autoresearch/<tag>/`.
 - For machine consumption, `result_summaries` is the canonical normalized result view; raw benchmark bundles remain source input, not the automation contract.
 - The repo-local code review workflow lives under `.agents/skills/code-review-litkg-rs/` and covers working-tree review, GitHub PR review, and autoresearch winner review gates.
 - The local Neo4j and Graphiti runtime scripts under `scripts/kg/` are reusable repo tooling, not client-specific pipeline logic.
