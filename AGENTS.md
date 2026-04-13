@@ -10,6 +10,8 @@ This repository owns a repo-independent Rust toolkit for downloading research li
 - `docs/architecture.md`: architecture and adapter boundaries.
 - `.agents/AGENTS_INTERNAL_DB.md`: stable internal operating context.
 - `.agents/skills/litkg-rs/SKILL.md`: agent-facing workflow for the toolkit.
+- `.agents/skills/autoresearch-litkg-rs/SKILL.md`: agent-facing bounded autoresearch workflow for benchmark-driven litkg-rs work.
+- `.agents/skills/gh-issue-lifecycle/SKILL.md`: agent-facing GitHub issue creation and resolution workflow.
 
 ## Repo Map
 
@@ -28,6 +30,6 @@ This repository owns a repo-independent Rust toolkit for downloading research li
 - Keep graphify as a file-output adapter and Neo4j as an optional export adapter. Do not make one adapter leak assumptions into the other.
 - Before making a commit, run `cargo fmt`, `cargo test`, and `make agents-db`.
 - Treat Apple Silicon macOS as a first-class optimization target for local UX, performance, and packaging decisions.
-- When the user explicitly asks to generalize an instruction into scaffolding, capture it in the most specific durable surface that fits: root `AGENTS.md`, `.agents/AGENTS_INTERNAL_DB.md`, backlog entries, or `.agents/skills/litkg-rs/SKILL.md`.
+- When the user explicitly asks to generalize an instruction into scaffolding, capture it in the most specific durable surface that fits: root `AGENTS.md`, `.agents/AGENTS_INTERNAL_DB.md`, backlog entries, or the relevant `.agents/skills/*/SKILL.md`.
 - If the user marks content inside `<...>` and explicitly says it should be added to `AGENTS.md`, distill that content into concise, cleaned-up repo guidance rather than copying it verbatim.
 - If the instruction is broader human-owner intent rather than repo policy, put the distilled version into `CODEOWNER.md`.

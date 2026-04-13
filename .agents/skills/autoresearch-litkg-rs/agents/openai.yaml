@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autoresearch litkg-rs"
+  short_description: "Bounded benchmark-driven research loop"
+  default_prompt: "Use $autoresearch-litkg-rs to run a bounded, evidence-driven research loop in litkg-rs with a frozen evaluation harness, safe git flow, benchmark-target grounding, and a `.logs/autoresearch/` results log."

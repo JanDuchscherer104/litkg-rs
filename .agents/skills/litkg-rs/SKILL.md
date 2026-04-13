@@ -21,6 +21,7 @@ Before changing the toolkit:
 - Put client-repo assumptions in config files under `examples/`.
 - Treat graph adapters as sinks over the same normalized paper model.
 - Prefer deterministic output over aggressive parsing heuristics.
+- For bounded, evidence-driven benchmark or overnight iteration loops, use `.agents/skills/autoresearch-litkg-rs/SKILL.md`.
 - When a user explicitly asks to generalize an instruction, capture it into the smallest durable scaffold surface that fits:
   - root `AGENTS.md` for repo-wide policy
   - `.agents/AGENTS_INTERNAL_DB.md` for stable operating facts

@@ -5,6 +5,7 @@
 /.env
 /.cache/
 /.data/
+/.logs/
 /.tmp/
 __pycache__/
 *.py[cod]
