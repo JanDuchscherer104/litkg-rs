@@ -1,0 +1,69 @@
+[[benchmarks]]
+id = "nbv-local-repo-qa"
+name = "NBV Local Repo QA"
+best_use = "Exact-match local benchmark for answering deterministic questions about the NBV repository."
+task_scale = "25 deterministic trials over code, Makefile, and README surfaces."
+summary = "Local client-repo QA benchmark that asks for repo-relative file paths, make targets, and exact README command lines."
+dataset_notes = [
+  "Questions are generated deterministically from the current local checkout of NBV.",
+  "The benchmark is intended as a local client-repo evaluation harness, not a public cross-repo leaderboard.",
+]
+tags = ["repo-qa", "local-benchmark", "exact-match", "client-example"]
+
+  [[benchmarks.metrics]]
+  id    = "exact_match"
+  label = "Exact Match"
+  notes = "Fraction of trials whose normalized answer matches one acceptable answer exactly."
+
+  [[benchmarks.metrics]]
+  id    = "answered_rate"
+  label = "Answered Rate"
+  notes = "Fraction of trials that returned a non-empty prediction."
+
+  [[benchmarks.metrics]]
+  id    = "average_latency_s"
+  label = "Average Latency"
+  notes = "Mean wall-clock latency per answered question."
+
+  [[benchmarks.sources]]
+  label = "github"
+  url   = "https://github.com/JanDuchscherer104/NBV"
+
+  [[benchmarks.sources]]
+  label = "dataset"
+  url   = "examples/benchmarks/local_repo_qa/nbv.jsonl"
+
+[[benchmarks]]
+id = "prml-vslam-local-repo-qa"
+name = "prml-vslam Local Repo QA"
+best_use = "Exact-match local benchmark for answering deterministic questions about the prml-vslam repository."
+task_scale = "25 deterministic trials over code, Makefile, and README surfaces."
+summary = "Local client-repo QA benchmark that asks for repo-relative file paths, make targets, and exact README command lines."
+dataset_notes = [
+  "Questions are generated deterministically from the current local checkout of prml-vslam.",
+  "The benchmark is intended as a local client-repo evaluation harness, not a public cross-repo leaderboard.",
+]
+tags = ["repo-qa", "local-benchmark", "exact-match", "client-example"]
+
+  [[benchmarks.metrics]]
+  id    = "exact_match"
+  label = "Exact Match"
+  notes = "Fraction of trials whose normalized answer matches one acceptable answer exactly."
+
+  [[benchmarks.metrics]]
+  id    = "answered_rate"
+  label = "Answered Rate"
+  notes = "Fraction of trials that returned a non-empty prediction."
+
+  [[benchmarks.metrics]]
+  id    = "average_latency_s"
+  label = "Average Latency"
+  notes = "Mean wall-clock latency per answered question."
+
+  [[benchmarks.sources]]
+  label = "github"
+  url   = "https://github.com/JanDuchscherer104/prml-vslam"
+
+  [[benchmarks.sources]]
+  label = "dataset"
+  url   = "examples/benchmarks/local_repo_qa/prml-vslam.jsonl"

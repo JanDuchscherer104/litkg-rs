@@ -1,0 +1,80 @@
+[[runs]]
+benchmark_id = "swe-bench-pro"
+run_id = "swe-bench-pro-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "swe-qa-pro"
+run_id = "swe-qa-pro-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "coderepoqa"
+run_id = "coderepoqa-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "stackrepoqa"
+run_id = "stackrepoqa-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "reporeason"
+run_id = "reporeason-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "race-bench"
+run_id = "race-bench-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "swd-bench"
+run_id = "swd-bench-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "ccbench"
+run_id = "ccbench-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []
+
+[[runs]]
+benchmark_id = "terminal-bench"
+run_id = "terminal-bench-unconfigured"
+status = "unconfigured"
+summary = "No benchmark run request is configured for this benchmark."
+scores = []
+diagnostics = ["Add a benchmark run plan entry with a command that writes normalized JSON to $LITKG_BENCHMARK_OUTPUT_PATH."]
+artifacts = []

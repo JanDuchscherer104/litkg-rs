@@ -206,7 +206,10 @@ fn main() -> Result<()> {
         Commands::Materialize(args) => {
             let config = RepoConfig::load(&args.config.config)?;
             let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
-            if papers.is_empty() {
+            let allow_memory_only_neo4j = papers.is_empty()
+                && matches!(config.sink, SinkMode::Neo4j)
+                && config.memory_state_root().is_some();
+            if papers.is_empty() && !allow_memory_only_neo4j {
                 anyhow::bail!(
                     "No parsed papers found under {}",
                     config.parsed_root().display()
@@ -251,9 +254,9 @@ fn main() -> Result<()> {
         Commands::ExportNeo4j(args) => {
             let config = RepoConfig::load(&args.config.config)?;
             let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
-            if papers.is_empty() {
+            if papers.is_empty() && config.memory_state_root().is_none() {
                 anyhow::bail!(
-                    "No parsed papers found under {}",
+                    "No parsed papers found under {} and no memory_state_root was configured",
                     config.parsed_root().display()
                 );
             }

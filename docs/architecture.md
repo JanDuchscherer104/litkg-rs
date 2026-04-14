@@ -63,14 +63,16 @@ The core crate does not know anything about a client repo’s specific paths bey
 ## Benchmark And Auto Research Layer
 
 - `litkg-core::benchmark`
-  - owns the benchmark catalog schema, benchmark result schema, validation rules, and autoresearch-target templates
+  - owns the benchmark catalog schema, benchmark result schema, integration/run-plan schema, validation rules, and autoresearch-target templates
 - `litkg-cli`
   - validates benchmark catalogs and result bundles
+  - inspects benchmark integration readiness on the local system
+  - executes configured benchmark command adapters and normalizes their outputs
   - renders concatenated autoresearch targets from selectable benchmark-aligned components
 - `examples/benchmarks/`
-  - stores benchmark metadata and sample result bundles used by local validation and target rendering
+  - stores benchmark metadata, integration state, and sample result bundles used by local validation and target rendering
 
-This layer is intentionally repo-independent. It describes evaluation targets and research-target composition rather than hard-coding one client repo's benchmark harness.
+This layer is intentionally repo-independent. It describes evaluation targets, command-adapter contracts, and research-target composition rather than hard-coding one client repo's benchmark harness.
 
 ## Graphify Rebuild Contract
 
