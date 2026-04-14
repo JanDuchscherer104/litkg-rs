@@ -311,6 +311,7 @@ mod tests {
             registry_path: None,
             parsed_root: None,
             neo4j_export_root: None,
+            memory_state_root: None,
             sink: SinkMode::Graphify,
             graphify_rebuild_command: None,
             download_pdfs: true,

@@ -7,6 +7,7 @@ pub mod enrich;
 pub mod inspect;
 pub mod manifest;
 pub mod materialize;
+pub mod memory;
 pub mod model;
 pub mod notebook;
 pub mod registry;
@@ -40,6 +41,10 @@ pub use manifest::{load_manifest, ManifestEntry};
 pub use materialize::{
     emit_markdown, load_parsed_papers, matched_relevance_tags, write_materialized_doc,
     write_parsed_papers,
+};
+pub use memory::{
+    load_project_memory, MemoryChunkKind, MemoryImportBundle, MemoryNode, MemoryNodeKind,
+    MemoryRelation, MemoryRelationType, MemorySurface, MemorySurfaceKind,
 };
 pub use model::{
     DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind, NotebookDocument, PaperFigure,

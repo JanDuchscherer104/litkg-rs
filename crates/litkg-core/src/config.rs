@@ -21,6 +21,8 @@ pub struct RepoConfig {
     pub registry_path: Option<PathBuf>,
     pub parsed_root: Option<PathBuf>,
     pub neo4j_export_root: Option<PathBuf>,
+    #[serde(default)]
+    pub memory_state_root: Option<PathBuf>,
     pub sink: SinkMode,
     pub graphify_rebuild_command: Option<String>,
     #[serde(default)]
@@ -55,5 +57,9 @@ impl RepoConfig {
         self.neo4j_export_root
             .clone()
             .unwrap_or_else(|| self.generated_docs_root.join("neo4j-export"))
+    }
+
+    pub fn memory_state_root(&self) -> Option<PathBuf> {
+        self.memory_state_root.clone()
     }
 }

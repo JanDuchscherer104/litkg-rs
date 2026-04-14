@@ -1,0 +1,11 @@
+{
+  "dataset": "/Users/jd/repos/litgraph-rs/examples/benchmarks/local_repo_qa/nbv.jsonl",
+  "repo_root": "/Users/jd/repos/NBV",
+  "model": "qwen3-coder:30b",
+  "question_count": 25,
+  "exact_match": 1.0,
+  "answered_rate": 1.0,
+  "average_latency_s": 0.0,
+  "failure_count": 0,
+  "incorrect_questions": []
+}

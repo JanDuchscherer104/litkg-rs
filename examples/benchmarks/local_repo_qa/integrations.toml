@@ -1,0 +1,46 @@
+[[integrations]]
+benchmark_id = "nbv-local-repo-qa"
+upstream_status = "custom_local_harness"
+runner_kind = "external_command"
+summary = "Local exact-match repo-QA harness over the NBV checkout using deterministic question assets and a local Ollama answerer."
+required_binaries = ["python3", "rg"]
+bootstrap_steps = [
+  "Ensure the NBV checkout exists at the configured local path.",
+  "Ensure an Ollama-compatible chat-completions endpoint is reachable.",
+  "Regenerate examples/benchmarks/local_repo_qa/nbv.jsonl if the repo changed materially.",
+]
+example_commands = [
+  "python3 scripts/benchmarks/run_repo_qa.py --dataset examples/benchmarks/local_repo_qa/nbv.jsonl --repo-root /Users/jd/repos/NBV",
+]
+notes = [
+  "The benchmark expects concise exact answers, not free-form explanations.",
+  "The default answerer targets a local Ollama endpoint at http://localhost:11434/v1/chat/completions.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/JanDuchscherer104/NBV"
+
+[[integrations]]
+benchmark_id = "prml-vslam-local-repo-qa"
+upstream_status = "custom_local_harness"
+runner_kind = "external_command"
+summary = "Local exact-match repo-QA harness over the prml-vslam checkout using deterministic question assets and a local Ollama answerer."
+required_binaries = ["python3", "rg"]
+bootstrap_steps = [
+  "Ensure the prml-vslam checkout exists at the configured local path.",
+  "Ensure an Ollama-compatible chat-completions endpoint is reachable.",
+  "Regenerate examples/benchmarks/local_repo_qa/prml-vslam.jsonl if the repo changed materially.",
+]
+example_commands = [
+  "python3 scripts/benchmarks/run_repo_qa.py --dataset examples/benchmarks/local_repo_qa/prml-vslam.jsonl --repo-root /Users/jd/repos/prml-vslam",
+]
+notes = [
+  "The benchmark expects concise exact answers, not free-form explanations.",
+  "The default answerer targets a local Ollama endpoint at http://localhost:11434/v1/chat/completions.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/JanDuchscherer104/prml-vslam"
+

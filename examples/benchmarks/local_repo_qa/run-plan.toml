@@ -1,0 +1,19 @@
+[[runs]]
+benchmark_id = "nbv-local-repo-qa"
+run_id = "nbv-local-repo-qa-qwen3-coder-30b"
+command = "python3 scripts/benchmarks/run_repo_qa.py --dataset examples/benchmarks/local_repo_qa/nbv.jsonl --repo-root \"$NBV_REPO_ROOT\" --model \"$LITKG_REPO_QA_MODEL\" --answerer direct --persist-artifact-dir examples/benchmarks/local_repo_qa/artifacts/nbv"
+workdir = "/Users/jd/repos/litgraph-rs"
+
+  [runs.env]
+  NBV_REPO_ROOT = "/Users/jd/repos/NBV"
+  LITKG_REPO_QA_MODEL = "qwen3-coder:30b"
+
+[[runs]]
+benchmark_id = "prml-vslam-local-repo-qa"
+run_id = "prml-vslam-local-repo-qa-qwen3-coder-30b"
+command = "python3 scripts/benchmarks/run_repo_qa.py --dataset examples/benchmarks/local_repo_qa/prml-vslam.jsonl --repo-root \"$PRML_VSLAM_REPO_ROOT\" --model \"$LITKG_REPO_QA_MODEL\" --answerer direct --persist-artifact-dir examples/benchmarks/local_repo_qa/artifacts/prml-vslam"
+workdir = "/Users/jd/repos/litgraph-rs"
+
+  [runs.env]
+  PRML_VSLAM_REPO_ROOT = "/Users/jd/repos/prml-vslam"
+  LITKG_REPO_QA_MODEL = "qwen3-coder:30b"

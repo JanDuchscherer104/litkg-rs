@@ -95,7 +95,7 @@ id = "TODO-0012"
 title = "Define benchmark-result to autoresearch-target promotion and GitHub issue sync contract"
 issue_ids = ["ISSUE-0013", "ISSUE-0005"]
 priority = "high"
-status = "pending"
+status = "done"
 loc_min = 100
 loc_expected = 220
 loc_max = 440
@@ -121,6 +121,26 @@ loc_expected = 220
 loc_max = 420
 
 [[todos]]
+id = "TODO-0013"
+title = "Document Codex skill discovery and optional MCP setup for litkg-rs"
+issue_ids = ["ISSUE-0014"]
+priority = "medium"
+status = "done"
+loc_min = 80
+loc_expected = 180
+loc_max = 320
+
+[[todos]]
+id = "TODO-0014"
+title = "Implement executable benchmark support and runner normalization for the full catalog"
+issue_ids = ["ISSUE-0015", "ISSUE-0013"]
+priority = "high"
+status = "done"
+loc_min = 500
+loc_expected = 900
+loc_max = 1400
+
+[[todos]]
 id = "TODO-0015"
 title = "Define sink-independent graph enrichment edge model and serialization contract"
 issue_ids = ["ISSUE-0016"]
@@ -139,3 +159,83 @@ status = "pending"
 loc_min = 140
 loc_expected = 260
 loc_max = 420
+
+[[todos]]
+id = "TODO-0017"
+title = "Define pluggable source-provider registry and config contract for sync and one-shot imports"
+issue_ids = ["ISSUE-0018"]
+priority = "high"
+status = "pending"
+loc_min = 160
+loc_expected = 320
+loc_max = 640
+
+[[todos]]
+id = "TODO-0018"
+title = "Implement arXiv MCP provider and deterministic snapshot/sync flow"
+issue_ids = ["ISSUE-0029", "ISSUE-0018"]
+priority = "high"
+status = "pending"
+loc_min = 180
+loc_expected = 320
+loc_max = 560
+
+[[todos]]
+id = "TODO-0019"
+title = "Define sink-independent paper-to-code grounding contract for Python repos"
+issue_ids = ["ISSUE-0030", "ISSUE-0016"]
+priority = "high"
+status = "pending"
+loc_min = 180
+loc_expected = 320
+loc_max = 560
+
+[[todos]]
+id = "TODO-0020"
+title = "Define structured reproduction fact schema and checklist rendering"
+issue_ids = ["ISSUE-0031"]
+priority = "high"
+status = "pending"
+loc_min = 140
+loc_expected = 260
+loc_max = 460
+
+[[todos]]
+id = "TODO-0021"
+title = "Define repo-aware paper-plus-code query contract and evidence model"
+issue_ids = ["ISSUE-0032", "ISSUE-0012"]
+priority = "high"
+status = "pending"
+loc_min = 140
+loc_expected = 260
+loc_max = 460
+
+[[todos]]
+id = "TODO-0022"
+title = "Define benchmark-aware experiment planning contract over papers and results"
+issue_ids = ["ISSUE-0033", "ISSUE-0015", "ISSUE-0013"]
+priority = "high"
+status = "pending"
+loc_min = 160
+loc_expected = 300
+loc_max = 520
+
+[[todos]]
+id = "TODO-0023"
+title = "Define provider-backed literature watchlists and deterministic change reports"
+issue_ids = ["ISSUE-0034", "ISSUE-0029", "ISSUE-0018"]
+priority = "high"
+status = "pending"
+loc_min = 140
+loc_expected = 260
+loc_max = 460
+
+[[todos]]
+id = "TODO-0024"
+title = "Define notebook and repo-doc ingestion contract for Python research repos"
+issue_ids = ["ISSUE-0035"]
+priority = "high"
+status = "pending"
+loc_min = 160
+loc_expected = 300
+loc_max = 520
