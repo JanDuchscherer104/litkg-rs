@@ -98,6 +98,7 @@ This layer is intentionally repo-independent. It describes evaluation targets an
   - local-first and Apple Silicon-friendly
   - compatible with the normalized paper model and optional embedding overlays
   - usable without making Neo4j or a browser the mandatory primary exploration surface
+- The initial implemented viewer path now loads the repo-owned Neo4j export bundle (`nodes.jsonl` / `edges.jsonl`) through `litkg-viewer` and is launched by `litkg inspect-graph`.
 - Current shortlist:
   - `egui + eframe + petgraph` as the practical default
   - `gpui + wgpu` as the premium macOS-native path

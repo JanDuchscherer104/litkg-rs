@@ -23,6 +23,16 @@ Purpose: a compact operational memory surface for this toolkit repo. Record stab
 - Apple Silicon macOS is a primary operator platform and should bias native viewer, performance, packaging, and overnight-agent workflow decisions.
 - The scaffolding should support explicit capture of user instructions into durable repo memory or skills when requested.
 - Benchmark metadata, benchmark-result validation, and benchmark-driven autoresearch-target composition now live in `litkg-core::benchmark` and are surfaced through `litkg-cli`.
-- The bounded benchmark-driven autoresearch operator workflow lives under `.agents/skills/autoresearch-litkg-rs/` and writes run briefs/results under `.logs/autoresearch/`.
+- Benchmark integration inspection, normalized command-adapter execution, and deterministic result promotion now live alongside the benchmark schema in `litkg-core` and are surfaced through `litkg-cli`.
+- Rendered autoresearch targets now classify selected benchmark runs into deferred validation-only or successful evidence versus promotable recognized execution failure runs.
+- `render-autoresearch-target` supports `markdown`, `issue`/`github-issue`, and `json` outputs over the same deterministic target selection, and `sync-autoresearch-target-issue` can publish the GitHub-issue render through `gh`.
+- Benchmark validation rejects unknown run statuses until they are classified into promotion or control-plane behavior explicitly.
+- JSON target renders now expose promotion counts, sanitized run summary text, and structured score evidence.
+- The bounded benchmark-driven autoresearch operator workflow lives under `.agents/skills/autoresearch-litkg-rs/` and writes run briefs, results, and resumable state under `.logs/autoresearch/`.
+- For machine consumption, `result_summaries` is the canonical normalized result view; raw benchmark bundles remain source input, not the automation contract.
+- The repo-local code review workflow lives under `.agents/skills/code-review-litkg-rs/` and covers working-tree review, GitHub PR review, and autoresearch winner review gates.
 - The local Neo4j and Graphiti runtime scripts under `scripts/kg/` are reusable repo tooling, not client-specific pipeline logic.
 - GitHub issue creation and issue resolution now have a dedicated repo-local skill plus `.github` templates for issue intake and PR-based closure.
+- Repo-scoped Codex setup for skills and the optional Graphiti/Neo4j MCP path is documented in `docs/codex-setup.md`.
+- Strict downstream bootstrap templates for `AGENTS.md`, `README.md`, and `REQUIREMENTS.md` live under `templates/bootstrap/`.
+- Issue work now requires a short TODO or status comment on the GitHub issue that states the planned change and whether execution is happening in the local checkout or an isolated worktree.

@@ -8,10 +8,19 @@ load_env() {
   local env_file
   for env_file in "${REPO_ROOT}/.env" "${REPO_ROOT}/.env.example"; do
     if [[ -f "${env_file}" ]]; then
-      set -a
-      # shellcheck disable=SC1090
-      source "${env_file}"
-      set +a
+      while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+        line="${raw_line#"${raw_line%%[![:space:]]*}"}"
+        [[ -z "${line}" || "${line}" == \#* || "${line}" != *=* ]] && continue
+        key="${line%%=*}"
+        value="${line#*=}"
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+        if [[ -z "${!key+x}" ]]; then
+          export "${key}=${value}"
+        fi
+      done < "${env_file}"
       return
     fi
   done

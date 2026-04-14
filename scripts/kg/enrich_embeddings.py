@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -44,13 +45,33 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def code_repo_root(host_root: Path) -> Path:
+    raw_root = os.environ.get("KG_CODE_REPO_ROOT")
+    if raw_root is None or not raw_root.strip():
+        return host_root
+    candidate = Path(raw_root.strip())
+    resolved = (candidate if candidate.is_absolute() else (host_root / candidate)).resolve()
+    if not resolved.is_dir():
+        raise RuntimeError(f"KG_CODE_REPO_ROOT does not exist or is not a directory: {raw_root}")
+    return resolved
+
+
 def list_ollama_models() -> list[str]:
-    listing = subprocess.run(
-        ["ollama", "list"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
+    if shutil.which("ollama") is None:
+        raise RuntimeError(
+            "Missing required command: ollama. Install Ollama and ensure `ollama` is on PATH."
+        )
+    try:
+        listing = subprocess.run(
+            ["ollama", "list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        detail = f": {stderr}" if stderr else ""
+        raise RuntimeError(f"`ollama list` failed{detail}") from exc
     return [line.split()[0] for line in listing[1:] if line.strip()]
 
 
@@ -568,9 +589,10 @@ def clear_links_for_targets(client: Neo4jHTTP, target_ids: list[int]) -> None:
 
 
 def main() -> int:
-    root = repo_root()
-    load_dotenv(root / ".env.example")
-    load_dotenv(root / ".env")
+    host_root = repo_root()
+    load_dotenv(host_root / ".env.example")
+    load_dotenv(host_root / ".env")
+    code_root = code_repo_root(host_root)
 
     embedding_model = os.environ.get("EMBEDDING_MODEL", "qwen3-embedding:4b")
     ensure_embedding_model(embedding_model)
@@ -587,8 +609,11 @@ def main() -> int:
         raise RuntimeError("NEO4J_PASSWORD must be set.")
 
     graphiti_group_id = os.environ.get("GRAPHITI_GROUP_ID", "litkg-docs")
+    enable_doc_links = os.environ.get(
+        "KG_ENABLE_DOC_LINKS", "1" if code_root == host_root else "0"
+    ) not in {"0", "false", "False", "no", "NO"}
     code_path_prefixes = scoped_path_prefixes(
-        os.environ.get("KG_CODE_PATH_PREFIX"), root
+        os.environ.get("KG_CODE_PATH_PREFIX"), code_root
     )
     ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
     embed_url = ollama_embed_url(ollama_base_url)
@@ -596,8 +621,10 @@ def main() -> int:
     client = Neo4jHTTP(neo4j_http_url, neo4j_database, neo4j_username, neo4j_password)
 
     code_records = fetch_records(client, CODE_LABELS, path_prefixes=code_path_prefixes)
-    graphiti_records = fetch_records(
-        client, GRAPHITI_LABELS, group_id=graphiti_group_id
+    graphiti_records = (
+        fetch_records(client, GRAPHITI_LABELS, group_id=graphiti_group_id)
+        if enable_doc_links
+        else []
     )
     if code_path_prefixes and not code_records:
         print(
@@ -643,6 +670,17 @@ def main() -> int:
 
     update_embeddings(client, records_to_embed, embedding_model)
     create_vector_index(client)
+
+    if not enable_doc_links:
+        link_rows: list[dict[str, Any]] = []
+        clear_links_for_targets(client, [record.node_id for record in code_records])
+        scope_suffix = ""
+        if code_path_prefixes:
+            scope_suffix = f" for path {os.environ.get('KG_CODE_PATH_PREFIX')}"
+        print(
+            f"Embedded {len(records_to_embed)} nodes under code repo root {code_root}{scope_suffix}. Doc linking is disabled."
+        )
+        return 0
 
     mentions_by_entity = fetch_mentions(client, graphiti_group_id)
     code_name_index: dict[str, list[NodeRecord]] = {}

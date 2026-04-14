@@ -1,23 +1,37 @@
 pub mod benchmark;
+pub mod benchmark_runner;
 pub mod bibtex;
 pub mod config;
 pub mod download;
+pub mod enrich;
 pub mod inspect;
 pub mod manifest;
 pub mod materialize;
 pub mod model;
+pub mod notebook;
 pub mod registry;
+pub mod tabular;
 pub mod tex;
 
 pub use benchmark::{
-    load_benchmark_catalog, load_benchmark_results, render_autoresearch_target,
-    validate_benchmark_catalog, validate_benchmark_results, AutoResearchRenderFormat,
-    AutoResearchTargetTemplate, BenchmarkCatalog, BenchmarkResults, BenchmarkRun, BenchmarkScore,
-    BenchmarkSource, BenchmarkSpec, ValidationSummary,
+    load_benchmark_catalog, load_benchmark_results, promote_benchmark_results,
+    render_autoresearch_target, render_promoted_targets, validate_benchmark_catalog,
+    validate_benchmark_results, write_benchmark_results, AutoResearchRenderFormat,
+    AutoResearchTargetTemplate, BenchmarkArtifact, BenchmarkCatalog, BenchmarkExecutionRecord,
+    BenchmarkPromotionRequest, BenchmarkResults, BenchmarkRun, BenchmarkScore, BenchmarkSource,
+    BenchmarkSpec, MetricThresholdComparison, MetricThresholdRule, PromotedAutoResearchTarget,
+    PromotionComponentSelection, PromotionEvidence, ValidationSummary,
+};
+pub use benchmark_runner::{
+    inspect_benchmark_support, load_benchmark_integrations, load_benchmark_run_plan,
+    run_benchmarks, validate_benchmark_integrations, validate_benchmark_run_plan,
+    BenchmarkIntegration, BenchmarkIntegrationCatalog, BenchmarkRunPlan, BenchmarkRunRequest,
+    BenchmarkSupportStatus,
 };
 pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{RepoConfig, SinkMode};
 pub use download::{download_registry_sources, DownloadOptions};
+pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
 pub use inspect::{
     compute_corpus_stats, inspect_paper, search_papers, CorpusStats, PaperInspection,
     PaperReference, SearchHit, SearchResults, SectionHeading,
@@ -28,8 +42,18 @@ pub use materialize::{
     write_parsed_papers,
 };
 pub use model::{
-    DownloadMode, MaterializedDoc, PaperFigure, PaperSection, PaperSourceRecord, PaperTable,
-    ParseStatus, ParsedPaper, SourceKind,
+    DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind, NotebookDocument, PaperFigure,
+    PaperSection, PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper, ResearchMetadata,
+    ResearchPaper, SourceKind,
+};
+pub use notebook::{
+    ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,
 };
 pub use registry::{build_registry_snapshot, load_registry, sync_registry, write_registry};
+pub use tabular::{
+    build_tabular_bundle, build_tabular_bundle_from_parsed,
+    build_tabular_bundle_from_parsed_with_notebooks, research_papers_from_parsed,
+    write_tabular_exports, CitationTableRow, EdgeTableRow, NotebookCellTableRow, NotebookTableRow,
+    PaperTableRow, SectionTableRow, TabularBundle, TabularExportPaths,
+};
 pub use tex::parse_registry_papers;

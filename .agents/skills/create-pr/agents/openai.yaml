@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create PR"
+  short_description: "Create/update litkg-rs pull requests"
+  default_prompt: "Use $create-pr to write or update a litkg-rs pull request with a structured body and explicit gh commands."
