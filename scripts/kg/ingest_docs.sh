@@ -98,6 +98,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_origin
 
 repo_root = Path(sys.argv[1]).resolve()
 cli_paths = [Path(arg) for arg in sys.argv[2:]]
@@ -116,7 +117,7 @@ from pydantic import BaseModel
 
 class SanitizingOpenAIGenericClient(OpenAIGenericClient):
     @staticmethod
-    def _extract_json_payload(text: str) -> dict[str, object]:
+    def _extract_json_payload(text: str) -> object:
         cleaned = text.strip()
         cleaned = re.sub(r"<\|channel\|>thought\s*.*?<\|channel\|>", "", cleaned, flags=re.DOTALL)
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
@@ -129,11 +130,133 @@ class SanitizingOpenAIGenericClient(OpenAIGenericClient):
                 parsed, _ = decoder.raw_decode(cleaned[index:])
             except json.JSONDecodeError:
                 continue
-            if isinstance(parsed, dict):
+            if isinstance(parsed, (dict, list)):
                 return parsed
-            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-                return parsed[0]
         return json.loads(cleaned)
+
+    @staticmethod
+    def _normalize_edge_item(item: object) -> object:
+        if not isinstance(item, dict):
+            return item
+
+        normalized = dict(item)
+        source = (
+            normalized.get("source_entity_name")
+            or normalized.get("subject")
+            or normalized.get("source")
+            or normalized.get("from")
+        )
+        target = (
+            normalized.get("target_entity_name")
+            or normalized.get("object")
+            or normalized.get("target")
+            or normalized.get("to")
+        )
+        relation = (
+            normalized.get("relation_type")
+            or normalized.get("predicate")
+            or normalized.get("relation")
+            or normalized.get("edge_type")
+        )
+        fact = normalized.get("fact") or normalized.get("description") or normalized.get("summary")
+
+        if source is not None:
+            normalized["source_entity_name"] = str(source).strip()
+        if target is not None:
+            normalized["target_entity_name"] = str(target).strip()
+        if relation is not None:
+            relation_text = str(relation).strip()
+            normalized["relation_type"] = re.sub(r"[^A-Za-z0-9]+", "_", relation_text).strip("_").upper()
+        if fact is not None:
+            normalized["fact"] = str(fact).strip()
+        elif source is not None and target is not None and relation is not None:
+            normalized["fact"] = f"{source} {str(relation).strip()} {target}"
+
+        return normalized
+
+    @staticmethod
+    def _normalize_entity_item(item: object) -> object:
+        if not isinstance(item, dict):
+            return item
+
+        normalized = dict(item)
+        name = (
+            normalized.get("name")
+            or normalized.get("entity_value")
+            or normalized.get("entity_name")
+            or normalized.get("entity")
+            or normalized.get("subject")
+        )
+        entity_type_id = normalized.get("entity_type_id") or normalized.get("type_id")
+
+        if name is not None:
+            normalized["name"] = str(name).strip()
+        if entity_type_id is not None:
+            try:
+                normalized["entity_type_id"] = int(entity_type_id)
+            except (TypeError, ValueError):
+                normalized["entity_type_id"] = 0
+        elif normalized.get("entity_type_name") or normalized.get("type"):
+            normalized["entity_type_id"] = 0
+
+        return normalized
+
+    @staticmethod
+    def _normalize_payload(
+        payload: object, response_model: type[BaseModel] | None
+    ) -> dict[str, object]:
+        if response_model is not None:
+            model_fields = getattr(response_model, "model_fields", {})
+            if len(model_fields) == 1:
+                field_name, field = next(iter(model_fields.items()))
+                origin = get_origin(field.annotation)
+                if isinstance(payload, list):
+                    if (
+                        len(payload) == 1
+                        and isinstance(payload[0], dict)
+                        and field_name in payload[0]
+                    ):
+                        payload = payload[0]
+                    else:
+                        payload = {field_name: payload}
+                elif isinstance(payload, dict) and origin is list:
+                    payload = {field_name: [payload]}
+                elif not isinstance(payload, dict):
+                    payload = {field_name: payload}
+                if field_name == "edges" and isinstance(payload, dict):
+                    edges = payload.get(field_name, [])
+                    if isinstance(edges, list):
+                        payload[field_name] = [
+                            SanitizingOpenAIGenericClient._normalize_edge_item(edge)
+                            for edge in edges
+                        ]
+                    else:
+                        payload[field_name] = [
+                            SanitizingOpenAIGenericClient._normalize_edge_item(edges)
+                        ]
+                if field_name == "extracted_entities" and isinstance(payload, dict):
+                    entities = payload.get(field_name, [])
+                    normalized_entities: list[object] = []
+                    if not isinstance(entities, list):
+                        entities = [entities]
+                    for entity in entities:
+                        if isinstance(entity, dict) and field_name in entity:
+                            nested = entity[field_name]
+                            if isinstance(nested, list):
+                                normalized_entities.extend(
+                                    SanitizingOpenAIGenericClient._normalize_entity_item(item)
+                                    for item in nested
+                                )
+                                continue
+                        normalized_entities.append(
+                            SanitizingOpenAIGenericClient._normalize_entity_item(entity)
+                        )
+                    payload[field_name] = normalized_entities
+            if isinstance(payload, dict):
+                return response_model.model_validate(payload).model_dump(mode="python")
+        if isinstance(payload, dict):
+            return payload
+        raise ValueError("Expected a JSON object response payload.")
 
     async def _generate_response(
         self,
@@ -168,7 +291,8 @@ class SanitizingOpenAIGenericClient(OpenAIGenericClient):
             response_format=response_format,  # type: ignore[arg-type]
         )
         result = response.choices[0].message.content or ""
-        return self._extract_json_payload(result)
+        payload = self._extract_json_payload(result)
+        return self._normalize_payload(payload, response_model)
 
 
 def iter_doc_paths() -> list[Path]:
