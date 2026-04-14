@@ -18,6 +18,8 @@
    - emit deterministic Markdown corpora for graph ingestion
 5. `rebuild-graph` / `export-neo4j`
    - adapter-specific graph actions
+6. `stats` / `search` / `show-paper`
+   - read-only inspection over registry and parsed-paper state
 
 ## Registry Merge Contract
 
@@ -71,6 +73,15 @@ The core crate does not know anything about a client repo’s specific paths bey
   - stores benchmark metadata and sample result bundles used by local validation and target rendering
 
 This layer is intentionally repo-independent. It describes evaluation targets and research-target composition rather than hard-coding one client repo's benchmark harness.
+
+## Inspection Layer
+
+- `litkg-cli` exposes read-only inspection commands over the same normalized registry and parsed-paper artifacts used by the pipeline.
+- When `registry.jsonl` is absent, inspection commands derive the normalized registry in memory from manifest and BibTeX inputs rather than writing new generated state.
+- `stats` summarizes coverage and corpus shape from registry rows plus parsed-paper outputs.
+- `search` matches against metadata first and parsed content when available, keeping the query path useful even for mixed metadata-only and fully parsed corpora.
+- `show-paper` resolves a paper by `paper_id`, citation key, arXiv id, or exact title and reports local paths, extracted structure, outgoing citations, and inbound citation references from the local parsed set.
+- The inspection layer is intentionally non-authoritative: it does not mutate registry state or introduce adapter-specific sidecar data.
 
 ## Graphify Rebuild Contract
 

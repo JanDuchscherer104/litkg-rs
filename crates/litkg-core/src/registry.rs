@@ -8,13 +8,17 @@ use std::fs;
 use std::path::Path;
 
 pub fn sync_registry(config: &RepoConfig) -> Result<Vec<PaperSourceRecord>> {
+    let registry = build_registry_snapshot(config)?;
+    write_registry(&config.registry_path(), &registry)?;
+    Ok(registry)
+}
+
+pub fn build_registry_snapshot(config: &RepoConfig) -> Result<Vec<PaperSourceRecord>> {
     let manifest = load_manifest(&config.manifest_path)?;
     let bib_text = fs::read_to_string(&config.bib_path)
         .with_context(|| format!("Failed to read bibliography {}", config.bib_path.display()))?;
     let bib_entries = parse_bibtex(&bib_text)?;
-    let registry = merge_registry(manifest, bib_entries, config);
-    write_registry(&config.registry_path(), &registry)?;
-    Ok(registry)
+    Ok(merge_registry(manifest, bib_entries, config))
 }
 
 pub fn write_registry(path: &Path, registry: &[PaperSourceRecord]) -> Result<()> {

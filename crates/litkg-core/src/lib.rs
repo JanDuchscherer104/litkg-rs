@@ -4,6 +4,7 @@ pub mod bibtex;
 pub mod config;
 pub mod download;
 pub mod enrich;
+pub mod inspect;
 pub mod manifest;
 pub mod materialize;
 pub mod model;
@@ -31,6 +32,10 @@ pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{RepoConfig, SinkMode};
 pub use download::{download_registry_sources, DownloadOptions};
 pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
+pub use inspect::{
+    compute_corpus_stats, inspect_paper, search_papers, CorpusStats, PaperInspection,
+    PaperReference, SearchHit, SearchResults, SectionHeading,
+};
 pub use manifest::{load_manifest, ManifestEntry};
 pub use materialize::{
     emit_markdown, load_parsed_papers, matched_relevance_tags, write_materialized_doc,
@@ -44,7 +49,7 @@ pub use model::{
 pub use notebook::{
     ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,
 };
-pub use registry::{load_registry, sync_registry, write_registry};
+pub use registry::{build_registry_snapshot, load_registry, sync_registry, write_registry};
 pub use tabular::{
     build_tabular_bundle, build_tabular_bundle_from_parsed,
     build_tabular_bundle_from_parsed_with_notebooks, research_papers_from_parsed,

@@ -7,6 +7,7 @@
 - parsing TeX sources into structured paper records
 - materializing KG-friendly Markdown corpora
 - exporting to multiple graph adapters, including graphify-oriented corpora and optional Neo4j bundles
+- inspecting local corpora with search, stats, and per-paper drill-down commands
 - validating benchmark catalogs, inspecting benchmark integration readiness, running benchmark adapters, and composing benchmark-driven auto research targets
 
 The first consumer is `prml-vslam`, but this repository is intentionally not tied to any single client repo.
@@ -46,6 +47,9 @@ cargo run -p litkg-cli -- parse --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- materialize --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- rebuild-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- inspect-graph --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- stats --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- search --config examples/prml-vslam.toml --query "loop closure"
+cargo run -p litkg-cli -- show-paper --config examples/prml-vslam.toml --paper zhang2026vistaslam
 cargo run -p litkg-cli -- validate-benchmarks --catalog examples/benchmarks/kg.toml --results examples/benchmarks/sample-results.toml
 cargo run -p litkg-cli -- benchmark-support --catalog examples/benchmarks/kg.toml --integrations examples/benchmarks/integrations.toml
 cargo run -p litkg-cli -- render-autoresearch-target --catalog examples/benchmarks/kg.toml --results examples/benchmarks/sample-results.toml --target-id kg_navigation_improvement
@@ -55,6 +59,8 @@ cargo run -p litkg-cli -- promote-benchmark-results --catalog examples/benchmark
 If the consumer repo does not have `graphify` installed, `rebuild-graph` degrades cleanly and leaves the generated corpus intact.
 
 `inspect-graph` launches the repo-owned native viewer. If the Neo4j export bundle is missing, the command generates `nodes.jsonl` and `edges.jsonl` from the parsed paper set before opening the viewer.
+
+The read-only inspection commands also support `--format json` so agents and automations can consume them programmatically.
 
 ## Backlog
 
