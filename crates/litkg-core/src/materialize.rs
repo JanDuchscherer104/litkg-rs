@@ -44,6 +44,25 @@ pub fn emit_markdown(config: &RepoConfig, paper: &ParsedPaper) -> MaterializedDo
         ),
         format!("doi: {}", paper.metadata.doi.clone().unwrap_or_default()),
         format!("url: {}", paper.metadata.url.clone().unwrap_or_default()),
+        format!(
+            "semantic_scholar_paper_id: {}",
+            paper
+                .metadata
+                .semantic_scholar
+                .as_ref()
+                .and_then(|item| item.paper_id.clone())
+                .unwrap_or_default()
+        ),
+        format!(
+            "semantic_scholar_citation_count: {}",
+            paper
+                .metadata
+                .semantic_scholar
+                .as_ref()
+                .and_then(|item| item.citation_count)
+                .map(|count| count.to_string())
+                .unwrap_or_default()
+        ),
         format!("source_kind: {:?}", paper.metadata.source_kind),
         format!("download_mode: {:?}", paper.metadata.download_mode),
         format!("has_local_tex: {}", paper.metadata.has_local_tex),
@@ -91,16 +110,74 @@ pub fn emit_markdown(config: &RepoConfig, paper: &ParsedPaper) -> MaterializedDo
             paper.metadata.url.clone().unwrap_or_else(|| "n/a".into())
         ),
         String::new(),
+    ];
+
+    if let Some(semantic_paper) = &paper.metadata.semantic_scholar {
+        lines.extend([
+            "## Semantic Scholar".to_string(),
+            String::new(),
+            format!(
+                "- Paper ID: {}",
+                semantic_paper.paper_id.as_deref().unwrap_or("n/a")
+            ),
+            format!(
+                "- Corpus ID: {}",
+                semantic_paper
+                    .corpus_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "n/a".into())
+            ),
+            format!(
+                "- Citation count: {}",
+                semantic_paper
+                    .citation_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "n/a".into())
+            ),
+            format!(
+                "- Influential citation count: {}",
+                semantic_paper
+                    .influential_citation_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "n/a".into())
+            ),
+            format!(
+                "- Fields of study: {}",
+                if semantic_paper.fields_of_study.is_empty() {
+                    "n/a".into()
+                } else {
+                    semantic_paper.fields_of_study.join(", ")
+                }
+            ),
+        ]);
+        if let Some(tldr) = semantic_paper
+            .tldr
+            .as_ref()
+            .and_then(|item| item.text.as_deref())
+        {
+            lines.push(format!("- TLDR: {tldr}"));
+        }
+        lines.push(String::new());
+    }
+
+    lines.extend([
         "## Abstract".to_string(),
         String::new(),
         paper
             .abstract_text
             .clone()
+            .or_else(|| {
+                paper
+                    .metadata
+                    .semantic_scholar
+                    .as_ref()
+                    .and_then(|item| item.abstract_text.clone())
+            })
             .unwrap_or_else(|| "No abstract was extracted from local sources.".into()),
         String::new(),
         "## Section Map".to_string(),
         String::new(),
-    ];
+    ]);
 
     if paper.sections.is_empty() {
         lines.push("- No structured sections were extracted.".to_string());
@@ -236,6 +313,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: true,
             relevance_tags: vec!["ViSTA-SLAM".into(), "ADVIO".into()],
+            semantic_scholar: None,
         }
     }
 
@@ -260,6 +338,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                semantic_scholar: None,
             },
             abstract_text: None,
             sections: vec![],

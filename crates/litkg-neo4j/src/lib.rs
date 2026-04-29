@@ -57,9 +57,86 @@ impl Neo4jSink {
                         "doi": paper.metadata.doi,
                         "url": paper.metadata.url,
                         "parse_status": format!("{:?}", paper.metadata.parse_status),
+                        "semantic_scholar_paper_id": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.paper_id.clone()),
+                        "semantic_scholar_corpus_id": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.corpus_id),
+                        "citation_count": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.citation_count),
+                        "influential_citation_count": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.influential_citation_count),
+                        "reference_count": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.reference_count),
+                        "semantic_scholar_fields": paper.metadata.semantic_scholar.as_ref().map(|item| item.fields_of_study.clone()).unwrap_or_default(),
                     }),
                 },
             );
+
+            if let Some(semantic_paper) = &paper.metadata.semantic_scholar {
+                for author in &semantic_paper.authors {
+                    let author_id = author
+                        .author_id
+                        .as_ref()
+                        .map(|id| format!("author:{id}"))
+                        .unwrap_or_else(|| format!("author:name:{}", slugify(&author.name)));
+                    nodes.insert(
+                        author_id.clone(),
+                        Neo4jNode {
+                            id: author_id.clone(),
+                            labels: vec!["Author".into()],
+                            properties: serde_json::json!({
+                                "author_id": author.author_id,
+                                "name": author.name,
+                                "url": author.url,
+                                "paper_count": author.paper_count,
+                                "citation_count": author.citation_count,
+                                "h_index": author.h_index,
+                                "affiliations": author.affiliations,
+                            }),
+                        },
+                    );
+                    edges.push(Neo4jEdge {
+                        source: paper_id.clone(),
+                        target: author_id,
+                        rel_type: "AUTHORED_BY".into(),
+                        properties: serde_json::json!({"source": "semantic_scholar"}),
+                    });
+                }
+
+                for field in &semantic_paper.fields_of_study {
+                    let field_id = format!("field:{}", slugify(field));
+                    nodes.insert(
+                        field_id.clone(),
+                        Neo4jNode {
+                            id: field_id.clone(),
+                            labels: vec!["FieldOfStudy".into()],
+                            properties: serde_json::json!({"name": field}),
+                        },
+                    );
+                    edges.push(Neo4jEdge {
+                        source: paper_id.clone(),
+                        target: field_id,
+                        rel_type: "HAS_FIELD".into(),
+                        properties: serde_json::json!({"source": "semantic_scholar"}),
+                    });
+                }
+
+                for (kind, value) in &semantic_paper.external_ids {
+                    let external_id = format!("external_id:{}:{}", slugify(kind), slugify(value));
+                    nodes.insert(
+                        external_id.clone(),
+                        Neo4jNode {
+                            id: external_id.clone(),
+                            labels: vec!["ExternalId".into()],
+                            properties: serde_json::json!({
+                                "kind": kind,
+                                "value": value,
+                            }),
+                        },
+                    );
+                    edges.push(Neo4jEdge {
+                        source: paper_id.clone(),
+                        target: external_id,
+                        rel_type: "HAS_EXTERNAL_ID".into(),
+                        properties: serde_json::json!({"source": "semantic_scholar"}),
+                    });
+                }
+            }
 
             for (index, section) in paper.sections.iter().enumerate() {
                 let section_id = format!("paper:{}:section:{}", paper.metadata.paper_id, index);
@@ -236,6 +313,21 @@ fn memory_surface_kind_name(kind: MemorySurfaceKind) -> &'static str {
     }
 }
 
+fn slugify(text: &str) -> String {
+    let mut slug = String::new();
+    let mut last_dash = false;
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
 fn jsonl<T: Serialize>(items: &[T]) -> Result<String> {
     let mut lines = Vec::with_capacity(items.len());
     for item in items {
@@ -300,6 +392,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: false,
             relevance_tags: vec![],
+            semantic_scholar: None,
         }
     }
 
@@ -321,6 +414,7 @@ mod tests {
                 has_local_tex: true,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             abstract_text: None,
             sections: vec![],

@@ -16,9 +16,11 @@
    - extract abstract, sections, captions, and citations
 4. `materialize`
    - emit deterministic Markdown corpora for graph ingestion
-5. `rebuild-graph` / `export-neo4j`
+5. `enrich-semantic-scholar`
+   - attach official Semantic Scholar metadata to registry rows by DOI/arXiv/S2 id
+6. `rebuild-graph` / `export-neo4j`
    - adapter-specific graph actions
-6. `stats` / `search` / `show-paper`
+7. `stats` / `search` / `show-paper`
    - read-only inspection over registry and parsed-paper state
 
 ## Registry Merge Contract
@@ -56,10 +58,21 @@
 
 The core crate does not know anything about a client repo’s specific paths beyond the values supplied through `RepoConfig`.
 
+## Semantic Scholar Contract
+
+- Semantic Scholar integration uses the official REST APIs directly rather than a mandatory MCP server or third-party wrapper.
+- API keys are read from `SEMANTIC_SCHOLAR_API_KEY` by default and passed as the `x-api-key` request header.
+- The client throttles requests to about one request per second by default, retries HTTP 429 and transient 5xx responses, and honors `Retry-After` when present.
+- Registry enrichment uses `/graph/v1/paper/batch` over DOI/arXiv/S2 identifiers and stores the returned compact metadata under `PaperSourceRecord.semantic_scholar`.
+- Remote search uses `/graph/v1/paper/search/bulk`; recommendations use `/recommendations/v1/papers`.
+- Local BibTeX/manifest metadata remains authoritative for existing registry fields. Semantic Scholar fills missing DOI/arXiv/year/author/url fields and provides graph enrichment metadata.
+- Asta MCP is optional future tooling, not the canonical runtime path, because Ai2 documents it as a separate MCP endpoint and key flow.
+
 ## Adapter Output Contracts
 
 - Graphify materialization writes one Markdown file per paper plus a deterministic `index.md` and `graphify-manifest.json` under `generated_docs_root`.
 - Neo4j export writes `nodes.jsonl` and `edges.jsonl` under `neo4j_export_root`, keeping graph export as a file bundle rather than a live database dependency.
+- Neo4j export emits Semantic Scholar author, field-of-study, and external-id nodes when registry rows have Semantic Scholar metadata.
 - `sink = both` is additive: the same normalized parsed paper set feeds both adapters without adapter-specific branching in the core model.
 
 ## Benchmark And Auto Research Layer

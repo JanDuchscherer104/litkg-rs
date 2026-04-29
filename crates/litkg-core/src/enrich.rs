@@ -547,6 +547,7 @@ mod tests {
                 has_local_tex: true,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             abstract_text: abstract_text.map(str::to_string),
             sections: sections

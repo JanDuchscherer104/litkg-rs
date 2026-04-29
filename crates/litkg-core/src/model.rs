@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,6 +41,68 @@ pub struct PaperSourceRecord {
     pub has_local_tex: bool,
     pub has_local_pdf: bool,
     pub parse_status: ParseStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_scholar: Option<SemanticScholarPaper>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticScholarPaper {
+    pub paper_id: Option<String>,
+    pub corpus_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub external_ids: BTreeMap<String, String>,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    #[serde(rename = "abstract")]
+    pub abstract_text: Option<String>,
+    pub tldr: Option<SemanticScholarTldr>,
+    pub venue: Option<String>,
+    pub year: Option<i32>,
+    pub publication_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publication_types: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields_of_study: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub s2_fields_of_study: Vec<SemanticScholarFieldOfStudy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authors: Vec<SemanticScholarAuthor>,
+    pub citation_count: Option<u64>,
+    pub influential_citation_count: Option<u64>,
+    pub reference_count: Option<u64>,
+    pub open_access_pdf: Option<SemanticScholarOpenAccessPdf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticScholarAuthor {
+    pub author_id: Option<String>,
+    pub name: String,
+    pub url: Option<String>,
+    pub paper_count: Option<u64>,
+    pub citation_count: Option<u64>,
+    pub h_index: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affiliations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SemanticScholarTldr {
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticScholarOpenAccessPdf {
+    pub url: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SemanticScholarFieldOfStudy {
+    pub category: Option<String>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

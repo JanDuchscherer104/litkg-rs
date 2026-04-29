@@ -79,6 +79,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: false,
             relevance_tags: vec!["ViSTA-SLAM".into()],
+            semantic_scholar: None,
         };
         let papers = vec![ParsedPaper {
             metadata: PaperSourceRecord {
@@ -97,6 +98,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                semantic_scholar: None,
             },
             abstract_text: Some("Abs".into()),
             sections: vec![],

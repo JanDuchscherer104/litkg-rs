@@ -191,6 +191,7 @@ fn build_record_from_bib_and_manifest(
         } else {
             ParseStatus::PendingDownload
         },
+        semantic_scholar: None,
     }
 }
 
@@ -236,6 +237,7 @@ fn build_record_from_manifest_only(
         } else {
             ParseStatus::PendingDownload
         },
+        semantic_scholar: None,
     }
 }
 
@@ -316,6 +318,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: true,
             relevance_tags: vec![],
+            semantic_scholar: None,
         }
     }
 

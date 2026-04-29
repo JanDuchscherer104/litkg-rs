@@ -10,3 +10,11 @@ sink = "graphify"
 graphify_rebuild_command = "/Users/jd/repos/prml-vslam/.venv/bin/python -c \"from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('/Users/jd/repos/prml-vslam'))\""
 download_pdfs = true
 relevance_tags = ["ViSTA-SLAM", "MASt3R-SLAM", "DROID-SLAM", "ADVIO", "COLMAP", "Open3D", "evo"]
+
+[semantic_scholar]
+enabled = true
+api_key_env = "SEMANTIC_SCHOLAR_API_KEY"
+min_interval_s = 1.05
+max_retries = 4
+batch_size = 100
+fields = ["paperId", "corpusId", "externalIds", "url", "title", "abstract", "tldr", "venue", "year", "publicationDate", "publicationTypes", "fieldsOfStudy", "s2FieldsOfStudy", "authors", "citationCount", "influentialCitationCount", "referenceCount", "openAccessPdf"]

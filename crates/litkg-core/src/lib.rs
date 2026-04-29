@@ -11,6 +11,7 @@ pub mod memory;
 pub mod model;
 pub mod notebook;
 pub mod registry;
+pub mod semantic_scholar;
 pub mod tabular;
 pub mod tex;
 
@@ -30,7 +31,7 @@ pub use benchmark_runner::{
     BenchmarkSupportStatus,
 };
 pub use bibtex::{parse_bibtex, BibEntry};
-pub use config::{RepoConfig, SinkMode};
+pub use config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarConfig, SinkMode};
 pub use download::{download_registry_sources, DownloadOptions};
 pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
 pub use inspect::{
@@ -49,12 +50,19 @@ pub use memory::{
 pub use model::{
     DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind, NotebookDocument, PaperFigure,
     PaperSection, PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper, ResearchMetadata,
-    ResearchPaper, SourceKind,
+    ResearchPaper, SemanticScholarAuthor, SemanticScholarFieldOfStudy,
+    SemanticScholarOpenAccessPdf, SemanticScholarPaper, SemanticScholarTldr, SourceKind,
 };
 pub use notebook::{
     ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,
 };
 pub use registry::{build_registry_snapshot, load_registry, sync_registry, write_registry};
+pub use semantic_scholar::{
+    enrich_registry_with_semantic_scholar, enrich_registry_with_semantic_scholar_client,
+    semantic_scholar_identifier, SemanticScholarBatchResponse, SemanticScholarClient,
+    SemanticScholarMethod, SemanticScholarRecommendationResponse, SemanticScholarSearchRequest,
+    SemanticScholarSearchResponse, SemanticScholarTransport, UreqSemanticScholarTransport,
+};
 pub use tabular::{
     build_tabular_bundle, build_tabular_bundle_from_parsed,
     build_tabular_bundle_from_parsed_with_notebooks, research_papers_from_parsed,

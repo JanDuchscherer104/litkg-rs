@@ -22,12 +22,14 @@ AUTORESEARCH_ISSUE_ARGS ?= --dry-run
 LITKG_CONFIG ?= examples/prml-vslam.toml
 LITKG_DOWNLOAD_ARGS ?=
 LITKG_PIPELINE_ARGS ?=
+SEMANTIC_QUERY ?= "next best view"
+SEMANTIC_SEARCH_ARGS ?=
 LOC_ARGS ?=
 
 .PHONY: help fmt test lint lint-check cargo-check clippy ci clean agents-db
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
 .PHONY: kg-up kg-down kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
-.PHONY: litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j
+.PHONY: litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j litkg-semantic-enrich litkg-semantic-search
 .PHONY: benchmark-validate benchmark-support benchmark-run autoresearch-target inspect-graph autoresearch-issue
 
 fmt: ## Run rustfmt across the workspace
@@ -137,6 +139,12 @@ litkg-pipeline: ## Run the full sync/download/parse/materialize pipeline for a c
 
 litkg-export-neo4j: ## Emit the Neo4j export bundle for a config
 	$(CARGO) run -p litkg-cli -- export-neo4j --config "$(LITKG_CONFIG)"
+
+litkg-semantic-enrich: ## Enrich the registry with Semantic Scholar metadata
+	$(CARGO) run -p litkg-cli -- enrich-semantic-scholar --config "$(LITKG_CONFIG)"
+
+litkg-semantic-search: ## Search Semantic Scholar through the official REST API
+	$(CARGO) run -p litkg-cli -- semantic-scholar-search --config "$(LITKG_CONFIG)" --query $(SEMANTIC_QUERY) $(SEMANTIC_SEARCH_ARGS)
 
 benchmark-validate: ## Validate benchmark catalog and sample results
 	$(CARGO) run -p litkg-cli -- validate-benchmarks --catalog "$(BENCHMARK_CATALOG)" --results "$(BENCHMARK_RESULTS)"

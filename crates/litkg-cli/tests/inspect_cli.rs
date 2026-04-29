@@ -52,6 +52,7 @@ fn write_test_config(root: &Path) -> PathBuf {
         has_local_tex: true,
         has_local_pdf: true,
         parse_status: ParseStatus::Parsed,
+        semantic_scholar: None,
     }];
     write_registry(&registry_path, &registry).unwrap();
 
@@ -139,6 +140,7 @@ fn write_metadata_only_config(root: &Path) -> PathBuf {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            semantic_scholar: None,
         }],
     )
     .unwrap();
@@ -215,6 +217,7 @@ fn write_stale_snapshot_config(root: &Path) -> PathBuf {
                 has_local_tex: true,
                 has_local_pdf: true,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             abstract_text: Some("stale parsed abstract".into()),
             sections: vec![PaperSection {

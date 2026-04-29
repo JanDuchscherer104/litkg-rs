@@ -29,6 +29,37 @@ pub struct RepoConfig {
     pub download_pdfs: bool,
     #[serde(default)]
     pub relevance_tags: Vec<String>,
+    #[serde(default)]
+    pub semantic_scholar: Option<SemanticScholarConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SemanticScholarConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_semantic_scholar_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default = "default_semantic_scholar_min_interval_s")]
+    pub min_interval_s: f64,
+    #[serde(default = "default_semantic_scholar_max_retries")]
+    pub max_retries: usize,
+    #[serde(default = "default_semantic_scholar_batch_size")]
+    pub batch_size: usize,
+    #[serde(default = "default_semantic_scholar_fields")]
+    pub fields: Vec<String>,
+}
+
+impl Default for SemanticScholarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: default_semantic_scholar_api_key_env(),
+            min_interval_s: default_semantic_scholar_min_interval_s(),
+            max_retries: default_semantic_scholar_max_retries(),
+            batch_size: default_semantic_scholar_batch_size(),
+            fields: default_semantic_scholar_fields(),
+        }
+    }
 }
 
 impl RepoConfig {
@@ -62,4 +93,50 @@ impl RepoConfig {
     pub fn memory_state_root(&self) -> Option<PathBuf> {
         self.memory_state_root.clone()
     }
+
+    pub fn semantic_scholar_config(&self) -> SemanticScholarConfig {
+        self.semantic_scholar.clone().unwrap_or_default()
+    }
+}
+
+fn default_semantic_scholar_api_key_env() -> String {
+    "SEMANTIC_SCHOLAR_API_KEY".into()
+}
+
+fn default_semantic_scholar_min_interval_s() -> f64 {
+    1.05
+}
+
+fn default_semantic_scholar_max_retries() -> usize {
+    4
+}
+
+fn default_semantic_scholar_batch_size() -> usize {
+    100
+}
+
+pub fn default_semantic_scholar_fields() -> Vec<String> {
+    [
+        "paperId",
+        "corpusId",
+        "externalIds",
+        "url",
+        "title",
+        "abstract",
+        "tldr",
+        "venue",
+        "year",
+        "publicationDate",
+        "publicationTypes",
+        "fieldsOfStudy",
+        "s2FieldsOfStudy",
+        "authors",
+        "citationCount",
+        "influentialCitationCount",
+        "referenceCount",
+        "openAccessPdf",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }

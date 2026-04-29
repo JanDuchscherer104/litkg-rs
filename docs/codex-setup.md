@@ -33,6 +33,25 @@ If a newly added or edited repo skill does not appear, restart Codex from the re
 
 Only use this if you want Codex to talk to the local Graphiti and Neo4j stack. The main `litkg-rs` pipeline does not require MCP.
 
+## Optional Ai2 Asta MCP Path
+
+Semantic Scholar support in `litkg-rs` is REST-native. Ai2 also documents the Asta Scientific Corpus Tool as a separate MCP endpoint at `https://asta-tools.allen.ai/mcp/v1`, but treat it as optional and non-canonical until key compatibility is tested. Do not assume `SEMANTIC_SCHOLAR_API_KEY` is also an Asta tool key.
+
+Example MCP config shape:
+
+```json
+{
+  "mcpServers": {
+    "semanticscholar": {
+      "serverUrl": "https://asta-tools.allen.ai/mcp/v1",
+      "headers": {
+        "x-api-key": "${ASTA_TOOL_API_KEY}"
+      }
+    }
+  }
+}
+```
+
 ### Prerequisites
 
 - `docker` with `docker compose`

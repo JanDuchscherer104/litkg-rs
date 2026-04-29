@@ -1180,6 +1180,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: false,
             relevance_tags: vec![],
+            semantic_scholar: None,
         }
     }
 
@@ -1201,6 +1202,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                semantic_scholar: None,
             },
             abstract_text: None,
             sections: vec![PaperSection {

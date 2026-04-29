@@ -1,6 +1,6 @@
 ---
 name: litkg-rs
-description: Use when working on the standalone Rust literature KG toolkit, especially registry merge, arXiv download, TeX parsing, graphify materialization, Neo4j export, and client-repo adapter configs.
+description: Use when working on the standalone Rust literature KG toolkit, especially registry merge, arXiv download, TeX parsing, Semantic Scholar REST enrichment, graphify materialization, Neo4j export, and client-repo adapter configs.
 ---
 
 # litkg-rs
@@ -20,6 +20,7 @@ Before changing the toolkit:
 - Keep `litkg-core` repo-independent.
 - Put client-repo assumptions in config files under `examples/`.
 - Treat graph adapters as sinks over the same normalized paper model.
+- Use the native Semantic Scholar REST client for paper search, batch metadata enrichment, recommendations, and author lookup; keep Asta MCP optional until its separate key flow is verified.
 - Prefer deterministic output over aggressive parsing heuristics.
 - For working-tree review, pull-request review, or autoresearch winner gating, use `.agents/skills/code-review-litkg-rs/SKILL.md`.
 - For bounded, evidence-driven benchmark or overnight iteration loops, use `.agents/skills/autoresearch-litkg-rs/SKILL.md`.

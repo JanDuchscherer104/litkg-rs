@@ -705,6 +705,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: true,
             relevance_tags: vec!["loop closure".into(), "ADVIO".into()],
+            semantic_scholar: None,
         }
     }
 
@@ -726,6 +727,7 @@ mod tests {
                 has_local_tex: true,
                 has_local_pdf: true,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             PaperSourceRecord {
                 paper_id: "beta".into(),
@@ -743,6 +745,7 @@ mod tests {
                 has_local_tex: true,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             PaperSourceRecord {
                 paper_id: "gamma".into(),
@@ -760,6 +763,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                semantic_scholar: None,
             },
         ]
     }
@@ -819,6 +823,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             abstract_text: Some("stale".into()),
             sections: vec![PaperSection {
@@ -930,11 +935,13 @@ mod tests {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
                 has_local_tex: true,
                 ..registry[0].clone()
             },
@@ -977,6 +984,7 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: true,
             parse_status: ParseStatus::Downloaded,
+            semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
             metadata: PaperSourceRecord {
@@ -984,6 +992,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
                 ..registry[0].clone()
             },
             abstract_text: Some("parsed abstract".into()),
@@ -1022,6 +1031,7 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+            semantic_scholar: None,
         }];
         let parsed = vec![
             ParsedPaper {
@@ -1041,6 +1051,7 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: false,
                     parse_status: ParseStatus::MetadataOnly,
+                    semantic_scholar: None,
                 },
                 abstract_text: None,
                 sections: vec![],
@@ -1066,6 +1077,7 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: true,
                     parse_status: ParseStatus::Parsed,
+                    semantic_scholar: None,
                 },
                 abstract_text: Some("stale parsed abstract".into()),
                 sections: vec![PaperSection {
@@ -1107,6 +1119,7 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+            semantic_scholar: None,
         }];
         let parsed = vec![
             ParsedPaper {
@@ -1126,6 +1139,7 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: false,
                     parse_status: ParseStatus::Parsed,
+                    semantic_scholar: None,
                 },
                 abstract_text: Some("A".into()),
                 sections: vec![PaperSection {
@@ -1155,6 +1169,7 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: false,
                     parse_status: ParseStatus::Parsed,
+                    semantic_scholar: None,
                 },
                 abstract_text: Some("B".into()),
                 sections: vec![PaperSection {
@@ -1193,6 +1208,7 @@ mod tests {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            semantic_scholar: None,
         });
 
         let error = inspect_paper(&repo_config, &registry, &sample_parsed(), "Alpha SLAM")
@@ -1235,6 +1251,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
             },
             abstract_text: None,
             sections: vec![],
@@ -1285,11 +1302,13 @@ mod tests {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 parse_status: ParseStatus::Parsed,
+                semantic_scholar: None,
                 has_local_tex: true,
                 ..registry[0].clone()
             },

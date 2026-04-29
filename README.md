@@ -7,6 +7,7 @@
 - parsing TeX sources into structured paper records
 - materializing KG-friendly Markdown corpora
 - exporting to multiple graph adapters, including graphify-oriented corpora and optional Neo4j bundles
+- enriching registries with Semantic Scholar metadata through the official REST API
 - inspecting local corpora with search, stats, and per-paper drill-down commands
 - validating benchmark catalogs, inspecting benchmark integration readiness, running benchmark adapters, and composing benchmark-driven auto research targets
 
@@ -45,6 +46,8 @@ cargo run -p litkg-cli -- sync-registry --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- download --config examples/prml-vslam.toml --download-pdfs
 cargo run -p litkg-cli -- parse --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- materialize --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- enrich-semantic-scholar --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- semantic-scholar-search --config examples/prml-vslam.toml --query '"next best view" + reconstruction'
 cargo run -p litkg-cli -- rebuild-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- inspect-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- stats --config examples/prml-vslam.toml
@@ -79,7 +82,29 @@ make lint-check
 make ci
 make litkg-sync
 make litkg-pipeline LITKG_CONFIG=examples/prml-vslam.toml LITKG_PIPELINE_ARGS="--download-pdfs"
+make litkg-semantic-enrich LITKG_CONFIG=examples/prml-vslam.toml
+make litkg-semantic-search LITKG_CONFIG=examples/prml-vslam.toml SEMANTIC_QUERY='"next best view" + reconstruction'
 ```
+
+## Semantic Scholar
+
+`litkg-rs` uses the official Semantic Scholar REST APIs directly:
+
+- Academic Graph: `https://api.semanticscholar.org/graph/v1`
+- Recommendations: `https://api.semanticscholar.org/recommendations/v1`
+
+Set `SEMANTIC_SCHOLAR_API_KEY` for authenticated requests. The key is read from the environment, passed as `x-api-key`, and never stored in config files. The default throttle is 1.05 seconds between requests.
+
+Useful commands:
+
+```bash
+cargo run -p litkg-cli -- enrich-semantic-scholar --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- semantic-scholar-paper --paper ARXIV:2106.15928 --format json
+cargo run -p litkg-cli -- semantic-scholar-search --query '"next best view" + reconstruction' --limit 10
+cargo run -p litkg-cli -- semantic-scholar-recommend --positive <paperId> --limit 25
+```
+
+Registry enrichment uses `/graph/v1/paper/batch` with local DOI/arXiv identifiers, attaches the returned compact paper metadata to each registry row, and preserves local BibTeX/manifest titles as the primary source of truth. Graphify materialization and Neo4j export include Semantic Scholar paper IDs, authors, fields of study, external IDs, and citation-count properties when present.
 
 ## Local KG Runtime
 

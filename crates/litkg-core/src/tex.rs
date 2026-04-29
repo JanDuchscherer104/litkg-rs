@@ -401,6 +401,7 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+            semantic_scholar: None,
         }
     }
 
@@ -419,6 +420,7 @@ mod tests {
             graphify_rebuild_command: None,
             download_pdfs: true,
             relevance_tags: vec![],
+            semantic_scholar: None,
         }
     }
 

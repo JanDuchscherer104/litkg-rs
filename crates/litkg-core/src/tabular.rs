@@ -799,6 +799,7 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                semantic_scholar: None,
             },
             abstract_text: Some("A practical abstract.".to_string()),
             sections: vec![PaperSection {

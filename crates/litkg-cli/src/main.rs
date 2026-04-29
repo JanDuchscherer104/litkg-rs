@@ -2,14 +2,15 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litkg_core::{
     build_registry_snapshot, compute_corpus_stats, download_registry_sources,
-    inspect_benchmark_support, inspect_paper, load_parsed_papers, load_registry,
-    parse_registry_papers, promote_benchmark_results, render_promoted_targets, run_benchmarks,
-    search_papers, sync_registry, validate_benchmark_catalog, validate_benchmark_results,
-    write_benchmark_results, write_parsed_papers, AutoResearchRenderFormat,
-    BenchmarkPromotionRequest, BenchmarkResults, BenchmarkSupportStatus, CorpusStats,
-    DownloadOptions, MetricThresholdComparison, MetricThresholdRule, PaperInspection,
-    PaperSourceRecord, ParsedPaper, PromotionComponentSelection, RepoConfig, SearchResults,
-    SinkMode,
+    enrich_registry_with_semantic_scholar, inspect_benchmark_support, inspect_paper,
+    load_parsed_papers, load_registry, parse_registry_papers, promote_benchmark_results,
+    render_promoted_targets, run_benchmarks, search_papers, sync_registry,
+    validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
+    write_parsed_papers, AutoResearchRenderFormat, BenchmarkPromotionRequest, BenchmarkResults,
+    BenchmarkSupportStatus, CorpusStats, DownloadOptions, MetricThresholdComparison,
+    MetricThresholdRule, PaperInspection, PaperSourceRecord, ParsedPaper,
+    PromotionComponentSelection, RepoConfig, SearchResults, SemanticScholarClient,
+    SemanticScholarConfig, SemanticScholarPaper, SemanticScholarSearchRequest, SinkMode,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
@@ -39,6 +40,10 @@ enum Commands {
     Stats(StatsCommand),
     Search(SearchCommand),
     ShowPaper(ShowPaperCommand),
+    EnrichSemanticScholar(SemanticScholarEnrichCommand),
+    SemanticScholarSearch(SemanticScholarSearchCommand),
+    SemanticScholarPaper(SemanticScholarPaperCommand),
+    SemanticScholarRecommend(SemanticScholarRecommendCommand),
     ValidateBenchmarks(BenchmarkCatalogArg),
     BenchmarkSupport(BenchmarkSupportCommand),
     RunBenchmarks(BenchmarkRunCommand),
@@ -95,6 +100,72 @@ struct ShowPaperCommand {
     config: ConfigArg,
     #[arg(long = "paper")]
     paper_selector: String,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct SemanticScholarEnrichCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct SemanticScholarSearchCommand {
+    #[arg(long)]
+    config: Option<String>,
+    #[arg(long)]
+    query: String,
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    #[arg(long)]
+    year: Option<String>,
+    #[arg(long = "publication-date-or-year")]
+    publication_date_or_year: Option<String>,
+    #[arg(long = "field-of-study")]
+    fields_of_study: Vec<String>,
+    #[arg(long)]
+    venue: Vec<String>,
+    #[arg(long)]
+    sort: Option<String>,
+    #[arg(long = "min-citation-count")]
+    min_citation_count: Option<u64>,
+    #[arg(long = "open-access-pdf")]
+    open_access_pdf: Option<bool>,
+    #[arg(long = "field")]
+    fields: Vec<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct SemanticScholarPaperCommand {
+    #[arg(long)]
+    config: Option<String>,
+    #[arg(long = "paper")]
+    paper_id: String,
+    #[arg(long = "field")]
+    fields: Vec<String>,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct SemanticScholarRecommendCommand {
+    #[arg(long)]
+    config: Option<String>,
+    #[arg(long = "positive")]
+    positive_paper_ids: Vec<String>,
+    #[arg(long = "negative")]
+    negative_paper_ids: Vec<String>,
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+    #[arg(long = "field")]
+    fields: Vec<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
 }
@@ -371,6 +442,83 @@ fn main() -> Result<()> {
             let inspection = inspect_paper(&config, &registry, &papers, &args.paper_selector)?;
             print_structured_output(&inspection, args.format, render_paper_inspection)?;
         }
+        Commands::EnrichSemanticScholar(args) => {
+            let config = RepoConfig::load(&args.config.config)?;
+            let registry = if config.registry_path().exists() {
+                load_registry(config.registry_path())?
+            } else {
+                sync_registry(&config)?
+            };
+            let updated = enrich_registry_with_semantic_scholar(&config, &registry)?;
+            let enriched_count = updated
+                .iter()
+                .filter(|record| record.semantic_scholar.is_some())
+                .count();
+            if !args.dry_run {
+                litkg_core::write_registry(&config.registry_path(), &updated)?;
+            }
+            match args.format {
+                OutputFormat::Text => {
+                    let action = if args.dry_run {
+                        "Would enrich"
+                    } else {
+                        "Enriched"
+                    };
+                    println!(
+                        "{action} {enriched_count} of {} registry records with Semantic Scholar metadata",
+                        updated.len()
+                    );
+                }
+                OutputFormat::Json => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "records": updated.len(),
+                        "enriched": enriched_count,
+                        "dry_run": args.dry_run,
+                        "registry_path": config.registry_path(),
+                    }))?
+                ),
+            }
+        }
+        Commands::SemanticScholarSearch(args) => {
+            let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
+            let fields = semantic_fields(&semantic_config, &args.fields);
+            let mut client = SemanticScholarClient::from_config(semantic_config)?;
+            let mut request = SemanticScholarSearchRequest::new(args.query, args.limit, fields);
+            request.year = args.year;
+            request.publication_date_or_year = args.publication_date_or_year;
+            request.fields_of_study = args.fields_of_study;
+            request.venue = args.venue;
+            request.sort = args.sort;
+            request.min_citation_count = args.min_citation_count;
+            request.open_access_pdf = args.open_access_pdf;
+            let papers = client.search_papers(&request)?;
+            print_structured_output(&papers, args.format, render_semantic_scholar_papers)?;
+        }
+        Commands::SemanticScholarPaper(args) => {
+            let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
+            let fields = semantic_fields(&semantic_config, &args.fields);
+            let mut client = SemanticScholarClient::from_config(semantic_config)?;
+            let paper = client.get_paper(&args.paper_id, &fields)?;
+            print_structured_output(&paper, args.format, render_semantic_scholar_paper)?;
+        }
+        Commands::SemanticScholarRecommend(args) => {
+            if args.positive_paper_ids.is_empty() {
+                anyhow::bail!(
+                    "semantic-scholar-recommend requires at least one --positive paper id"
+                );
+            }
+            let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
+            let fields = semantic_fields(&semantic_config, &args.fields);
+            let mut client = SemanticScholarClient::from_config(semantic_config)?;
+            let papers = client.recommend_papers(
+                &args.positive_paper_ids,
+                &args.negative_paper_ids,
+                args.limit,
+                &fields,
+            )?;
+            print_structured_output(&papers, args.format, render_semantic_scholar_papers)?;
+        }
         Commands::ValidateBenchmarks(args) => {
             let catalog = litkg_core::load_benchmark_catalog(&args.catalog.path)?;
             let mut summary = validate_benchmark_catalog(&catalog)?;
@@ -592,6 +740,30 @@ fn load_registry_or_sync(
     }
 }
 
+fn load_semantic_scholar_config(config_path: Option<&str>) -> Result<SemanticScholarConfig> {
+    Ok(match config_path {
+        Some(path) => RepoConfig::load(path)?.semantic_scholar_config(),
+        None => SemanticScholarConfig::default(),
+    })
+}
+
+fn semantic_fields(config: &SemanticScholarConfig, cli_fields: &[String]) -> Vec<String> {
+    let expanded_cli_fields = cli_fields
+        .iter()
+        .flat_map(|field| field.split(','))
+        .map(str::trim)
+        .filter(|field| !field.is_empty())
+        .map(String::from)
+        .collect::<Vec<_>>();
+    if !expanded_cli_fields.is_empty() {
+        expanded_cli_fields
+    } else if !config.fields.is_empty() {
+        config.fields.clone()
+    } else {
+        litkg_core::default_semantic_scholar_fields()
+    }
+}
+
 fn print_structured_output<T>(
     value: &T,
     format: OutputFormat,
@@ -605,6 +777,81 @@ where
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
     }
     Ok(())
+}
+
+fn render_semantic_scholar_papers(papers: &Vec<SemanticScholarPaper>) -> String {
+    if papers.is_empty() {
+        return "No Semantic Scholar papers returned.".into();
+    }
+    papers
+        .iter()
+        .enumerate()
+        .map(|(index, paper)| {
+            format!(
+                "{}. {} ({})\n   year: {} | citations: {} | venue: {}\n   authors: {}",
+                index + 1,
+                paper.title.as_deref().unwrap_or("untitled"),
+                paper.paper_id.as_deref().unwrap_or("no paperId"),
+                paper
+                    .year
+                    .map(|year| year.to_string())
+                    .unwrap_or_else(|| "n/a".into()),
+                paper
+                    .citation_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "n/a".into()),
+                paper.venue.as_deref().unwrap_or("n/a"),
+                render_semantic_authors(&paper.authors),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn render_semantic_scholar_paper(paper: &SemanticScholarPaper) -> String {
+    let mut lines = vec![
+        format!(
+            "{} ({})",
+            paper.title.as_deref().unwrap_or("untitled"),
+            paper.paper_id.as_deref().unwrap_or("no paperId")
+        ),
+        format!(
+            "year: {} | citations: {} | references: {}",
+            paper
+                .year
+                .map(|year| year.to_string())
+                .unwrap_or_else(|| "n/a".into()),
+            paper
+                .citation_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "n/a".into()),
+            paper
+                .reference_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "n/a".into()),
+        ),
+        format!("venue: {}", paper.venue.as_deref().unwrap_or("n/a")),
+        format!("authors: {}", render_semantic_authors(&paper.authors)),
+    ];
+    if let Some(tldr) = paper.tldr.as_ref().and_then(|tldr| tldr.text.as_deref()) {
+        lines.push(format!("tldr: {tldr}"));
+    }
+    if let Some(abstract_text) = &paper.abstract_text {
+        lines.push(format!("abstract: {abstract_text}"));
+    }
+    lines.join("\n")
+}
+
+fn render_semantic_authors(authors: &[litkg_core::SemanticScholarAuthor]) -> String {
+    if authors.is_empty() {
+        "n/a".into()
+    } else {
+        authors
+            .iter()
+            .map(|author| author.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn render_stats(stats: &CorpusStats) -> String {
@@ -860,7 +1107,11 @@ fn render_count_map(counts: &BTreeMap<String, usize>) -> Vec<String> {
 }
 
 fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
+    if value {
+        "yes"
+    } else {
+        "no"
+    }
 }
 
 fn parse_component_selection(raw: &str) -> Result<PromotionComponentSelection> {

@@ -16,7 +16,7 @@ This repository owns a repo-independent Rust toolkit for downloading research li
 
 ## Repo Map
 
-- `crates/litkg-core`: core models, config, registry merge, downloader, TeX parser, and materializer.
+- `crates/litkg-core`: core models, config, registry merge, downloader, Semantic Scholar REST enrichment, TeX parser, and materializer.
 - `crates/litkg-cli`: CLI entrypoint.
 - `crates/litkg-graphify`: graphify adapter/materializer.
 - `crates/litkg-neo4j`: optional Neo4j export adapter.
@@ -29,6 +29,7 @@ This repository owns a repo-independent Rust toolkit for downloading research li
 - Prefer deterministic outputs. Generated Markdown, registry JSONL, and export bundles should be stable under repeated runs.
 - Do not widen the core model for one client repo unless the field is generally useful across consumers.
 - Keep graphify as a file-output adapter and Neo4j as an optional export adapter. Do not make one adapter leak assumptions into the other.
+- Keep Semantic Scholar integration REST-native by default; treat Ai2 Asta MCP as optional and requiring separate key verification.
 - Use `.agents/skills/code-review-litkg-rs/SKILL.md` as the default workflow for working-tree review, pull-request review, and candidate autoresearch winner review before promoting substantial changes.
 - Before making a commit, run `cargo fmt`, `cargo test`, and `make agents-db`.
 - Treat Apple Silicon macOS as a first-class optimization target for local UX, performance, and packaging decisions.
