@@ -1,9 +1,9 @@
+pub mod harness;
 pub mod id;
 pub mod merge;
 pub mod ontology;
 pub mod provenance;
 pub mod record;
-pub mod harness;
 
 pub use id::StableId;
 pub use merge::{Conflict, ConflictKind, MergeDecision, MergeReason};

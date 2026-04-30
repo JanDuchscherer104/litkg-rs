@@ -51,7 +51,12 @@ pub fn ingest_configured_sources(config: &RepoConfig) -> Result<Vec<ParsedPaper>
         .unwrap_or_else(|| PathBuf::from("."));
 
     for (name, source) in &config.sources {
-        if name == "literature" || name == "python" || name == "external_docs" || name == "web" || name == "typst" {
+        if name == "literature"
+            || name == "python"
+            || name == "external_docs"
+            || name == "web"
+            || name == "typst"
+        {
             continue; // Handled by other logic or planned
         }
 
@@ -72,7 +77,7 @@ pub fn ingest_configured_sources(config: &RepoConfig) -> Result<Vec<ParsedPaper>
                 if !entry.is_file() {
                     continue;
                 }
-                
+
                 let is_excluded = source.exclude.iter().any(|ex| {
                     let ex_pattern = project_root.join(ex);
                     if let Ok(mut ex_paths) = glob::glob(ex_pattern.to_str().unwrap_or_default()) {

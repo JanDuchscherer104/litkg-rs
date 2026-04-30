@@ -32,7 +32,7 @@ pub struct RepoConfig {
     pub relevance_tags: Vec<String>,
     #[serde(default)]
     pub semantic_scholar: Option<SemanticScholarConfig>,
-    
+
     // New sections from expanded toml
     #[serde(default)]
     pub project: Option<ProjectConfig>,

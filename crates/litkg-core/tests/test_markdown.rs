@@ -1,5 +1,5 @@
 use litkg_core::markdown::parse_markdown_document;
-use litkg_core::model::{DocumentKind, SourceKind, ParseStatus};
+use litkg_core::model::{DocumentKind, ParseStatus, SourceKind};
 use std::fs;
 use tempfile::tempdir;
 
@@ -43,7 +43,7 @@ Details here @zhang2026vistaslam.
     assert_eq!(parsed.sections[0].title, "Introduction");
     assert_eq!(parsed.sections[1].title, "Core Mandates");
     assert_eq!(parsed.sections[1].level, 2);
-    
+
     assert!(parsed.citations.contains(&"zhang2026vistaslam".to_string()));
 }
 
@@ -68,11 +68,13 @@ The KG structure is a DAG.
     .unwrap();
 
     let parsed = parse_markdown_document(&file_path, None, DocumentKind::Transcript).unwrap();
-    
+
     assert_eq!(parsed.kind, DocumentKind::Transcript);
     assert_eq!(parsed.metadata.source_kind, SourceKind::Transcript);
-    
+
     let section = &parsed.sections[0];
-    assert!(section.content.contains("[Reasoning: I should explain the KG structure first.]"));
+    assert!(section
+        .content
+        .contains("[Reasoning: I should explain the KG structure first.]"));
     assert!(section.content.contains("The KG structure is a DAG."));
 }

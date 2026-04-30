@@ -1,7 +1,5 @@
 use litkg_core::schema::harness::GraphSnapshot;
-use litkg_core::{
-    CanonicalNode, NodeKind, Provenance, ProvenanceSpan, StableId,
-};
+use litkg_core::{CanonicalNode, NodeKind, Provenance, ProvenanceSpan, StableId};
 use serde_json::json;
 use std::collections::BTreeMap;
 

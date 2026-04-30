@@ -4,6 +4,7 @@ pub mod bibtex;
 pub mod config;
 pub mod download;
 pub mod enrich;
+pub mod identity;
 pub mod inspect;
 pub mod manifest;
 pub mod markdown;
@@ -36,6 +37,10 @@ pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarConfig, SinkMode};
 pub use download::{download_registry_sources, DownloadOptions};
 pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
+pub use identity::{
+    normalize_arxiv_id, normalize_author_name, normalize_doi, normalize_title, IdentityResolver,
+    ResolutionCandidate,
+};
 pub use inspect::{
     compute_corpus_stats, compute_repo_capabilities, inspect_paper, search_papers,
     BenchmarkCapability, CapabilityOptions, CapabilityState, CorpusStats, DownloadCapability,

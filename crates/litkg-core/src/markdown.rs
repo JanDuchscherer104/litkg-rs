@@ -1,6 +1,5 @@
 use crate::model::{
-    DocumentKind, PaperSection, PaperSourceRecord,
-    ParseStatus, ParsedPaper, SourceKind,
+    DocumentKind, PaperSection, PaperSourceRecord, ParseStatus, ParsedPaper, SourceKind,
 };
 use anyhow::{Context, Result};
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
@@ -28,16 +27,16 @@ pub fn parse_markdown_document(
 
     let (frontmatter, markdown_content) = parse_frontmatter(&content);
     let mut metadata = build_metadata(path, repo_root, &frontmatter, &default_kind);
-    
+
     let mut sections = Vec::new();
     let mut current_section_title = String::new();
     let mut current_section_content = String::new();
     let mut current_level = 0u8;
-    
+
     let mut citations = BTreeSet::new();
     let figures = Vec::new();
     let tables = Vec::new();
-    
+
     let parser = Parser::new(markdown_content);
     let mut in_heading = false;
     let mut in_blockquote = false;
@@ -75,16 +74,23 @@ pub fn parse_markdown_document(
                     current_section_title.push_str(&text);
                 } else {
                     let mut content_to_add = text.to_string();
-                    
-                    if content_to_add.contains("::: {.reasoning}") || content_to_add.contains("<reasoning>") {
+
+                    if content_to_add.contains("::: {.reasoning}")
+                        || content_to_add.contains("<reasoning>")
+                    {
                         in_reasoning = true;
                         continue; // Skip the marker itself
-                    } else if content_to_add.trim() == ":::" || content_to_add.contains("</reasoning>") {
+                    } else if content_to_add.trim() == ":::"
+                        || content_to_add.contains("</reasoning>")
+                    {
                         in_reasoning = false;
                         continue; // Skip the marker itself
                     }
 
-                    if in_blockquote && (content_to_add.to_lowercase().starts_with("reasoning:") || content_to_add.to_lowercase().starts_with("thought:")) {
+                    if in_blockquote
+                        && (content_to_add.to_lowercase().starts_with("reasoning:")
+                            || content_to_add.to_lowercase().starts_with("thought:"))
+                    {
                         in_reasoning = true;
                     }
 
@@ -120,7 +126,8 @@ pub fn parse_markdown_document(
 
     // If no title found in headers, use filename or frontmatter
     if metadata.title.is_empty() {
-        metadata.title = path.file_stem()
+        metadata.title = path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("Untitled")
             .to_string();
@@ -163,7 +170,7 @@ fn build_metadata(
     } else {
         frontmatter.authors.clone().unwrap_or_default()
     };
-    
+
     let kind = frontmatter.kind.as_ref().unwrap_or(default_kind);
     let source_kind = match kind {
         DocumentKind::Transcript => SourceKind::Transcript,
@@ -196,7 +203,7 @@ fn extract_citations_from_text(text: &str, citations: &mut BTreeSet<String>) {
     for cap in re.captures_iter(text) {
         let key = cap[1].to_string();
         if !key.chars().next().unwrap_or(' ').is_numeric() {
-             citations.insert(key);
+            citations.insert(key);
         }
     }
 }
