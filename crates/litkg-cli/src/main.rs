@@ -31,6 +31,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     SyncRegistry(ConfigArg),
+    IngestDocs(IngestDocsCommand),
+    IngestConfiguredSources(ConfigArg),
     Download(DownloadCommand),
     Parse(ConfigArg),
     Materialize(WriteCommand),
@@ -58,6 +60,35 @@ enum Commands {
 struct ConfigArg {
     #[arg(long)]
     config: String,
+}
+
+#[derive(Args, Clone)]
+struct IngestDocsCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    #[arg(long)]
+    dir: String,
+    #[arg(long, default_value_t = false)]
+    recursive: bool,
+    #[arg(long, value_enum, default_value_t = DocKindArg::Documentation)]
+    kind: DocKindArg,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum DocKindArg {
+    Documentation,
+    Transcript,
+    ResearchNote,
+}
+
+impl From<DocKindArg> for litkg_core::DocumentKind {
+    fn from(arg: DocKindArg) -> Self {
+        match arg {
+            DocKindArg::Documentation => litkg_core::DocumentKind::Documentation,
+            DocKindArg::Transcript => litkg_core::DocumentKind::Transcript,
+            DocKindArg::ResearchNote => litkg_core::DocumentKind::ResearchNote,
+        }
+    }
 }
 
 #[derive(Args, Clone)]
@@ -317,6 +348,24 @@ fn main() -> Result<()> {
                 "Synced {} registry records into {}",
                 registry.len(),
                 config.registry_path().display()
+            );
+        }
+        Commands::IngestDocs(args) => {
+            let config = RepoConfig::load(&args.config.config)?;
+            let docs = litkg_core::ingest_markdown_docs(
+                &config,
+                &PathBuf::from(&args.dir),
+                args.recursive,
+                args.kind.into(),
+            )?;
+            println!("Successfully ingested {} documents.", docs.len());
+        }
+        Commands::IngestConfiguredSources(args) => {
+            let config = RepoConfig::load(&args.config)?;
+            let docs = litkg_core::ingest_configured_sources(&config)?;
+            println!(
+                "Successfully ingested {} documents from configured sources.",
+                docs.len()
             );
         }
         Commands::Download(args) => {

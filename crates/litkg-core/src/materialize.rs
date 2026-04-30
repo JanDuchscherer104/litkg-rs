@@ -1,8 +1,108 @@
 use crate::config::RepoConfig;
-use crate::model::{MaterializedDoc, ParsedPaper};
+use crate::markdown::parse_markdown_document;
+use crate::model::{DocumentKind, MaterializedDoc, ParsedPaper};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+pub fn ingest_markdown_docs(
+    config: &RepoConfig,
+    dir: &Path,
+    recursive: bool,
+    default_kind: DocumentKind,
+) -> Result<Vec<ParsedPaper>> {
+    let mut parsed_papers = Vec::new();
+    let walker = if recursive {
+        WalkDir::new(dir)
+    } else {
+        WalkDir::new(dir).max_depth(1)
+    };
+
+    let repo_root = dir.parent();
+
+    for entry in walker.into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str());
+        if !matches!(ext, Some("md" | "qmd")) {
+            continue;
+        }
+
+        let parsed = parse_markdown_document(path, repo_root, default_kind)?;
+        parsed_papers.push(parsed);
+    }
+
+    if !parsed_papers.is_empty() {
+        write_parsed_papers(config.parsed_root(), &parsed_papers)?;
+    }
+
+    Ok(parsed_papers)
+}
+
+pub fn ingest_configured_sources(config: &RepoConfig) -> Result<Vec<ParsedPaper>> {
+    let mut all_parsed = Vec::new();
+    let project_root = config
+        .project
+        .as_ref()
+        .map(|p| p.root.clone())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    for (name, source) in &config.sources {
+        if name == "literature" || name == "python" || name == "external_docs" || name == "web" || name == "typst" {
+            continue; // Handled by other logic or planned
+        }
+
+        let kind = if name.contains("transcript") {
+            DocumentKind::Transcript
+        } else if name.contains("memory") || name.contains("guidance") {
+            DocumentKind::ResearchNote
+        } else {
+            DocumentKind::Documentation
+        };
+
+        for pattern in &source.include {
+            let full_pattern = project_root.join(pattern);
+            let paths = glob::glob(full_pattern.to_str().context("invalid glob pattern")?)
+                .with_context(|| format!("failed to expand glob {}", pattern))?;
+
+            for entry in paths.flatten() {
+                if !entry.is_file() {
+                    continue;
+                }
+                
+                let is_excluded = source.exclude.iter().any(|ex| {
+                    let ex_pattern = project_root.join(ex);
+                    if let Ok(mut ex_paths) = glob::glob(ex_pattern.to_str().unwrap_or_default()) {
+                        ex_paths.any(|p| p.ok().is_some_and(|p| p == entry))
+                    } else {
+                        false
+                    }
+                });
+
+                if is_excluded {
+                    continue;
+                }
+
+                let ext = entry.extension().and_then(|e| e.to_str());
+                if !matches!(ext, Some("md" | "qmd")) {
+                    continue;
+                }
+
+                let parsed = parse_markdown_document(&entry, Some(&project_root), kind)?;
+                all_parsed.push(parsed);
+            }
+        }
+    }
+
+    if !all_parsed.is_empty() {
+        write_parsed_papers(config.parsed_root(), &all_parsed)?;
+    }
+
+    Ok(all_parsed)
+}
 
 pub fn matched_relevance_tags(paper: &ParsedPaper, tags: &[String]) -> Vec<String> {
     let haystack = format!(

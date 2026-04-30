@@ -1,8 +1,8 @@
 use crate::bibtex::{parse_bibtex, BibEntry};
 use crate::config::RepoConfig;
 use crate::model::{
-    CitationReference, PaperFigure, PaperSection, PaperSourceRecord, PaperTable, ParseStatus,
-    ParsedPaper,
+    CitationReference, DocumentKind, PaperFigure, PaperSection, PaperSourceRecord, PaperTable,
+    ParseStatus, ParsedPaper,
 };
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -100,6 +100,7 @@ fn parse_paper_dir(record: &PaperSourceRecord, root_dir: &Path) -> Result<Parsed
     metadata.parse_status = ParseStatus::Parsed;
 
     Ok(ParsedPaper {
+        kind: DocumentKind::Literature,
         metadata,
         abstract_text,
         sections,
@@ -113,6 +114,7 @@ fn parse_paper_dir(record: &PaperSourceRecord, root_dir: &Path) -> Result<Parsed
 
 fn metadata_only_paper(record: &PaperSourceRecord) -> ParsedPaper {
     ParsedPaper {
+        kind: DocumentKind::Literature,
         metadata: record.clone(),
         abstract_text: None,
         sections: Vec::new(),

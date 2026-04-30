@@ -8,6 +8,16 @@ pub enum SourceKind {
     Manifest,
     Bib,
     ManifestAndBib,
+    Documentation,
+    Transcript,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DocumentKind {
+    Literature,
+    Documentation,
+    Transcript,
+    ResearchNote,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,6 +194,8 @@ pub struct CitationReference {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParsedPaper {
+    #[serde(default = "default_document_kind")]
+    pub kind: DocumentKind,
     pub metadata: PaperSourceRecord,
     pub abstract_text: Option<String>,
     pub sections: Vec<PaperSection>,
@@ -193,6 +205,10 @@ pub struct ParsedPaper {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub citation_references: Vec<CitationReference>,
     pub provenance: Vec<String>,
+}
+
+fn default_document_kind() -> DocumentKind {
+    DocumentKind::Literature
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

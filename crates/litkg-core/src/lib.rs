@@ -6,6 +6,7 @@ pub mod download;
 pub mod enrich;
 pub mod inspect;
 pub mod manifest;
+pub mod markdown;
 pub mod materialize;
 pub mod memory;
 pub mod model;
@@ -42,16 +43,17 @@ pub use inspect::{
     RuntimeCheck, SearchHit, SearchResults, SectionHeading, SemanticScholarCapability,
 };
 pub use manifest::{load_manifest, ManifestEntry};
+pub use markdown::parse_markdown_document;
 pub use materialize::{
-    emit_markdown, load_parsed_papers, matched_relevance_tags, write_materialized_doc,
-    write_parsed_papers,
+    emit_markdown, ingest_configured_sources, ingest_markdown_docs, load_parsed_papers,
+    matched_relevance_tags, write_materialized_doc, write_parsed_papers,
 };
 pub use memory::{
     load_project_memory, MemoryChunkKind, MemoryImportBundle, MemoryNode, MemoryNodeKind,
     MemoryRelation, MemoryRelationType, MemorySurface, MemorySurfaceKind,
 };
 pub use model::{
-    CitationReference, DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind,
+    CitationReference, DocumentKind, DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind,
     NotebookDocument, PaperFigure, PaperSection, PaperSourceRecord, PaperTable, ParseStatus,
     ParsedPaper, ResearchMetadata, ResearchPaper, SemanticScholarAuthor,
     SemanticScholarFieldOfStudy, SemanticScholarOpenAccessPdf, SemanticScholarPaper,
