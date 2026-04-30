@@ -1,213 +1,204 @@
-use crate::config::SemanticScholarConfig;
-use crate::model::SemanticScholarPaper;
-use crate::{PaperSourceRecord, RepoConfig};
-use anyhow::{bail, Result};
+use crate::config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarConfig};
+use crate::model::{PaperSourceRecord, SemanticScholarAuthor, SemanticScholarPaper};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::env;
+use std::thread;
+use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SemanticScholarMethod {
-    Batch,
+const GRAPH_BASE: &str = "https://api.semanticscholar.org/graph/v1";
+const RECOMMENDATIONS_BASE: &str = "https://api.semanticscholar.org/recommendations/v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SemanticScholarService {
+    Graph,
     Recommendations,
-    Search,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticScholarBatchResponse {
-    #[serde(default)]
-    pub papers: Vec<Option<SemanticScholarPaper>>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticScholarMethod {
+    Get,
+    Post,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticScholarRecommendationResponse {
-    #[serde(default)]
-    pub recommended_papers: Vec<SemanticScholarPaper>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticScholarRequest {
+    method: SemanticScholarMethod,
+    service: SemanticScholarService,
+    path: String,
+    params: Vec<(String, String)>,
+    body: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticScholarSearchRequest {
-    pub query: String,
-    #[serde(default)]
-    pub fields: Vec<String>,
-    pub limit: Option<usize>,
-    pub year: Option<String>,
-    pub publication_date_or_year: Option<String>,
-    #[serde(default)]
-    pub fields_of_study: Vec<String>,
-    #[serde(default)]
-    pub venue: Vec<String>,
-    pub sort: Option<String>,
-    pub min_citation_count: Option<u64>,
-    pub open_access_pdf: Option<bool>,
-}
-
-impl SemanticScholarSearchRequest {
-    pub fn new(query: String, limit: usize, fields: Vec<String>) -> Self {
-        Self {
-            query,
-            fields,
-            limit: Some(limit),
-            year: None,
-            publication_date_or_year: None,
-            fields_of_study: Vec::new(),
-            venue: Vec::new(),
-            sort: None,
-            min_citation_count: None,
-            open_access_pdf: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticScholarSearchResponse {
-    pub total: Option<u64>,
-    pub offset: Option<u64>,
-    #[serde(default)]
-    pub data: Vec<SemanticScholarPaper>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticScholarHttpResponse {
+    pub status: u16,
+    pub retry_after_s: Option<f64>,
+    pub body: Value,
 }
 
 pub trait SemanticScholarTransport {
-    fn get_json(&self, path: &str, api_key: Option<&str>) -> Result<Value>;
-    fn post_json(&self, path: &str, body: &Value, api_key: Option<&str>) -> Result<Value>;
+    fn request(&mut self, request: &SemanticScholarRequest) -> Result<SemanticScholarHttpResponse>;
 }
 
-#[derive(Debug, Clone)]
 pub struct UreqSemanticScholarTransport {
-    pub base_url: String,
+    agent: ureq::Agent,
+    graph_base: String,
+    recommendations_base: String,
+    api_key: Option<String>,
 }
 
-impl Default for UreqSemanticScholarTransport {
-    fn default() -> Self {
-        Self {
-            base_url: "https://api.semanticscholar.org/graph/v1".to_string(),
-        }
+impl UreqSemanticScholarTransport {
+    pub fn from_config(config: &SemanticScholarConfig) -> Result<Self> {
+        let agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
+            .into();
+        Ok(Self {
+            agent,
+            graph_base: GRAPH_BASE.into(),
+            recommendations_base: RECOMMENDATIONS_BASE.into(),
+            api_key: env::var(&config.api_key_env)
+                .ok()
+                .filter(|key| !key.is_empty()),
+        })
+    }
+
+    fn url(&self, service: SemanticScholarService, path: &str) -> String {
+        let base = match service {
+            SemanticScholarService::Graph => &self.graph_base,
+            SemanticScholarService::Recommendations => &self.recommendations_base,
+        };
+        format!("{}{}", base.trim_end_matches('/'), path)
     }
 }
 
 impl SemanticScholarTransport for UreqSemanticScholarTransport {
-    fn get_json(&self, _path: &str, _api_key: Option<&str>) -> Result<Value> {
-        bail!("Semantic Scholar HTTP transport is not wired yet")
-    }
-
-    fn post_json(&self, _path: &str, _body: &Value, _api_key: Option<&str>) -> Result<Value> {
-        bail!("Semantic Scholar HTTP transport is not wired yet")
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SemanticScholarClient<T = UreqSemanticScholarTransport> {
-    config: SemanticScholarConfig,
-    transport: T,
-    api_key: Option<String>,
-}
-
-impl SemanticScholarClient<UreqSemanticScholarTransport> {
-    pub fn from_config(config: SemanticScholarConfig) -> Result<Self> {
-        let api_key = env::var(&config.api_key_env)
-            .ok()
-            .filter(|value| !value.is_empty());
-        Ok(Self {
-            config,
-            transport: UreqSemanticScholarTransport::default(),
-            api_key,
+    fn request(&mut self, request: &SemanticScholarRequest) -> Result<SemanticScholarHttpResponse> {
+        let url = self.url(request.service, &request.path);
+        let mut response = match (&request.method, &request.body) {
+            (SemanticScholarMethod::Get, _) => {
+                let mut builder = self.agent.get(&url);
+                for (key, value) in &request.params {
+                    builder = builder.query(key, value);
+                }
+                if let Some(api_key) = &self.api_key {
+                    builder = builder.header("x-api-key", api_key);
+                }
+                builder.call()
+            }
+            (SemanticScholarMethod::Post, body) => {
+                let mut builder = self.agent.post(&url);
+                for (key, value) in &request.params {
+                    builder = builder.query(key, value);
+                }
+                if let Some(api_key) = &self.api_key {
+                    builder = builder.header("x-api-key", api_key);
+                }
+                match body {
+                    Some(body) => builder.send_json(body),
+                    None => builder.send_empty(),
+                }
+            }
+        }
+        .with_context(|| format!("Semantic Scholar request failed for {url}"))?;
+        let retry_after_s = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<f64>().ok());
+        let status = response.status().as_u16();
+        let body = response
+            .body_mut()
+            .read_json::<Value>()
+            .unwrap_or(Value::Null);
+        Ok(SemanticScholarHttpResponse {
+            status,
+            retry_after_s,
+            body,
         })
     }
 }
 
-impl<T> SemanticScholarClient<T>
-where
-    T: SemanticScholarTransport,
-{
-    pub fn new(config: SemanticScholarConfig, transport: T, api_key: Option<String>) -> Self {
+pub struct SemanticScholarClient<T: SemanticScholarTransport = UreqSemanticScholarTransport> {
+    config: SemanticScholarConfig,
+    transport: T,
+    last_request_at: Option<Instant>,
+}
+
+impl SemanticScholarClient<UreqSemanticScholarTransport> {
+    pub fn from_config(config: SemanticScholarConfig) -> Result<Self> {
+        let transport = UreqSemanticScholarTransport::from_config(&config)?;
+        Ok(Self::with_transport(config, transport))
+    }
+}
+
+impl<T: SemanticScholarTransport> SemanticScholarClient<T> {
+    pub fn with_transport(config: SemanticScholarConfig, transport: T) -> Self {
         Self {
             config,
             transport,
-            api_key,
+            last_request_at: None,
         }
     }
 
-    pub fn batch_papers(&self, identifiers: &[String]) -> Result<SemanticScholarBatchResponse> {
-        if identifiers.is_empty() {
-            return Ok(SemanticScholarBatchResponse::default());
-        }
-        let body = serde_json::json!({ "ids": identifiers });
-        let fields = self.config.fields.join(",");
-        let value = self.transport.post_json(
-            &format!("/paper/batch?fields={fields}"),
-            &body,
-            self.api_key.as_deref(),
-        )?;
-        let papers: Vec<Option<SemanticScholarPaper>> = serde_json::from_value(value)?;
-        Ok(SemanticScholarBatchResponse { papers })
+    pub fn get_paper(&mut self, paper_id: &str, fields: &[String]) -> Result<SemanticScholarPaper> {
+        self.request_json(SemanticScholarRequest {
+            method: SemanticScholarMethod::Get,
+            service: SemanticScholarService::Graph,
+            path: format!("/paper/{}", encode_path_segment(paper_id)),
+            params: vec![("fields".into(), fields_csv(fields))],
+            body: None,
+        })
+    }
+
+    pub fn get_papers_batch(
+        &mut self,
+        paper_ids: &[String],
+        fields: &[String],
+    ) -> Result<Vec<Option<SemanticScholarPaper>>> {
+        self.request_json(SemanticScholarRequest {
+            method: SemanticScholarMethod::Post,
+            service: SemanticScholarService::Graph,
+            path: "/paper/batch".into(),
+            params: vec![("fields".into(), fields_csv(fields))],
+            body: Some(serde_json::json!({ "ids": paper_ids })),
+        })
     }
 
     pub fn search_papers(
         &mut self,
         request: &SemanticScholarSearchRequest,
     ) -> Result<Vec<SemanticScholarPaper>> {
-        if request.query.trim().is_empty() {
-            bail!("Semantic Scholar search query must not be empty");
+        let mut out = Vec::new();
+        let limit = request.limit.max(1);
+        let mut token = request.token.clone();
+        while out.len() < limit {
+            let mut params = request.params();
+            if let Some(next_token) = &token {
+                params.push(("token".into(), next_token.clone()));
+            }
+            let page: SemanticScholarSearchResponse =
+                self.request_json(SemanticScholarRequest {
+                    method: SemanticScholarMethod::Get,
+                    service: SemanticScholarService::Graph,
+                    path: "/paper/search/bulk".into(),
+                    params,
+                    body: None,
+                })?;
+            if page.data.is_empty() {
+                break;
+            }
+            out.extend(page.data);
+            token = page.token;
+            if token.is_none() {
+                break;
+            }
         }
-        let fields = request.fields.join(",");
-        let mut query = vec![
-            ("query", request.query.as_str()),
-            ("fields", fields.as_str()),
-        ];
-        let limit = request.limit.map(|value| value.to_string());
-        if let Some(limit) = limit.as_deref() {
-            query.push(("limit", limit));
-        }
-        if let Some(year) = request.year.as_deref() {
-            query.push(("year", year));
-        }
-        if let Some(publication_date_or_year) = request.publication_date_or_year.as_deref() {
-            query.push(("publicationDateOrYear", publication_date_or_year));
-        }
-        let fields_of_study = request.fields_of_study.join(",");
-        if !fields_of_study.is_empty() {
-            query.push(("fieldsOfStudy", fields_of_study.as_str()));
-        }
-        let venue = request.venue.join(",");
-        if !venue.is_empty() {
-            query.push(("venue", venue.as_str()));
-        }
-        if let Some(sort) = request.sort.as_deref() {
-            query.push(("sort", sort));
-        }
-        let min_citation_count = request.min_citation_count.map(|value| value.to_string());
-        if let Some(min_citation_count) = min_citation_count.as_deref() {
-            query.push(("minCitationCount", min_citation_count));
-        }
-        let open_access_pdf = request.open_access_pdf.map(|value| value.to_string());
-        if let Some(open_access_pdf) = open_access_pdf.as_deref() {
-            query.push(("openAccessPdf", open_access_pdf));
-        }
-        let value = self.transport.get_json(
-            &format!("/paper/search?{}", encode_query(&query)),
-            self.api_key.as_deref(),
-        )?;
-        let response: SemanticScholarSearchResponse = serde_json::from_value(value)?;
-        Ok(response.data)
-    }
-
-    pub fn get_paper(&mut self, paper_id: &str, fields: &[String]) -> Result<SemanticScholarPaper> {
-        if paper_id.trim().is_empty() {
-            bail!("Semantic Scholar paper id must not be empty");
-        }
-        let path = format!(
-            "/paper/{}?fields={}",
-            percent_encode(paper_id),
-            percent_encode(&fields.join(","))
-        );
-        let value = self.transport.get_json(&path, self.api_key.as_deref())?;
-        Ok(serde_json::from_value(value)?)
+        out.truncate(limit);
+        Ok(out)
     }
 
     pub fn recommend_papers(
@@ -217,48 +208,304 @@ where
         limit: usize,
         fields: &[String],
     ) -> Result<Vec<SemanticScholarPaper>> {
-        if positive_paper_ids.is_empty() {
-            bail!("Semantic Scholar recommendations require at least one positive paper id");
-        }
-        let body = serde_json::json!({
-            "positivePaperIds": positive_paper_ids,
-            "negativePaperIds": negative_paper_ids,
-        });
-        let path = format!(
-            "/recommendations/v1/papers?limit={}&fields={}",
-            limit,
-            percent_encode(&fields.join(","))
-        );
-        let value = self
-            .transport
-            .post_json(&path, &body, self.api_key.as_deref())?;
-        let response: SemanticScholarRecommendationResponse = serde_json::from_value(value)?;
+        let response: SemanticScholarRecommendationResponse =
+            self.request_json(SemanticScholarRequest {
+                method: SemanticScholarMethod::Post,
+                service: SemanticScholarService::Recommendations,
+                path: "/papers".into(),
+                params: vec![
+                    ("fields".into(), fields_csv(fields)),
+                    ("limit".into(), limit.max(1).to_string()),
+                ],
+                body: Some(serde_json::json!({
+                    "positivePaperIds": positive_paper_ids,
+                    "negativePaperIds": negative_paper_ids,
+                })),
+            })?;
         Ok(response.recommended_papers)
+    }
+
+    pub fn get_authors_batch(
+        &mut self,
+        author_ids: &[String],
+        fields: &[String],
+    ) -> Result<Vec<Option<SemanticScholarAuthor>>> {
+        self.request_json(SemanticScholarRequest {
+            method: SemanticScholarMethod::Post,
+            service: SemanticScholarService::Graph,
+            path: "/author/batch".into(),
+            params: vec![("fields".into(), fields_csv(fields))],
+            body: Some(serde_json::json!({ "ids": author_ids })),
+        })
+    }
+
+    pub fn get_citations(
+        &mut self,
+        paper_id: &str,
+        limit: usize,
+        fields: &[String],
+    ) -> Result<Vec<SemanticScholarPaper>> {
+        let page: SemanticScholarCitationPage = self.request_json(SemanticScholarRequest {
+            method: SemanticScholarMethod::Get,
+            service: SemanticScholarService::Graph,
+            path: format!("/paper/{}/citations", encode_path_segment(paper_id)),
+            params: vec![
+                ("fields".into(), fields_csv(fields)),
+                ("limit".into(), limit.max(1).to_string()),
+            ],
+            body: None,
+        })?;
+        Ok(page
+            .data
+            .into_iter()
+            .filter_map(|entry| entry.citing_paper)
+            .collect())
+    }
+
+    pub fn get_references(
+        &mut self,
+        paper_id: &str,
+        limit: usize,
+        fields: &[String],
+    ) -> Result<Vec<SemanticScholarPaper>> {
+        let page: SemanticScholarReferencePage = self.request_json(SemanticScholarRequest {
+            method: SemanticScholarMethod::Get,
+            service: SemanticScholarService::Graph,
+            path: format!("/paper/{}/references", encode_path_segment(paper_id)),
+            params: vec![
+                ("fields".into(), fields_csv(fields)),
+                ("limit".into(), limit.max(1).to_string()),
+            ],
+            body: None,
+        })?;
+        Ok(page
+            .data
+            .into_iter()
+            .filter_map(|entry| entry.cited_paper)
+            .collect())
+    }
+
+    fn request_json<R>(&mut self, request: SemanticScholarRequest) -> Result<R>
+    where
+        R: for<'de> Deserialize<'de>,
+    {
+        for attempt in 0..=self.config.max_retries {
+            self.throttle();
+            let response = self.transport.request(&request)?;
+            self.last_request_at = Some(Instant::now());
+            if response.status == 429 || (500..600).contains(&response.status) {
+                if attempt >= self.config.max_retries {
+                    return Err(anyhow!(
+                        "Semantic Scholar returned HTTP {} after {} attempt(s)",
+                        response.status,
+                        attempt + 1
+                    ));
+                }
+                let backoff_s = response
+                    .retry_after_s
+                    .unwrap_or_else(|| 2_f64.powi(attempt as i32).min(16.0));
+                if backoff_s > 0.0 {
+                    thread::sleep(Duration::from_secs_f64(backoff_s));
+                }
+                continue;
+            }
+            if !(200..300).contains(&response.status) {
+                return Err(anyhow!(
+                    "Semantic Scholar returned HTTP {} with body {}",
+                    response.status,
+                    response.body
+                ));
+            }
+            return serde_json::from_value(response.body)
+                .context("Failed to parse Semantic Scholar response");
+        }
+        unreachable!("retry loop always returns")
+    }
+
+    fn throttle(&self) {
+        let Some(last_request_at) = self.last_request_at else {
+            return;
+        };
+        let min_interval_s = self.config.min_interval_s.max(0.0);
+        let elapsed = last_request_at.elapsed().as_secs_f64();
+        if elapsed < min_interval_s {
+            thread::sleep(Duration::from_secs_f64(min_interval_s - elapsed));
+        }
     }
 }
 
-fn encode_query(params: &[(&str, &str)]) -> String {
-    params
-        .iter()
-        .filter(|(_, value)| !value.is_empty())
-        .map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value)))
-        .collect::<Vec<_>>()
-        .join("&")
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticScholarSearchRequest {
+    pub query: String,
+    pub limit: usize,
+    #[serde(default = "default_search_fields")]
+    pub fields: Vec<String>,
+    #[serde(default)]
+    pub year: Option<String>,
+    #[serde(default)]
+    pub publication_date_or_year: Option<String>,
+    #[serde(default)]
+    pub fields_of_study: Vec<String>,
+    #[serde(default)]
+    pub venue: Vec<String>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub min_citation_count: Option<u64>,
+    #[serde(default)]
+    pub open_access_pdf: Option<bool>,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
-fn percent_encode(value: &str) -> String {
-    value
-        .bytes()
-        .flat_map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                vec![byte as char]
+impl SemanticScholarSearchRequest {
+    pub fn new(query: impl Into<String>, limit: usize, fields: Vec<String>) -> Self {
+        Self {
+            query: query.into(),
+            limit,
+            fields,
+            year: None,
+            publication_date_or_year: None,
+            fields_of_study: Vec::new(),
+            venue: Vec::new(),
+            sort: None,
+            min_citation_count: None,
+            open_access_pdf: None,
+            token: None,
+        }
+    }
+
+    fn params(&self) -> Vec<(String, String)> {
+        let mut params = vec![
+            ("query".into(), self.query.clone()),
+            ("fields".into(), fields_csv(&self.fields)),
+        ];
+        if let Some(year) = &self.year {
+            params.push(("year".into(), year.clone()));
+        }
+        if let Some(publication_date_or_year) = &self.publication_date_or_year {
+            params.push((
+                "publicationDateOrYear".into(),
+                publication_date_or_year.clone(),
+            ));
+        }
+        if !self.fields_of_study.is_empty() {
+            params.push(("fieldsOfStudy".into(), self.fields_of_study.join(",")));
+        }
+        if !self.venue.is_empty() {
+            params.push(("venue".into(), self.venue.join(",")));
+        }
+        if let Some(sort) = &self.sort {
+            params.push(("sort".into(), sort.clone()));
+        }
+        if let Some(min_citation_count) = self.min_citation_count {
+            params.push(("minCitationCount".into(), min_citation_count.to_string()));
+        }
+        if let Some(open_access_pdf) = self.open_access_pdf {
+            params.push(("openAccessPdf".into(), open_access_pdf.to_string()));
+        }
+        params
+    }
+}
+
+fn default_search_fields() -> Vec<String> {
+    default_semantic_scholar_fields()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SemanticScholarSearchResponse {
+    #[serde(default)]
+    pub data: Vec<SemanticScholarPaper>,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub total: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SemanticScholarRecommendationResponse {
+    #[serde(rename = "recommendedPapers", default)]
+    pub recommended_papers: Vec<SemanticScholarPaper>,
+}
+
+pub type SemanticScholarBatchResponse = Vec<Option<SemanticScholarPaper>>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct SemanticScholarCitationPage {
+    #[serde(default)]
+    data: Vec<SemanticScholarCitationEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SemanticScholarCitationEntry {
+    citing_paper: Option<SemanticScholarPaper>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct SemanticScholarReferencePage {
+    #[serde(default)]
+    data: Vec<SemanticScholarReferenceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SemanticScholarReferenceEntry {
+    cited_paper: Option<SemanticScholarPaper>,
+}
+
+pub fn enrich_registry_with_semantic_scholar(
+    config: &RepoConfig,
+    registry: &[PaperSourceRecord],
+) -> Result<Vec<PaperSourceRecord>> {
+    let semantic_config = config.semantic_scholar_config();
+    let mut client = SemanticScholarClient::from_config(semantic_config.clone())?;
+    enrich_registry_with_semantic_scholar_client(registry, &semantic_config, &mut client)
+}
+
+pub fn enrich_registry_with_semantic_scholar_client<T: SemanticScholarTransport>(
+    registry: &[PaperSourceRecord],
+    config: &SemanticScholarConfig,
+    client: &mut SemanticScholarClient<T>,
+) -> Result<Vec<PaperSourceRecord>> {
+    let fields = if config.fields.is_empty() {
+        default_semantic_scholar_fields()
+    } else {
+        config.fields.clone()
+    };
+    let batch_size = config.batch_size.max(1);
+    let mut updated = registry.to_vec();
+    let mut queue = Vec::new();
+    for (index, record) in registry.iter().enumerate() {
+        if let Some(identifier) = semantic_scholar_identifier(record) {
+            queue.push((index, identifier));
+        }
+    }
+    for batch in queue.chunks(batch_size) {
+        let ids = batch
+            .iter()
+            .map(|(_, identifier)| identifier.clone())
+            .collect::<Vec<_>>();
+        let papers = client.get_papers_batch(&ids, &fields)?;
+        for ((index, _), paper) in batch.iter().zip(papers.into_iter()) {
+            if let Some(paper) = paper {
+                merge_semantic_scholar_paper(&mut updated[*index], paper);
             }
-            _ => format!("%{byte:02X}").chars().collect(),
-        })
-        .collect()
+        }
+    }
+    Ok(updated)
 }
 
 pub fn semantic_scholar_identifier(record: &PaperSourceRecord) -> Option<String> {
+    if let Some(paper_id) = record
+        .semantic_scholar
+        .as_ref()
+        .and_then(|paper| paper.paper_id.as_deref())
+    {
+        if !paper_id.trim().is_empty() {
+            return Some(paper_id.trim().to_string());
+        }
+    }
     if let Some(doi) = record
         .doi
         .as_deref()
@@ -273,54 +520,215 @@ pub fn semantic_scholar_identifier(record: &PaperSourceRecord) -> Option<String>
     {
         return Some(format!("ARXIV:{}", arxiv_id.trim()));
     }
-    record
-        .url
-        .as_deref()
-        .filter(|value| value.contains("semanticscholar.org/paper/"))
-        .map(str::to_string)
+    None
 }
 
-pub fn enrich_registry_with_semantic_scholar(
-    config: &RepoConfig,
-    registry: &[PaperSourceRecord],
-) -> Result<Vec<PaperSourceRecord>> {
-    let scholar_config = config.semantic_scholar_config();
-    let client = SemanticScholarClient::from_config(scholar_config)?;
-    enrich_registry_with_semantic_scholar_client(config, registry, &client)
+fn merge_semantic_scholar_paper(record: &mut PaperSourceRecord, paper: SemanticScholarPaper) {
+    if record.doi.is_none() {
+        record.doi = paper.external_ids.get("DOI").cloned();
+    }
+    if record.arxiv_id.is_none() {
+        record.arxiv_id = paper.external_ids.get("ArXiv").cloned();
+    }
+    if record.url.is_none() {
+        record.url = paper.url.clone();
+    }
+    if record.year.is_none() {
+        record.year = paper.year.map(|year| year.to_string());
+    }
+    if record.authors.is_empty() && !paper.authors.is_empty() {
+        record.authors = paper
+            .authors
+            .iter()
+            .map(|author| author.name.clone())
+            .filter(|name| !name.is_empty())
+            .collect();
+    }
+    record.semantic_scholar = Some(paper);
 }
 
-pub fn enrich_registry_with_semantic_scholar_client<T>(
-    config: &RepoConfig,
-    registry: &[PaperSourceRecord],
-    client: &SemanticScholarClient<T>,
-) -> Result<Vec<PaperSourceRecord>>
-where
-    T: SemanticScholarTransport,
-{
-    let scholar_config = config.semantic_scholar_config();
-    if !scholar_config.enabled {
-        return Ok(registry.to_vec());
+fn fields_csv(fields: &[String]) -> String {
+    if fields.is_empty() {
+        default_semantic_scholar_fields().join(",")
+    } else {
+        fields.join(",")
+    }
+}
+
+fn encode_path_segment(raw: &str) -> String {
+    let mut encoded = String::new();
+    for byte in raw.bytes() {
+        let ch = byte as char;
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~' | ':') {
+            encoded.push(ch);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DownloadMode, ParseStatus, SourceKind};
+    use std::collections::VecDeque;
+
+    #[derive(Default)]
+    struct FakeTransport {
+        requests: Vec<SemanticScholarRequest>,
+        responses: VecDeque<SemanticScholarHttpResponse>,
     }
 
-    let mut positions = Vec::new();
-    let mut identifiers = Vec::new();
-    for (index, record) in registry.iter().enumerate() {
-        if let Some(identifier) = semantic_scholar_identifier(record) {
-            positions.push(index);
-            identifiers.push(identifier);
+    impl FakeTransport {
+        fn push_json(&mut self, body: Value) {
+            self.responses.push_back(SemanticScholarHttpResponse {
+                status: 200,
+                retry_after_s: None,
+                body,
+            });
         }
     }
 
-    let response = client.batch_papers(&identifiers)?;
-    let mut enriched = registry.to_vec();
-    let mut by_position: BTreeMap<usize, SemanticScholarPaper> = BTreeMap::new();
-    for (position, paper) in positions.into_iter().zip(response.papers.into_iter()) {
-        if let Some(paper) = paper {
-            by_position.insert(position, paper);
+    impl SemanticScholarTransport for FakeTransport {
+        fn request(
+            &mut self,
+            request: &SemanticScholarRequest,
+        ) -> Result<SemanticScholarHttpResponse> {
+            self.requests.push(request.clone());
+            self.responses
+                .pop_front()
+                .context("missing fake Semantic Scholar response")
         }
     }
-    for (position, paper) in by_position {
-        enriched[position].semantic_scholar = Some(paper);
+
+    fn record() -> PaperSourceRecord {
+        PaperSourceRecord {
+            paper_id: "vin-nbv".into(),
+            citation_key: Some("frahm2025vinnbv".into()),
+            title: "VIN-NBV".into(),
+            authors: vec![],
+            year: None,
+            arxiv_id: Some("2501.01234".into()),
+            doi: None,
+            url: None,
+            tex_dir: None,
+            pdf_file: None,
+            source_kind: SourceKind::Bib,
+            download_mode: DownloadMode::MetadataOnly,
+            has_local_tex: false,
+            has_local_pdf: false,
+            parse_status: ParseStatus::MetadataOnly,
+            semantic_scholar: None,
+        }
     }
-    Ok(enriched)
+
+    #[test]
+    fn builds_identifier_from_doi_before_arxiv() {
+        let mut record = record();
+        record.doi = Some("10.1000/example".into());
+        assert_eq!(
+            semantic_scholar_identifier(&record).as_deref(),
+            Some("DOI:10.1000/example")
+        );
+    }
+
+    #[test]
+    fn enriches_registry_from_batch_response() {
+        let mut transport = FakeTransport::default();
+        transport.push_json(serde_json::json!([
+            {
+                "paperId": "abc123",
+                "corpusId": 42,
+                "externalIds": {"ArXiv": "2501.01234", "DOI": "10.1000/vin"},
+                "title": "VIN-NBV",
+                "url": "https://semanticscholar.org/paper/abc123",
+                "year": 2025,
+                "authors": [{"authorId": "1", "name": "A. Author"}],
+                "citationCount": 7,
+                "fieldsOfStudy": ["Computer Science"]
+            }
+        ]));
+        let config = SemanticScholarConfig {
+            min_interval_s: 0.0,
+            ..SemanticScholarConfig::default()
+        };
+        let mut client = SemanticScholarClient::with_transport(config.clone(), transport);
+
+        let enriched =
+            enrich_registry_with_semantic_scholar_client(&[record()], &config, &mut client)
+                .unwrap();
+
+        assert_eq!(enriched[0].doi.as_deref(), Some("10.1000/vin"));
+        assert_eq!(enriched[0].authors, vec!["A. Author"]);
+        let paper = enriched[0].semantic_scholar.as_ref().unwrap();
+        assert_eq!(paper.paper_id.as_deref(), Some("abc123"));
+        assert_eq!(paper.citation_count, Some(7));
+    }
+
+    #[test]
+    fn search_uses_bulk_endpoint_and_request_params() {
+        let mut transport = FakeTransport::default();
+        transport.push_json(serde_json::json!({
+            "data": [{"paperId": "p1", "title": "Next Best View"}],
+            "token": null
+        }));
+        let config = SemanticScholarConfig {
+            min_interval_s: 0.0,
+            ..SemanticScholarConfig::default()
+        };
+        let mut client = SemanticScholarClient::with_transport(config, transport);
+        let request = SemanticScholarSearchRequest::new(
+            "\"next best view\"",
+            5,
+            vec!["paperId".into(), "title".into()],
+        );
+
+        let papers = client.search_papers(&request).unwrap();
+
+        assert_eq!(papers.len(), 1);
+        assert_eq!(client.transport.requests[0].path, "/paper/search/bulk");
+        assert!(client.transport.requests[0]
+            .params
+            .contains(&("query".into(), "\"next best view\"".into())));
+    }
+
+    #[test]
+    fn citation_and_reference_helpers_extract_nested_papers() {
+        let mut transport = FakeTransport::default();
+        transport.push_json(serde_json::json!({
+            "data": [{"citingPaper": {"paperId": "citing", "title": "Citing Paper"}}]
+        }));
+        transport.push_json(serde_json::json!({
+            "data": [{"citedPaper": {"paperId": "cited", "title": "Cited Paper"}}]
+        }));
+        let config = SemanticScholarConfig {
+            min_interval_s: 0.0,
+            ..SemanticScholarConfig::default()
+        };
+        let mut client = SemanticScholarClient::with_transport(config, transport);
+
+        let citations = client
+            .get_citations("abc123", 10, &["paperId".into(), "title".into()])
+            .unwrap();
+        let references = client
+            .get_references("abc123", 10, &["paperId".into(), "title".into()])
+            .unwrap();
+
+        assert_eq!(citations[0].paper_id.as_deref(), Some("citing"));
+        assert_eq!(references[0].paper_id.as_deref(), Some("cited"));
+        assert_eq!(client.transport.requests[0].path, "/paper/abc123/citations");
+        assert_eq!(
+            client.transport.requests[1].path,
+            "/paper/abc123/references"
+        );
+    }
+
+    #[test]
+    fn encodes_path_segments_for_lookup_ids() {
+        assert_eq!(
+            encode_path_segment("DOI:10.1000/a b"),
+            "DOI:10.1000%2Fa%20b"
+        );
+    }
 }

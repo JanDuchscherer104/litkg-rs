@@ -785,6 +785,7 @@ mod tests {
                     caption: "Evaluation table".into(),
                 }],
                 citations: vec!["jones2024beta".into()],
+                citation_references: Vec::new(),
                 provenance: vec!["manifest".into(), "bib".into()],
             },
             ParsedPaper {
@@ -798,6 +799,7 @@ mod tests {
                 figures: vec![],
                 tables: vec![],
                 citations: vec!["smith2025alpha".into()],
+                citation_references: Vec::new(),
                 provenance: vec!["manifest".into()],
             },
         ]
@@ -838,6 +840,7 @@ mod tests {
                 caption: "stale table".into(),
             }],
             citations: vec!["stale-citation".into()],
+            citation_references: Vec::new(),
             provenance: vec![],
         });
 
@@ -954,6 +957,7 @@ mod tests {
             figures: vec![],
             tables: vec![],
             citations: vec![],
+            citation_references: Vec::new(),
             provenance: vec![],
         }];
 
@@ -1004,6 +1008,7 @@ mod tests {
             figures: vec![],
             tables: vec![],
             citations: vec![],
+            citation_references: Vec::new(),
             provenance: vec![],
         }];
 
@@ -1058,6 +1063,7 @@ mod tests {
                 figures: vec![],
                 tables: vec![],
                 citations: vec![],
+                citation_references: Vec::new(),
                 provenance: vec![],
             },
             ParsedPaper {
@@ -1088,6 +1094,7 @@ mod tests {
                 figures: vec![],
                 tables: vec![],
                 citations: vec![],
+                citation_references: Vec::new(),
                 provenance: vec!["paper-tex/main.tex".into()],
             },
         ];
@@ -1150,6 +1157,7 @@ mod tests {
                 figures: vec![],
                 tables: vec![],
                 citations: vec![],
+                citation_references: Vec::new(),
                 provenance: vec!["a.tex".into()],
             },
             ParsedPaper {
@@ -1180,6 +1188,7 @@ mod tests {
                 figures: vec![],
                 tables: vec![],
                 citations: vec![],
+                citation_references: Vec::new(),
                 provenance: vec!["b.tex".into()],
             },
         ];
@@ -1258,6 +1267,7 @@ mod tests {
             figures: vec![],
             tables: vec![],
             citations: vec!["smith2025alpha".into()],
+            citation_references: Vec::new(),
             provenance: vec![],
         });
         let inspection =
@@ -1321,6 +1331,7 @@ mod tests {
             figures: vec![],
             tables: vec![],
             citations: vec![],
+            citation_references: Vec::new(),
             provenance: vec![],
         }];
 

@@ -345,6 +345,7 @@ mod tests {
             figures: vec![],
             tables: vec![],
             citations: vec![],
+            citation_references: Vec::new(),
             provenance: vec![],
         };
 

@@ -814,6 +814,7 @@ mod tests {
                 caption: "Table caption".to_string(),
             }],
             citations: citations.into_iter().map(str::to_string).collect(),
+            citation_references: Vec::new(),
             provenance: vec!["registry".to_string()],
         }
     }

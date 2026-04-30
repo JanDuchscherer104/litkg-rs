@@ -1,6 +1,8 @@
+use crate::bibtex::{parse_bibtex, BibEntry};
 use crate::config::RepoConfig;
 use crate::model::{
-    PaperFigure, PaperSection, PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper,
+    CitationReference, PaperFigure, PaperSection, PaperSourceRecord, PaperTable, ParseStatus,
+    ParsedPaper,
 };
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -90,6 +92,7 @@ fn parse_paper_dir(record: &PaperSourceRecord, root_dir: &Path) -> Result<Parsed
         .map(|caption| PaperTable { caption })
         .collect();
     let citations = extract_citations(&merged);
+    let citation_references = extract_citation_references(root_dir, &citations)?;
     let title = extract_command_value(&merged, "title").unwrap_or_else(|| record.title.clone());
 
     let mut metadata = record.clone();
@@ -103,6 +106,7 @@ fn parse_paper_dir(record: &PaperSourceRecord, root_dir: &Path) -> Result<Parsed
         figures,
         tables,
         citations,
+        citation_references,
         provenance: vec![root_file.display().to_string()],
     })
 }
@@ -115,6 +119,7 @@ fn metadata_only_paper(record: &PaperSourceRecord) -> ParsedPaper {
         figures: Vec::new(),
         tables: Vec::new(),
         citations: Vec::new(),
+        citation_references: Vec::new(),
         provenance: Vec::new(),
     }
 }
@@ -254,17 +259,176 @@ fn extract_table_captions(text: &str) -> Vec<String> {
 
 fn extract_citations(text: &str) -> Vec<String> {
     let mut citations = BTreeSet::new();
-    for capture in citation_regex().captures_iter(text) {
-        if let Some(keys) = capture.get(1) {
-            for key in keys.as_str().split(',') {
-                let trimmed = key.trim();
-                if !trimmed.is_empty() {
-                    citations.insert(trimmed.to_string());
-                }
+    let mut cursor = 0usize;
+    while let Some(relative_start) = text[cursor..].find('\\') {
+        let command_start = cursor + relative_start;
+        let Some((command, mut index)) = read_latex_command(text, command_start) else {
+            cursor = command_start + 1;
+            continue;
+        };
+        if !is_citation_command(command.as_str()) {
+            cursor = index;
+            continue;
+        }
+        if text[index..].starts_with('*') {
+            index += 1;
+        }
+        index = skip_ws_and_optional_args(text, index);
+        let Some((keys, end_index)) = extract_balanced_braces(text, index) else {
+            cursor = index;
+            continue;
+        };
+        for key in keys.split(',') {
+            if let Some(normalized) = cleanup_citation_key(key) {
+                citations.insert(normalized);
             }
         }
+        cursor = end_index;
     }
     citations.into_iter().collect()
+}
+
+fn extract_citation_references(
+    root_dir: &Path,
+    citations: &[String],
+) -> Result<Vec<CitationReference>> {
+    if citations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let cited_keys: BTreeSet<_> = citations.iter().map(|key| key.as_str()).collect();
+    let mut references = Vec::new();
+    for entry in bibliography_entries(root_dir)? {
+        if !cited_keys.contains(entry.citation_key.as_str()) {
+            continue;
+        }
+        references.push(citation_reference_from_bib_entry(&entry));
+    }
+    references.sort_by(|left, right| left.key.cmp(&right.key));
+    Ok(references)
+}
+
+fn bibliography_entries(root_dir: &Path) -> Result<Vec<BibEntry>> {
+    let mut entries = Vec::new();
+    for entry in WalkDir::new(root_dir).into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("bib") {
+            continue;
+        }
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read bibliography {}", path.display()))?;
+        entries.extend(parse_bibtex(&text).unwrap_or_default());
+    }
+    Ok(entries)
+}
+
+fn citation_reference_from_bib_entry(entry: &BibEntry) -> CitationReference {
+    let title = entry
+        .fields
+        .get("title")
+        .cloned()
+        .filter(|value| !value.is_empty());
+    let doi = entry
+        .fields
+        .get("doi")
+        .and_then(|value| normalize_doi(value))
+        .or_else(|| entry.fields.get("url").and_then(|value| extract_doi(value)));
+    let arxiv_id = entry
+        .fields
+        .get("eprint")
+        .and_then(|value| normalize_arxiv_id(value))
+        .or_else(|| {
+            entry
+                .fields
+                .get("arxiv")
+                .and_then(|value| normalize_arxiv_id(value))
+        })
+        .or_else(|| {
+            entry
+                .fields
+                .get("journal")
+                .and_then(|value| normalize_arxiv_id(value))
+        })
+        .or_else(|| {
+            entry
+                .fields
+                .get("volume")
+                .and_then(|value| normalize_arxiv_id(value))
+        })
+        .or_else(|| {
+            entry
+                .fields
+                .get("url")
+                .and_then(|value| normalize_arxiv_id(value))
+        });
+    CitationReference {
+        key: entry.citation_key.clone(),
+        title,
+        doi,
+        arxiv_id,
+        url: entry.fields.get("url").cloned(),
+    }
+}
+
+fn read_latex_command(text: &str, start: usize) -> Option<(String, usize)> {
+    let bytes = text.as_bytes();
+    if bytes.get(start).copied() != Some(b'\\') {
+        return None;
+    }
+    let mut end = start + 1;
+    while let Some(byte) = bytes.get(end) {
+        if !byte.is_ascii_alphabetic() {
+            break;
+        }
+        end += 1;
+    }
+    if end == start + 1 {
+        return None;
+    }
+    Some((text[start + 1..end].to_string(), end))
+}
+
+fn is_citation_command(command: &str) -> bool {
+    let command = command.to_ascii_lowercase();
+    command.starts_with("cite")
+        || matches!(
+            command.as_str(),
+            "autocite"
+                | "parencite"
+                | "textcite"
+                | "supercite"
+                | "footcite"
+                | "smartcite"
+                | "fullcite"
+                | "nocite"
+        )
+}
+
+fn skip_ws_and_optional_args(text: &str, mut index: usize) -> usize {
+    loop {
+        index = skip_ascii_whitespace(text, index);
+        if !text[index..].starts_with('[') {
+            return index;
+        }
+        let Some((_, end_index)) = extract_balanced_delimited(text, index, b'[', b']') else {
+            return index;
+        };
+        index = end_index;
+    }
+}
+
+fn skip_ascii_whitespace(text: &str, mut index: usize) -> usize {
+    while matches!(text.as_bytes().get(index), Some(byte) if byte.is_ascii_whitespace()) {
+        index += 1;
+    }
+    index
+}
+
+fn cleanup_citation_key(raw: &str) -> Option<String> {
+    let key = raw.trim().trim_matches(|ch: char| ch.is_whitespace());
+    if key.is_empty() || key == "*" {
+        return None;
+    }
+    Some(key.to_string())
 }
 
 fn extract_command_value(text: &str, command: &str) -> Option<String> {
@@ -296,30 +460,62 @@ fn extract_command_values(text: &str, command: &str) -> Vec<String> {
 }
 
 fn extract_balanced_braces(text: &str, opening_index: usize) -> Option<(String, usize)> {
+    extract_balanced_delimited(text, opening_index, b'{', b'}')
+}
+
+fn extract_balanced_delimited(
+    text: &str,
+    opening_index: usize,
+    opening: u8,
+    closing: u8,
+) -> Option<(String, usize)> {
     let bytes = text.as_bytes();
-    if bytes.get(opening_index).copied() != Some(b'{') {
+    if bytes.get(opening_index).copied() != Some(opening) {
         return None;
     }
     let mut depth = 0i32;
     let mut start = opening_index + 1;
     for (index, byte) in bytes.iter().enumerate().skip(opening_index) {
-        match byte {
-            b'{' => {
-                depth += 1;
-                if depth == 1 {
-                    start = index + 1;
-                }
+        if *byte == opening {
+            depth += 1;
+            if depth == 1 {
+                start = index + 1;
             }
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some((text[start..index].to_string(), index + 1));
-                }
+        } else if *byte == closing {
+            depth -= 1;
+            if depth == 0 {
+                return Some((text[start..index].to_string(), index + 1));
             }
-            _ => {}
         }
     }
     None
+}
+
+fn normalize_doi(raw: &str) -> Option<String> {
+    let trimmed = raw
+        .trim()
+        .trim_start_matches("https://doi.org/")
+        .trim_start_matches("http://doi.org/")
+        .trim_start_matches("doi:")
+        .trim();
+    if trimmed.to_ascii_lowercase().starts_with("10.") {
+        Some(trimmed.trim_end_matches('.').to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+fn extract_doi(raw: &str) -> Option<String> {
+    doi_regex()
+        .captures(raw)
+        .and_then(|capture| normalize_doi(capture.get(1)?.as_str()))
+}
+
+fn normalize_arxiv_id(raw: &str) -> Option<String> {
+    arxiv_regex()
+        .captures(raw)
+        .and_then(|capture| capture.get(1))
+        .map(|matched| matched.as_str().trim_end_matches(".pdf").to_string())
 }
 
 fn cleanup_tex(text: &str) -> String {
@@ -368,14 +564,21 @@ fn table_block_regex() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\\begin\{table\}(?s)(.*?)\\end\{table\}").unwrap())
 }
 
-fn citation_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\\cite[a-zA-Z*]*\{([^}]*)\}").unwrap())
-}
-
 fn latex_command_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\\[a-zA-Z]+\*?").unwrap())
+}
+
+fn doi_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)(10\.\d{4,9}/[^\s{}]+)").unwrap())
+}
+
+fn arxiv_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:arxiv[:./\s]+|abs/|pdf/)?([0-9]{4}\.[0-9]{4,5}(?:v[0-9]+)?)").unwrap()
+    })
 }
 
 #[cfg(test)]
@@ -459,6 +662,68 @@ Overview text.
         assert_eq!(parsed.sections.len(), 2);
         assert_eq!(parsed.figures[0].caption, "A frontend figure.");
         assert_eq!(parsed.citations, vec!["bar".to_string(), "foo".to_string()]);
+    }
+
+    #[test]
+    fn parses_natbib_biblatex_citations_and_local_bib_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("paper");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("main.tex"),
+            r#"\documentclass{article}
+\title{Citation Forms}
+\begin{document}
+\section{Related Work}
+\citet{rawKey} and \citep[see][Sec.~2]{doiKey, arxivKey}.
+\parencite[cf.][]{titleKey}
+\textcite*{rawKey}
+\end{document}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("refs.bib"),
+            r#"
+@article{doiKey,
+  title={A DOI Paper},
+  doi={10.1109/3DV62453.2024.00044}
+}
+@misc{arxivKey,
+  title={An arXiv Paper},
+  eprint={2406.10224},
+  archivePrefix={arXiv},
+  url={https://arxiv.org/abs/2406.10224}
+}
+@misc{titleKey,
+  title={Title Only Target}
+}
+"#,
+        )
+        .unwrap();
+
+        let parsed = parse_paper_dir(&sample_record(), &root).unwrap();
+        assert_eq!(
+            parsed.citations,
+            vec![
+                "arxivKey".to_string(),
+                "doiKey".to_string(),
+                "rawKey".to_string(),
+                "titleKey".to_string()
+            ]
+        );
+        assert_eq!(parsed.citation_references.len(), 3);
+        assert_eq!(
+            parsed.citation_references[0].arxiv_id.as_deref(),
+            Some("2406.10224")
+        );
+        assert_eq!(
+            parsed.citation_references[1].doi.as_deref(),
+            Some("10.1109/3dv62453.2024.00044")
+        );
+        assert_eq!(
+            parsed.citation_references[2].title.as_deref(),
+            Some("Title Only Target")
+        );
     }
 
     #[test]

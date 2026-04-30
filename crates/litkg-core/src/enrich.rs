@@ -75,6 +75,9 @@ impl EnrichedEdgeType {
 #[serde(rename_all = "snake_case")]
 pub enum EnrichmentStrategy {
     ExactCitationKey,
+    CitationDoi,
+    CitationArxiv,
+    CitationTitle,
     WeightedTokenOverlap,
 }
 
@@ -82,6 +85,9 @@ impl EnrichmentStrategy {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ExactCitationKey => "exact_citation_key",
+            Self::CitationDoi => "citation_doi",
+            Self::CitationArxiv => "citation_arxiv",
+            Self::CitationTitle => "citation_title",
             Self::WeightedTokenOverlap => "weighted_token_overlap",
         }
     }
@@ -116,14 +122,13 @@ pub fn infer_enriched_edges(papers: &[ParsedPaper]) -> Vec<EnrichedEdge> {
 }
 
 fn infer_citation_edges(papers: &[ParsedPaper]) -> Vec<EnrichedEdge> {
-    let mut paper_ids_by_citation_key: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let index = CitationTargetIndex::from_papers(papers);
+    let mut citation_refs_by_key: BTreeMap<(&str, String), &crate::model::CitationReference> =
+        BTreeMap::new();
     for paper in papers {
-        if let Some(citation_key) = &paper.metadata.citation_key {
-            if let Some(normalized) = normalize_citation_key(citation_key) {
-                paper_ids_by_citation_key
-                    .entry(normalized)
-                    .or_default()
-                    .insert(paper.metadata.paper_id.clone());
+        for citation_ref in &paper.citation_references {
+            if let Some(normalized) = normalize_citation_key(&citation_ref.key) {
+                citation_refs_by_key.insert((&paper.metadata.paper_id, normalized), citation_ref);
             }
         }
     }
@@ -135,29 +140,175 @@ fn infer_citation_edges(papers: &[ParsedPaper]) -> Vec<EnrichedEdge> {
             let Some(normalized) = normalize_citation_key(citation) else {
                 continue;
             };
-            let Some(targets) = paper_ids_by_citation_key.get(&normalized) else {
+            let citation_ref = citation_refs_by_key
+                .get(&(paper.metadata.paper_id.as_str(), normalized.clone()))
+                .copied();
+            let Some((target_paper_id, strategy, evidence)) = index.resolve(citation, citation_ref)
+            else {
                 continue;
             };
-            if targets.len() != 1 {
-                continue;
-            }
-            let target_paper_id = targets.iter().next().unwrap();
-            if target_paper_id == &paper.metadata.paper_id
+            if target_paper_id == paper.metadata.paper_id
                 || !resolved_targets.insert(target_paper_id.clone())
             {
                 continue;
             }
             edges.push(EnrichedEdge {
                 source_paper_id: paper.metadata.paper_id.clone(),
-                target_paper_id: target_paper_id.clone(),
+                target_paper_id,
                 edge_type: EnrichedEdgeType::CitesPaper,
-                strategy: EnrichmentStrategy::ExactCitationKey,
+                strategy,
                 score: 1.0,
-                evidence: vec![citation.clone()],
+                evidence,
             });
         }
     }
     edges
+}
+
+#[derive(Debug, Default)]
+struct CitationTargetIndex {
+    by_citation_key: BTreeMap<String, BTreeSet<String>>,
+    by_doi: BTreeMap<String, BTreeSet<String>>,
+    by_arxiv: BTreeMap<String, BTreeSet<String>>,
+    by_title: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl CitationTargetIndex {
+    fn from_papers(papers: &[ParsedPaper]) -> Self {
+        let mut index = Self::default();
+        for paper in papers {
+            let paper_id = &paper.metadata.paper_id;
+            if let Some(citation_key) = &paper.metadata.citation_key {
+                if let Some(normalized) = normalize_citation_key(citation_key) {
+                    index
+                        .by_citation_key
+                        .entry(normalized)
+                        .or_default()
+                        .insert(paper_id.clone());
+                }
+            }
+            if let Some(doi) = normalize_doi_opt(paper.metadata.doi.as_deref()) {
+                index
+                    .by_doi
+                    .entry(doi)
+                    .or_default()
+                    .insert(paper_id.clone());
+            }
+            if let Some(arxiv_id) = normalize_arxiv_opt(paper.metadata.arxiv_id.as_deref()) {
+                index
+                    .by_arxiv
+                    .entry(arxiv_id)
+                    .or_default()
+                    .insert(paper_id.clone());
+            }
+            if let Some(title) = normalize_title(&paper.metadata.title) {
+                index
+                    .by_title
+                    .entry(title)
+                    .or_default()
+                    .insert(paper_id.clone());
+            }
+            if let Some(semantic) = &paper.metadata.semantic_scholar {
+                if let Some(doi) = semantic
+                    .external_ids
+                    .get("DOI")
+                    .and_then(|value| normalize_doi_opt(Some(value)))
+                {
+                    index
+                        .by_doi
+                        .entry(doi)
+                        .or_default()
+                        .insert(paper_id.clone());
+                }
+                if let Some(arxiv_id) = semantic
+                    .external_ids
+                    .get("ArXiv")
+                    .and_then(|value| normalize_arxiv_opt(Some(value)))
+                {
+                    index
+                        .by_arxiv
+                        .entry(arxiv_id)
+                        .or_default()
+                        .insert(paper_id.clone());
+                }
+                if let Some(title) = semantic
+                    .title
+                    .as_ref()
+                    .and_then(|value| normalize_title(value))
+                {
+                    index
+                        .by_title
+                        .entry(title)
+                        .or_default()
+                        .insert(paper_id.clone());
+                }
+            }
+        }
+        index
+    }
+
+    fn resolve(
+        &self,
+        raw_citation: &str,
+        citation_ref: Option<&crate::model::CitationReference>,
+    ) -> Option<(String, EnrichmentStrategy, Vec<String>)> {
+        if let Some(normalized) = normalize_citation_key(raw_citation) {
+            if let Some(target) = unique_target(self.by_citation_key.get(&normalized)) {
+                return Some((
+                    target,
+                    EnrichmentStrategy::ExactCitationKey,
+                    vec![raw_citation.to_string()],
+                ));
+            }
+        }
+
+        let citation_ref = citation_ref?;
+        if let Some(doi) = normalize_doi_opt(citation_ref.doi.as_deref()) {
+            if let Some(target) = unique_target(self.by_doi.get(&doi)) {
+                return Some((
+                    target,
+                    EnrichmentStrategy::CitationDoi,
+                    vec![format!("{} -> DOI:{doi}", citation_ref.key)],
+                ));
+            }
+        }
+        if let Some(arxiv_id) = normalize_arxiv_opt(citation_ref.arxiv_id.as_deref()) {
+            if let Some(target) = unique_target(self.by_arxiv.get(&arxiv_id)) {
+                return Some((
+                    target,
+                    EnrichmentStrategy::CitationArxiv,
+                    vec![format!("{} -> ARXIV:{arxiv_id}", citation_ref.key)],
+                ));
+            }
+        }
+        if let Some(title) = citation_ref
+            .title
+            .as_ref()
+            .and_then(|value| normalize_title(value))
+        {
+            if let Some(target) = unique_target(self.by_title.get(&title)) {
+                return Some((
+                    target,
+                    EnrichmentStrategy::CitationTitle,
+                    vec![format!(
+                        "{} -> {}",
+                        citation_ref.key,
+                        citation_ref.title.as_ref().unwrap()
+                    )],
+                ));
+            }
+        }
+        None
+    }
+}
+
+fn unique_target(targets: Option<&BTreeSet<String>>) -> Option<String> {
+    let targets = targets?;
+    if targets.len() == 1 {
+        targets.iter().next().cloned()
+    } else {
+        None
+    }
 }
 
 fn infer_similar_topic_edges(papers: &[ParsedPaper]) -> Vec<EnrichedEdge> {
@@ -245,6 +396,58 @@ fn normalize_citation_key(raw: &str) -> Option<String> {
         return None;
     }
     Some(normalized)
+}
+
+fn normalize_doi_opt(raw: Option<&str>) -> Option<String> {
+    let value = raw?
+        .trim()
+        .trim_start_matches("https://doi.org/")
+        .trim_start_matches("http://doi.org/")
+        .trim_start_matches("doi:")
+        .trim()
+        .trim_end_matches('.');
+    if value.to_ascii_lowercase().starts_with("10.") {
+        Some(value.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+fn normalize_arxiv_opt(raw: Option<&str>) -> Option<String> {
+    let value = raw?
+        .trim()
+        .trim_start_matches("arXiv:")
+        .trim_start_matches("arxiv:")
+        .trim_start_matches("https://arxiv.org/abs/")
+        .trim_start_matches("http://arxiv.org/abs/")
+        .trim_start_matches("https://arxiv.org/pdf/")
+        .trim_start_matches("http://arxiv.org/pdf/")
+        .trim_end_matches(".pdf")
+        .trim();
+    let normalized = value.to_ascii_lowercase();
+    if normalized
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+        && normalized.contains('.')
+    {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+fn normalize_title(raw: &str) -> Option<String> {
+    let normalized = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if normalized.len() >= 12 {
+        Some(normalized)
+    } else {
+        None
+    }
 }
 
 fn tokenize_high_signal_text(paper: &ParsedPaper) -> BTreeSet<String> {
@@ -368,8 +571,8 @@ fn compare_candidate_priority(left: &EnrichedEdge, right: &EnrichedEdge) -> Orde
 mod tests {
     use super::*;
     use crate::{
-        DownloadMode, PaperFigure, PaperSection, PaperSourceRecord, PaperTable, ParseStatus,
-        SourceKind,
+        CitationReference, DownloadMode, PaperFigure, PaperSection, PaperSourceRecord, PaperTable,
+        ParseStatus, SourceKind,
     };
 
     #[test]
@@ -505,6 +708,72 @@ mod tests {
     }
 
     #[test]
+    fn resolves_local_citations_by_bibliography_identifiers_and_titles() {
+        let mut citing_paper = paper(
+            "paper-c",
+            "Evaluation of NBV baselines",
+            Some("We cite papers using a local bibliography with different keys."),
+            &["Related work"],
+            &[],
+            &[],
+        );
+        citing_paper.citations = vec![
+            "local-doi-key".into(),
+            "local-arxiv-key".into(),
+            "local-title-key".into(),
+        ];
+        citing_paper.citation_references = vec![
+            CitationReference {
+                key: "local-doi-key".into(),
+                doi: Some("10.1109/3DV62453.2024.00044".into()),
+                ..CitationReference::default()
+            },
+            CitationReference {
+                key: "local-arxiv-key".into(),
+                arxiv_id: Some("2406.10224".into()),
+                ..CitationReference::default()
+            },
+            CitationReference {
+                key: "local-title-key".into(),
+                title: Some("Title Only Target Paper".into()),
+                ..CitationReference::default()
+            },
+        ];
+
+        let mut doi_target = paper("paper-doi", "Dynamic 3D Gaussians", None, &[], &[], &[]);
+        doi_target.metadata.doi = Some("10.1109/3dv62453.2024.00044".into());
+        let mut arxiv_target = paper("paper-arxiv", "EFM3D", None, &[], &[], &[]);
+        arxiv_target.metadata.arxiv_id = Some("2406.10224".into());
+        let title_target = paper(
+            "paper-title",
+            "Title Only Target Paper",
+            None,
+            &[],
+            &[],
+            &[],
+        );
+
+        let edges = infer_enriched_edges(&[doi_target, arxiv_target, title_target, citing_paper]);
+        let citation_edges: Vec<_> = edges
+            .iter()
+            .filter(|edge| edge.edge_type == EnrichedEdgeType::CitesPaper)
+            .collect();
+
+        assert_eq!(citation_edges.len(), 3);
+        assert!(citation_edges.iter().any(|edge| {
+            edge.target_paper_id == "paper-doi" && edge.strategy == EnrichmentStrategy::CitationDoi
+        }));
+        assert!(citation_edges.iter().any(|edge| {
+            edge.target_paper_id == "paper-arxiv"
+                && edge.strategy == EnrichmentStrategy::CitationArxiv
+        }));
+        assert!(citation_edges.iter().any(|edge| {
+            edge.target_paper_id == "paper-title"
+                && edge.strategy == EnrichmentStrategy::CitationTitle
+        }));
+    }
+
+    #[test]
     fn serializes_edge_shape_stably() {
         let edge = EnrichedEdge {
             source_paper_id: "paper-a".into(),
@@ -571,6 +840,7 @@ mod tests {
                 })
                 .collect(),
             citations: Vec::new(),
+            citation_references: Vec::new(),
             provenance: Vec::new(),
         }
     }

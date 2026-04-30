@@ -2,6 +2,9 @@
 
 `litkg-rs` now carries the reusable local Neo4j and Graphiti runtime pieces that were first established in NBV and generalized for this repo.
 
+For the full external-tool map, backend status, repo paths, and runtime diagrams,
+see [tooling-and-backends.md](tooling-and-backends.md).
+
 ## Surfaces
 
 - `infra/neo4j/docker-compose.yml`: local Neo4j + APOC service

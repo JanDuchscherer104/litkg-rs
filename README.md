@@ -4,14 +4,21 @@
 
 - merging paper manifests and BibTeX into a normalized literature registry
 - downloading arXiv source bundles and optional PDFs
-- parsing TeX sources into structured paper records
+- parsing TeX sources into structured paper records with citation-reference normalization
 - materializing KG-friendly Markdown corpora
 - exporting to multiple graph adapters, including graphify-oriented corpora and optional Neo4j bundles
 - enriching registries with Semantic Scholar metadata through the official REST API
 - inspecting local corpora with search, stats, and per-paper drill-down commands
+- opening a native Rust graph inspector over exported graph bundles
+- indexing local code and docs through optional Neo4j, CodeGraphContext, and Graphiti runtime helpers
 - validating benchmark catalogs, inspecting benchmark integration readiness, running benchmark adapters, and composing benchmark-driven auto research targets
 
 The first consumer is `prml-vslam`, but this repository is intentionally not tied to any single client repo.
+
+For a compact operator map of every feature and command surface, start with
+[docs/features.md](docs/features.md). For external tools, backend choices,
+integration locations, and diagrams, see
+[docs/tooling-and-backends.md](docs/tooling-and-backends.md).
 
 ## Human Signal
 
@@ -41,18 +48,39 @@ Downstream repos can start from the strict templates under [templates/bootstrap/
 
 ## Quick Start
 
+Run the main literature pipeline:
+
 ```bash
 cargo run -p litkg-cli -- sync-registry --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- download --config examples/prml-vslam.toml --download-pdfs
 cargo run -p litkg-cli -- parse --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- materialize --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- export-neo4j --config examples/prml-vslam.toml
+```
+
+Use Make wrappers for common operations:
+
+```bash
+make litkg-pipeline LITKG_CONFIG=examples/prml-vslam.toml LITKG_PIPELINE_ARGS="--download-pdfs"
+make litkg-semantic-enrich LITKG_CONFIG=examples/prml-vslam.toml
+make litkg-semantic-search LITKG_CONFIG=examples/prml-vslam.toml SEMANTIC_QUERY='"next best view" + reconstruction'
+make inspect-graph GRAPH_CONFIG=examples/prml-vslam.toml
+```
+
+Useful read-only and Semantic Scholar commands:
+
+```bash
 cargo run -p litkg-cli -- enrich-semantic-scholar --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- semantic-scholar-search --config examples/prml-vslam.toml --query '"next best view" + reconstruction'
-cargo run -p litkg-cli -- rebuild-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- inspect-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- stats --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- search --config examples/prml-vslam.toml --query "loop closure"
 cargo run -p litkg-cli -- show-paper --config examples/prml-vslam.toml --paper zhang2026vistaslam
+```
+
+Benchmark and autoresearch commands:
+
+```bash
 cargo run -p litkg-cli -- validate-benchmarks --catalog examples/benchmarks/kg.toml --results examples/benchmarks/sample-results.toml
 cargo run -p litkg-cli -- benchmark-support --catalog examples/benchmarks/kg.toml --integrations examples/benchmarks/integrations.toml
 cargo run -p litkg-cli -- render-autoresearch-target --catalog examples/benchmarks/kg.toml --results examples/benchmarks/sample-results.toml --target-id kg_navigation_improvement
@@ -80,10 +108,7 @@ make loc
 make loc-rs
 make lint-check
 make ci
-make litkg-sync
-make litkg-pipeline LITKG_CONFIG=examples/prml-vslam.toml LITKG_PIPELINE_ARGS="--download-pdfs"
-make litkg-semantic-enrich LITKG_CONFIG=examples/prml-vslam.toml
-make litkg-semantic-search LITKG_CONFIG=examples/prml-vslam.toml SEMANTIC_QUERY='"next best view" + reconstruction'
+make help
 ```
 
 ## Semantic Scholar
@@ -104,7 +129,9 @@ cargo run -p litkg-cli -- semantic-scholar-search --query '"next best view" + re
 cargo run -p litkg-cli -- semantic-scholar-recommend --positive <paperId> --limit 25
 ```
 
-Registry enrichment uses `/graph/v1/paper/batch` with local DOI/arXiv identifiers, attaches the returned compact paper metadata to each registry row, and preserves local BibTeX/manifest titles as the primary source of truth. Graphify materialization and Neo4j export include Semantic Scholar paper IDs, authors, fields of study, external IDs, and citation-count properties when present.
+Registry enrichment uses `/graph/v1/paper/batch` with local DOI/arXiv identifiers, attaches the returned compact paper metadata to each registry row, and preserves local BibTeX/manifest titles as the primary source of truth. The Rust client also exposes citation and reference tracing helpers over the official paper citation/reference endpoints. Graphify materialization and Neo4j export include Semantic Scholar paper IDs, authors, fields of study, external IDs, and citation-count properties when present.
+
+Local TeX citation unification is separate from Semantic Scholar enrichment: parsed papers preserve raw keys and also infer `CITES_PAPER` edges by exact key, DOI, arXiv ID, and normalized title when source-local BibTeX metadata is available.
 
 ## Local KG Runtime
 

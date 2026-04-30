@@ -269,6 +269,7 @@ mod tests {
                 caption: "Table".to_string(),
             }],
             citations: vec![],
+            citation_references: Vec::new(),
             provenance: vec!["registry".to_string()],
         })
     }

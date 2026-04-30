@@ -131,12 +131,17 @@ ensure_cgc_runtime() {
   auto_setup="${KG_CGC_AUTO_SETUP:-1}"
   force_reinstall="${CGC_FORCE_REINSTALL:-0}"
 
-  if [[ ! -x "${python_bin}" ]]; then
+  if [[ ! -x "${python_bin}" ]] || ! "${python_bin}" -m pip --version >/dev/null 2>&1; then
     if [[ "${auto_setup}" != "1" ]]; then
-      die "CGC venv missing at ${CGC_VENV_DIR_ABS} and KG_CGC_AUTO_SETUP=0."
+      die "CGC venv missing or lacks pip at ${CGC_VENV_DIR_ABS} and KG_CGC_AUTO_SETUP=0."
     fi
-    info "Creating CGC virtualenv at ${CGC_VENV_DIR_ABS}"
-    python3 -m venv "${CGC_VENV_DIR_ABS}"
+    if has_cmd uv; then
+      info "Creating CGC virtualenv at ${CGC_VENV_DIR_ABS} with uv"
+      uv venv --seed --clear "${CGC_VENV_DIR_ABS}"
+    else
+      info "Creating CGC virtualenv at ${CGC_VENV_DIR_ABS}"
+      python3 -m venv "${CGC_VENV_DIR_ABS}"
+    fi
     force_reinstall=1
   fi
 

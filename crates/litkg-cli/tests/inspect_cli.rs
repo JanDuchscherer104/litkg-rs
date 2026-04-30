@@ -74,6 +74,7 @@ fn write_test_config(root: &Path) -> PathBuf {
             caption: "Caption token table".into(),
         }],
         citations: vec!["ref2024alpha".into()],
+        citation_references: vec![],
         provenance: vec!["demo.tex".into()],
     }];
     write_parsed_papers(&parsed_root, &parsed).unwrap();
@@ -228,6 +229,7 @@ fn write_stale_snapshot_config(root: &Path) -> PathBuf {
             figures: vec![],
             tables: vec![],
             citations: vec![],
+            citation_references: vec![],
             provenance: vec!["paper-tex/main.tex".into()],
         }],
     )

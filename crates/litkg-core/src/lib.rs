@@ -48,10 +48,11 @@ pub use memory::{
     MemoryRelation, MemoryRelationType, MemorySurface, MemorySurfaceKind,
 };
 pub use model::{
-    DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind, NotebookDocument, PaperFigure,
-    PaperSection, PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper, ResearchMetadata,
-    ResearchPaper, SemanticScholarAuthor, SemanticScholarFieldOfStudy,
-    SemanticScholarOpenAccessPdf, SemanticScholarPaper, SemanticScholarTldr, SourceKind,
+    CitationReference, DownloadMode, MaterializedDoc, NotebookCell, NotebookCellKind,
+    NotebookDocument, PaperFigure, PaperSection, PaperSourceRecord, PaperTable, ParseStatus,
+    ParsedPaper, ResearchMetadata, ResearchPaper, SemanticScholarAuthor,
+    SemanticScholarFieldOfStudy, SemanticScholarOpenAccessPdf, SemanticScholarPaper,
+    SemanticScholarTldr, SourceKind,
 };
 pub use notebook::{
     ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,

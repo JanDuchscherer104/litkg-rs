@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -50,7 +51,11 @@ pub struct PaperSourceRecord {
 pub struct SemanticScholarPaper {
     pub paper_id: Option<String>,
     pub corpus_id: Option<u64>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_semantic_scholar_external_ids",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
     pub external_ids: BTreeMap<String, String>,
     pub url: Option<String>,
     pub title: Option<String>,
@@ -60,13 +65,29 @@ pub struct SemanticScholarPaper {
     pub venue: Option<String>,
     pub year: Option<i32>,
     pub publication_date: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_semantic_scholar_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub publication_types: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_semantic_scholar_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub fields_of_study: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_semantic_scholar_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub s2_fields_of_study: Vec<SemanticScholarFieldOfStudy>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_semantic_scholar_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub authors: Vec<SemanticScholarAuthor>,
     pub citation_count: Option<u64>,
     pub influential_citation_count: Option<u64>,
@@ -83,7 +104,11 @@ pub struct SemanticScholarAuthor {
     pub paper_count: Option<u64>,
     pub citation_count: Option<u64>,
     pub h_index: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_semantic_scholar_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub affiliations: Vec<String>,
 }
 
@@ -105,6 +130,32 @@ pub struct SemanticScholarFieldOfStudy {
     pub source: Option<String>,
 }
 
+fn deserialize_semantic_scholar_external_ids<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<BTreeMap<String, Value>>::deserialize(deserializer)?.unwrap_or_default();
+    Ok(raw
+        .into_iter()
+        .filter_map(|(key, value)| match value {
+            Value::String(text) => Some((key, text)),
+            Value::Number(number) => Some((key, number.to_string())),
+            Value::Bool(flag) => Some((key, flag.to_string())),
+            _ => None,
+        })
+        .collect())
+}
+
+fn deserialize_semantic_scholar_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PaperSection {
     pub level: u8,
@@ -122,6 +173,15 @@ pub struct PaperTable {
     pub caption: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CitationReference {
+    pub key: String,
+    pub title: Option<String>,
+    pub doi: Option<String>,
+    pub arxiv_id: Option<String>,
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParsedPaper {
     pub metadata: PaperSourceRecord,
@@ -130,6 +190,8 @@ pub struct ParsedPaper {
     pub figures: Vec<PaperFigure>,
     pub tables: Vec<PaperTable>,
     pub citations: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub citation_references: Vec<CitationReference>,
     pub provenance: Vec<String>,
 }
 
