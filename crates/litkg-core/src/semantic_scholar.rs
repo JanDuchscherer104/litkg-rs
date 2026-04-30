@@ -7,6 +7,8 @@ use std::env;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use std::path::PathBuf;
+
 const GRAPH_BASE: &str = "https://api.semanticscholar.org/graph/v1";
 const RECOMMENDATIONS_BASE: &str = "https://api.semanticscholar.org/recommendations/v1";
 
@@ -29,6 +31,36 @@ pub struct SemanticScholarRequest {
     path: String,
     params: Vec<(String, String)>,
     body: Option<Value>,
+}
+
+impl SemanticScholarRequest {
+    fn cache_key(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(match self.method {
+            SemanticScholarMethod::Get => b"GET".as_slice(),
+            SemanticScholarMethod::Post => b"POST".as_slice(),
+        });
+        hasher.update(b"|");
+        hasher.update(match self.service {
+            SemanticScholarService::Graph => b"GRAPH".as_slice(),
+            SemanticScholarService::Recommendations => b"REC".as_slice(),
+        });
+        hasher.update(b"|");
+        hasher.update(self.path.as_bytes());
+        hasher.update(b"|");
+        for (k, v) in &self.params {
+            hasher.update(k.as_bytes());
+            hasher.update(b"=");
+            hasher.update(v.as_bytes());
+            hasher.update(b"&");
+        }
+        hasher.update(b"|");
+        if let Some(body) = &self.body {
+            hasher.update(serde_json::to_string(body).unwrap().as_bytes());
+        }
+        hex::encode(hasher.finalize())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,21 +158,27 @@ pub struct SemanticScholarClient<T: SemanticScholarTransport = UreqSemanticSchol
     config: SemanticScholarConfig,
     transport: T,
     last_request_at: Option<Instant>,
+    cache_dir: Option<PathBuf>,
 }
 
 impl SemanticScholarClient<UreqSemanticScholarTransport> {
-    pub fn from_config(config: SemanticScholarConfig) -> Result<Self> {
+    pub fn from_config(config: SemanticScholarConfig, cache_dir: Option<PathBuf>) -> Result<Self> {
         let transport = UreqSemanticScholarTransport::from_config(&config)?;
-        Ok(Self::with_transport(config, transport))
+        Ok(Self::with_transport(config, transport, cache_dir))
     }
 }
 
 impl<T: SemanticScholarTransport> SemanticScholarClient<T> {
-    pub fn with_transport(config: SemanticScholarConfig, transport: T) -> Self {
+    pub fn with_transport(
+        config: SemanticScholarConfig,
+        transport: T,
+        cache_dir: Option<PathBuf>,
+    ) -> Self {
         Self {
             config,
             transport,
             last_request_at: None,
+            cache_dir,
         }
     }
 
@@ -287,8 +325,17 @@ impl<T: SemanticScholarTransport> SemanticScholarClient<T> {
 
     fn request_json<R>(&mut self, request: SemanticScholarRequest) -> Result<R>
     where
-        R: for<'de> Deserialize<'de>,
+        R: for<'de> Deserialize<'de> + Serialize,
     {
+        let cache_key = request.cache_key();
+        if let Some(dir) = &self.cache_dir {
+            if let Ok(data) = cacache::read_sync(dir, &cache_key) {
+                if let Ok(parsed) = serde_json::from_slice::<R>(&data) {
+                    return Ok(parsed);
+                }
+            }
+        }
+
         for attempt in 0..=self.config.max_retries {
             self.throttle();
             let response = self.transport.request(&request)?;
@@ -316,8 +363,14 @@ impl<T: SemanticScholarTransport> SemanticScholarClient<T> {
                     response.body
                 ));
             }
-            return serde_json::from_value(response.body)
-                .context("Failed to parse Semantic Scholar response");
+            let parsed = serde_json::from_value::<R>(response.body)
+                .context("Failed to parse Semantic Scholar response")?;
+            if let Some(dir) = &self.cache_dir {
+                if let Ok(data) = serde_json::to_vec(&parsed) {
+                    let _ = cacache::write_sync(dir, &cache_key, data);
+                }
+            }
+            return Ok(parsed);
         }
         unreachable!("retry loop always returns")
     }
@@ -459,7 +512,8 @@ pub fn enrich_registry_with_semantic_scholar(
     registry: &[PaperSourceRecord],
 ) -> Result<Vec<PaperSourceRecord>> {
     let semantic_config = config.semantic_scholar_config();
-    let mut client = SemanticScholarClient::from_config(semantic_config.clone())?;
+    let cache_dir = Some(config.runtime_cache_root().join("semantic_scholar"));
+    let mut client = SemanticScholarClient::from_config(semantic_config.clone(), cache_dir)?;
     enrich_registry_with_semantic_scholar_client(registry, &semantic_config, &mut client)
 }
 
@@ -653,7 +707,7 @@ mod tests {
             min_interval_s: 0.0,
             ..SemanticScholarConfig::default()
         };
-        let mut client = SemanticScholarClient::with_transport(config.clone(), transport);
+        let mut client = SemanticScholarClient::with_transport(config.clone(), transport, None);
 
         let enriched =
             enrich_registry_with_semantic_scholar_client(&[record()], &config, &mut client)
@@ -677,7 +731,7 @@ mod tests {
             min_interval_s: 0.0,
             ..SemanticScholarConfig::default()
         };
-        let mut client = SemanticScholarClient::with_transport(config, transport);
+        let mut client = SemanticScholarClient::with_transport(config, transport, None);
         let request = SemanticScholarSearchRequest::new(
             "\"next best view\"",
             5,
@@ -706,7 +760,7 @@ mod tests {
             min_interval_s: 0.0,
             ..SemanticScholarConfig::default()
         };
-        let mut client = SemanticScholarClient::with_transport(config, transport);
+        let mut client = SemanticScholarClient::with_transport(config, transport, None);
 
         let citations = client
             .get_citations("abc123", 10, &["paperId".into(), "title".into()])

@@ -25,3 +25,6 @@ tempfile.workspace = true
 toml.workspace = true
 ureq.workspace = true
 walkdir.workspace = true
+cacache = "13.1.0"
+sha2 = "0.10.9"
+hex = "0.4.3"
