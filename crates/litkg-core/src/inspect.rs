@@ -1,10 +1,17 @@
 use crate::config::RepoConfig;
 use crate::materialize::matched_relevance_tags;
+use crate::memory::load_project_memory;
 use crate::model::{PaperSourceRecord, ParseStatus, ParsedPaper};
+use crate::registry::{build_registry_snapshot, load_registry};
+use crate::{load_parsed_papers, SinkMode};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::env;
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CorpusStats {
@@ -73,6 +80,328 @@ pub struct PaperInspection {
     pub cited_by: Vec<PaperReference>,
     pub provenance: Vec<String>,
     pub relevance_tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityState {
+    Ready,
+    Generated,
+    Configured,
+    Implemented,
+    Missing,
+    NotChecked,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityOptions {
+    pub config_path: PathBuf,
+    pub repo_root: Option<PathBuf>,
+    pub benchmark_catalog: Option<PathBuf>,
+    pub benchmark_integrations: Option<PathBuf>,
+    pub check_runtime: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RepoCapabilitySnapshot {
+    pub config_path: PathBuf,
+    pub repo_root: Option<PathBuf>,
+    pub literature_registry: LiteratureRegistryCapability,
+    pub downloads: DownloadCapability,
+    pub parsing: ParsingCapability,
+    pub graph_outputs: GraphOutputCapability,
+    pub semantic_scholar: SemanticScholarCapability,
+    pub project_memory: ProjectMemoryCapability,
+    pub runtime: RuntimeCapability,
+    pub benchmarks: Option<BenchmarkCapability>,
+    pub next_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LiteratureRegistryCapability {
+    pub state: CapabilityState,
+    pub manifest_present: bool,
+    pub bib_present: bool,
+    pub registry_generated: bool,
+    pub registry_path: PathBuf,
+    pub records_total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DownloadCapability {
+    pub state: CapabilityState,
+    pub arxiv_records: usize,
+    pub records_with_local_tex: usize,
+    pub records_with_local_pdf: usize,
+    pub download_pdfs_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ParsingCapability {
+    pub state: CapabilityState,
+    pub parsed_root: PathBuf,
+    pub parsed_papers: usize,
+    pub papers_with_structured_content: usize,
+    pub total_sections: usize,
+    pub total_figures: usize,
+    pub total_tables: usize,
+    pub total_citations: usize,
+    pub total_citation_references: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GraphOutputCapability {
+    pub graphify_state: CapabilityState,
+    pub graphify_configured: bool,
+    pub graphify_index_generated: bool,
+    pub graphify_manifest_generated: bool,
+    pub neo4j_state: CapabilityState,
+    pub neo4j_configured: bool,
+    pub neo4j_export_root: PathBuf,
+    pub neo4j_nodes_generated: bool,
+    pub neo4j_edges_generated: bool,
+    pub native_viewer_state: CapabilityState,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SemanticScholarCapability {
+    pub state: CapabilityState,
+    pub configured: bool,
+    pub api_key_env: String,
+    pub api_key_present: bool,
+    pub enriched_records: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProjectMemoryCapability {
+    pub state: CapabilityState,
+    pub configured: bool,
+    pub root: Option<PathBuf>,
+    pub root_present: bool,
+    pub imported_nodes: usize,
+    pub imported_surfaces: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RuntimeCapability {
+    pub checked: bool,
+    pub docker: RuntimeCheck,
+    pub neo4j_service: RuntimeCheck,
+    pub uv: RuntimeCheck,
+    pub codegraphcontext: RuntimeCheck,
+    pub graphiti_helpers: RuntimeCheck,
+    pub ollama_service: RuntimeCheck,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RuntimeCheck {
+    pub state: CapabilityState,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BenchmarkCapability {
+    pub state: CapabilityState,
+    pub catalog_present: bool,
+    pub integrations_present: bool,
+    pub support_entries: usize,
+    pub ready_entries: usize,
+    pub missing_binaries: Vec<String>,
+    pub missing_env_vars: Vec<String>,
+}
+
+pub fn compute_repo_capabilities(
+    config: &RepoConfig,
+    options: CapabilityOptions,
+) -> Result<RepoCapabilitySnapshot> {
+    let registry_path = config.registry_path();
+    let registry_generated = registry_path.is_file();
+    let parsed_root = config.parsed_root();
+    let neo4j_export_root = config.neo4j_export_root();
+    let manifest_present = config.manifest_path.is_file();
+    let bib_present = config.bib_path.is_file();
+
+    let registry =
+        load_registry_snapshot(config, registry_generated, manifest_present, bib_present)?;
+    let parsed_papers = load_parsed_papers(&parsed_root)?;
+    let stats = compute_corpus_stats(&registry, &parsed_papers);
+
+    let literature_registry = LiteratureRegistryCapability {
+        state: if registry_generated {
+            CapabilityState::Generated
+        } else if manifest_present && bib_present {
+            CapabilityState::Ready
+        } else {
+            CapabilityState::Missing
+        },
+        manifest_present,
+        bib_present,
+        registry_generated,
+        registry_path: registry_path.clone(),
+        records_total: registry.len(),
+    };
+
+    let downloads = DownloadCapability {
+        state: if registry.is_empty() {
+            CapabilityState::Missing
+        } else if stats.papers_with_local_tex == registry.len()
+            && (!config.download_pdfs
+                || stats.papers_with_local_pdf == expected_pdf_count(&registry))
+        {
+            CapabilityState::Ready
+        } else {
+            CapabilityState::Configured
+        },
+        arxiv_records: registry
+            .iter()
+            .filter(|record| record.arxiv_id.is_some())
+            .count(),
+        records_with_local_tex: stats.papers_with_local_tex,
+        records_with_local_pdf: stats.papers_with_local_pdf,
+        download_pdfs_configured: config.download_pdfs,
+    };
+
+    let parsing = ParsingCapability {
+        state: if stats.papers_with_parsed_content > 0 {
+            CapabilityState::Generated
+        } else if stats.papers_with_local_tex > 0 {
+            CapabilityState::Configured
+        } else {
+            CapabilityState::Missing
+        },
+        parsed_root: parsed_root.clone(),
+        parsed_papers: parsed_papers.len(),
+        papers_with_structured_content: stats.papers_with_parsed_content,
+        total_sections: stats.total_sections,
+        total_figures: stats.total_figures,
+        total_tables: stats.total_tables,
+        total_citations: stats.total_citations,
+        total_citation_references: parsed_papers
+            .iter()
+            .map(|paper| paper.citation_references.len())
+            .sum(),
+    };
+
+    let graphify_configured = matches!(config.sink, SinkMode::Graphify | SinkMode::Both);
+    let graphify_index_generated = config.generated_docs_root.join("index.md").is_file();
+    let graphify_manifest_generated = config
+        .generated_docs_root
+        .join("graphify-manifest.json")
+        .is_file();
+    let neo4j_configured = matches!(config.sink, SinkMode::Neo4j | SinkMode::Both);
+    let neo4j_nodes_generated = neo4j_export_root.join("nodes.jsonl").is_file();
+    let neo4j_edges_generated = neo4j_export_root.join("edges.jsonl").is_file();
+    let neo4j_generated = neo4j_nodes_generated && neo4j_edges_generated;
+    let graph_outputs = GraphOutputCapability {
+        graphify_state: if graphify_index_generated && graphify_manifest_generated {
+            CapabilityState::Generated
+        } else if graphify_configured {
+            CapabilityState::Configured
+        } else {
+            CapabilityState::Unavailable
+        },
+        graphify_configured,
+        graphify_index_generated,
+        graphify_manifest_generated,
+        neo4j_state: if neo4j_generated {
+            CapabilityState::Generated
+        } else if neo4j_configured {
+            CapabilityState::Configured
+        } else {
+            CapabilityState::Unavailable
+        },
+        neo4j_configured,
+        neo4j_export_root: neo4j_export_root.clone(),
+        neo4j_nodes_generated,
+        neo4j_edges_generated,
+        native_viewer_state: if neo4j_generated {
+            CapabilityState::Ready
+        } else {
+            CapabilityState::Missing
+        },
+    };
+
+    let semantic_config = config.semantic_scholar_config();
+    let semantic_configured = semantic_config.enabled;
+    let api_key_present = env::var(&semantic_config.api_key_env)
+        .ok()
+        .is_some_and(|value| !value.is_empty());
+    let enriched_records = registry
+        .iter()
+        .filter(|record| record.semantic_scholar.is_some())
+        .count();
+    let semantic_scholar = SemanticScholarCapability {
+        state: if !semantic_configured {
+            CapabilityState::Unavailable
+        } else if enriched_records > 0 {
+            CapabilityState::Generated
+        } else if api_key_present {
+            CapabilityState::Ready
+        } else {
+            CapabilityState::Configured
+        },
+        configured: semantic_configured,
+        api_key_env: semantic_config.api_key_env,
+        api_key_present,
+        enriched_records,
+    };
+
+    let memory_root = config.memory_state_root();
+    let memory_root_present = memory_root.as_ref().is_some_and(|root| root.is_dir());
+    let memory_bundle = if memory_root_present {
+        load_project_memory(config, &parsed_papers).ok()
+    } else {
+        None
+    };
+    let project_memory = ProjectMemoryCapability {
+        state: if memory_bundle.is_some() {
+            CapabilityState::Ready
+        } else if memory_root.is_some() {
+            CapabilityState::Configured
+        } else {
+            CapabilityState::Unavailable
+        },
+        configured: memory_root.is_some(),
+        root: memory_root,
+        root_present: memory_root_present,
+        imported_nodes: memory_bundle
+            .as_ref()
+            .map(|bundle| bundle.nodes.len())
+            .unwrap_or_default(),
+        imported_surfaces: memory_bundle
+            .as_ref()
+            .map(|bundle| bundle.surfaces.len())
+            .unwrap_or_default(),
+    };
+
+    let runtime = inspect_runtime(options.repo_root.as_deref(), options.check_runtime);
+    let benchmarks = inspect_benchmark_capability(
+        options.benchmark_catalog.as_deref(),
+        options.benchmark_integrations.as_deref(),
+    );
+    let next_actions = next_actions(
+        &options.config_path,
+        &literature_registry,
+        &downloads,
+        &parsing,
+        &graph_outputs,
+        &semantic_scholar,
+    );
+
+    Ok(RepoCapabilitySnapshot {
+        config_path: options.config_path,
+        repo_root: options.repo_root,
+        literature_registry,
+        downloads,
+        parsing,
+        graph_outputs,
+        semantic_scholar,
+        project_memory,
+        runtime,
+        benchmarks,
+        next_actions,
+    })
 }
 
 pub fn compute_corpus_stats(
@@ -681,6 +1010,257 @@ fn live_parsed_papers<'a>(
             .into_values()
             .collect(),
     )
+}
+
+fn load_registry_snapshot(
+    config: &RepoConfig,
+    registry_generated: bool,
+    manifest_present: bool,
+    bib_present: bool,
+) -> Result<Vec<PaperSourceRecord>> {
+    if registry_generated {
+        return load_registry(config.registry_path());
+    }
+    if manifest_present && bib_present {
+        return build_registry_snapshot(config);
+    }
+    Ok(Vec::new())
+}
+
+fn expected_pdf_count(registry: &[PaperSourceRecord]) -> usize {
+    registry
+        .iter()
+        .filter(|record| record.pdf_file.is_some())
+        .count()
+}
+
+fn inspect_runtime(repo_root: Option<&Path>, check_runtime: bool) -> RuntimeCapability {
+    if !check_runtime {
+        let not_checked = RuntimeCheck {
+            state: CapabilityState::NotChecked,
+            detail: "runtime checks disabled; pass --check-runtime".into(),
+        };
+        return RuntimeCapability {
+            checked: false,
+            docker: not_checked.clone(),
+            neo4j_service: not_checked.clone(),
+            uv: not_checked.clone(),
+            codegraphcontext: not_checked.clone(),
+            graphiti_helpers: not_checked.clone(),
+            ollama_service: not_checked,
+        };
+    }
+
+    let docker = command_check("docker", &["compose", "version"]);
+    let uv = command_check("uv", &["--version"]);
+    let neo4j_service = tcp_check("127.0.0.1:7687", "Neo4j Bolt port 7687");
+    let ollama_service = tcp_check("127.0.0.1:11434", "Ollama HTTP port 11434");
+    let codegraphcontext = repo_root
+        .map(|root| {
+            let python = root.join(".cache/kg/venvs/cgc/bin/python");
+            if python.is_file() {
+                RuntimeCheck {
+                    state: CapabilityState::Ready,
+                    detail: format!(
+                        "CodeGraphContext virtualenv present at {}",
+                        python.display()
+                    ),
+                }
+            } else {
+                RuntimeCheck {
+                    state: CapabilityState::Missing,
+                    detail: format!("No CodeGraphContext virtualenv at {}", python.display()),
+                }
+            }
+        })
+        .unwrap_or_else(|| RuntimeCheck {
+            state: CapabilityState::NotChecked,
+            detail: "repo root not supplied".into(),
+        });
+    let graphiti_helpers = repo_root
+        .map(|root| {
+            let start = root.join("scripts/kg/start_graphiti.sh");
+            let ingest = root.join("scripts/kg/ingest_docs.sh");
+            if start.is_file() && ingest.is_file() {
+                RuntimeCheck {
+                    state: CapabilityState::Ready,
+                    detail: "Graphiti helper scripts are present".into(),
+                }
+            } else {
+                RuntimeCheck {
+                    state: CapabilityState::Missing,
+                    detail: "Graphiti helper scripts are missing".into(),
+                }
+            }
+        })
+        .unwrap_or_else(|| RuntimeCheck {
+            state: CapabilityState::NotChecked,
+            detail: "repo root not supplied".into(),
+        });
+
+    RuntimeCapability {
+        checked: true,
+        docker,
+        neo4j_service,
+        uv,
+        codegraphcontext,
+        graphiti_helpers,
+        ollama_service,
+    }
+}
+
+fn command_check(binary: &str, args: &[&str]) -> RuntimeCheck {
+    match Command::new(binary).args(args).output() {
+        Ok(output) if output.status.success() => RuntimeCheck {
+            state: CapabilityState::Ready,
+            detail: format!("`{binary}` is available"),
+        },
+        Ok(output) => RuntimeCheck {
+            state: CapabilityState::Unavailable,
+            detail: format!("`{binary}` exited with status {}", output.status),
+        },
+        Err(error) => RuntimeCheck {
+            state: CapabilityState::Missing,
+            detail: format!("`{binary}` unavailable: {error}"),
+        },
+    }
+}
+
+fn tcp_check(address: &str, label: &str) -> RuntimeCheck {
+    let Ok(socket) = address.parse::<SocketAddr>() else {
+        return RuntimeCheck {
+            state: CapabilityState::Unavailable,
+            detail: format!("invalid runtime address {address}"),
+        };
+    };
+    match TcpStream::connect_timeout(&socket, Duration::from_millis(150)) {
+        Ok(_) => RuntimeCheck {
+            state: CapabilityState::Ready,
+            detail: format!("{label} is reachable"),
+        },
+        Err(error) => RuntimeCheck {
+            state: CapabilityState::Unavailable,
+            detail: format!("{label} is not reachable: {error}"),
+        },
+    }
+}
+
+fn inspect_benchmark_capability(
+    catalog: Option<&Path>,
+    integrations: Option<&Path>,
+) -> Option<BenchmarkCapability> {
+    let catalog = catalog?;
+    let catalog_present = catalog.is_file();
+    let integrations_present = integrations.is_some_and(|path| path.is_file());
+    let mut support_entries = 0usize;
+    let mut ready_entries = 0usize;
+    let mut missing_binaries = BTreeSet::new();
+    let mut missing_env_vars = BTreeSet::new();
+
+    if catalog_present && integrations_present {
+        if let Some(integrations) = integrations {
+            if let (Ok(catalog), Ok(integrations)) = (
+                crate::benchmark::load_benchmark_catalog(catalog),
+                crate::benchmark_runner::load_benchmark_integrations(integrations),
+            ) {
+                let empty_ids: Vec<String> = Vec::new();
+                if let Ok(statuses) = crate::benchmark_runner::inspect_benchmark_support(
+                    &catalog,
+                    &integrations,
+                    None,
+                    &empty_ids,
+                ) {
+                    support_entries = statuses.len();
+                    ready_entries = statuses
+                        .iter()
+                        .filter(|status| {
+                            status.missing_binaries.is_empty() && status.missing_env_vars.is_empty()
+                        })
+                        .count();
+                    for status in statuses {
+                        missing_binaries.extend(status.missing_binaries);
+                        missing_env_vars.extend(status.missing_env_vars);
+                    }
+                }
+            }
+        }
+    }
+
+    Some(BenchmarkCapability {
+        state: if !catalog_present {
+            CapabilityState::Missing
+        } else if !integrations_present {
+            CapabilityState::Configured
+        } else if ready_entries > 0 {
+            CapabilityState::Ready
+        } else {
+            CapabilityState::Generated
+        },
+        catalog_present,
+        integrations_present,
+        support_entries,
+        ready_entries,
+        missing_binaries: missing_binaries.into_iter().collect(),
+        missing_env_vars: missing_env_vars.into_iter().collect(),
+    })
+}
+
+fn next_actions(
+    config_path: &Path,
+    registry: &LiteratureRegistryCapability,
+    downloads: &DownloadCapability,
+    parsing: &ParsingCapability,
+    graph_outputs: &GraphOutputCapability,
+    semantic_scholar: &SemanticScholarCapability,
+) -> Vec<String> {
+    let config = config_path.display();
+    let mut actions = Vec::new();
+    if !registry.registry_generated && registry.manifest_present && registry.bib_present {
+        actions.push(format!(
+            "cargo run -p litkg-cli -- sync-registry --config {config}"
+        ));
+    }
+    if registry.records_total > 0
+        && downloads.records_with_local_tex < downloads.arxiv_records
+        && downloads.arxiv_records > 0
+    {
+        actions.push(format!(
+            "cargo run -p litkg-cli -- download --config {config}"
+        ));
+    }
+    if parsing.parsed_papers < registry.records_total && downloads.records_with_local_tex > 0 {
+        actions.push(format!("cargo run -p litkg-cli -- parse --config {config}"));
+    }
+    if graph_outputs.graphify_configured
+        && !(graph_outputs.graphify_index_generated && graph_outputs.graphify_manifest_generated)
+        && parsing.parsed_papers > 0
+    {
+        actions.push(format!(
+            "cargo run -p litkg-cli -- materialize --config {config}"
+        ));
+    }
+    if semantic_scholar.configured
+        && semantic_scholar.api_key_present
+        && semantic_scholar.enriched_records < registry.records_total
+    {
+        actions.push(format!(
+            "cargo run -p litkg-cli -- enrich-semantic-scholar --config {config}"
+        ));
+    }
+    if graph_outputs.neo4j_configured
+        && !(graph_outputs.neo4j_nodes_generated && graph_outputs.neo4j_edges_generated)
+        && parsing.parsed_papers > 0
+    {
+        actions.push(format!(
+            "cargo run -p litkg-cli -- export-neo4j --config {config}"
+        ));
+    }
+    if graph_outputs.neo4j_nodes_generated && graph_outputs.neo4j_edges_generated {
+        actions.push(format!(
+            "cargo run -p litkg-cli -- inspect-graph --config {config}"
+        ));
+    }
+    actions
 }
 
 #[cfg(test)]

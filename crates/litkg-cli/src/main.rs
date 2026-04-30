@@ -1,16 +1,17 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litkg_core::{
-    build_registry_snapshot, compute_corpus_stats, download_registry_sources,
-    enrich_registry_with_semantic_scholar, inspect_benchmark_support, inspect_paper,
-    load_parsed_papers, load_registry, parse_registry_papers, promote_benchmark_results,
-    render_promoted_targets, run_benchmarks, search_papers, sync_registry,
-    validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
+    build_registry_snapshot, compute_corpus_stats, compute_repo_capabilities,
+    download_registry_sources, enrich_registry_with_semantic_scholar, inspect_benchmark_support,
+    inspect_paper, load_parsed_papers, load_registry, parse_registry_papers,
+    promote_benchmark_results, render_promoted_targets, run_benchmarks, search_papers,
+    sync_registry, validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
     write_parsed_papers, AutoResearchRenderFormat, BenchmarkPromotionRequest, BenchmarkResults,
-    BenchmarkSupportStatus, CorpusStats, DownloadOptions, MetricThresholdComparison,
-    MetricThresholdRule, PaperInspection, PaperSourceRecord, ParsedPaper,
-    PromotionComponentSelection, RepoConfig, SearchResults, SemanticScholarClient,
-    SemanticScholarConfig, SemanticScholarPaper, SemanticScholarSearchRequest, SinkMode,
+    BenchmarkSupportStatus, CapabilityOptions, CapabilityState, CorpusStats, DownloadOptions,
+    MetricThresholdComparison, MetricThresholdRule, PaperInspection, PaperSourceRecord,
+    ParsedPaper, PromotionComponentSelection, RepoCapabilitySnapshot, RepoConfig, RuntimeCheck,
+    SearchResults, SemanticScholarClient, SemanticScholarConfig, SemanticScholarPaper,
+    SemanticScholarSearchRequest, SinkMode,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
@@ -37,6 +38,7 @@ enum Commands {
     Pipeline(DownloadCommand),
     ExportNeo4j(WriteCommand),
     InspectGraph(ConfigArg),
+    Capabilities(CapabilitiesCommand),
     Stats(StatsCommand),
     Search(SearchCommand),
     ShowPaper(ShowPaperCommand),
@@ -78,6 +80,22 @@ enum OutputFormat {
 struct StatsCommand {
     #[command(flatten)]
     config: ConfigArg,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct CapabilitiesCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    #[arg(long = "repo-root")]
+    repo_root: Option<String>,
+    #[arg(long = "benchmark-catalog")]
+    benchmark_catalog: Option<String>,
+    #[arg(long = "benchmark-integrations")]
+    benchmark_integrations: Option<String>,
+    #[arg(long, default_value_t = false)]
+    check_runtime: bool,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
 }
@@ -411,6 +429,20 @@ fn main() -> Result<()> {
         Commands::InspectGraph(args) => {
             let config = RepoConfig::load(&args.config)?;
             inspect_graph(&config)?;
+        }
+        Commands::Capabilities(args) => {
+            let config = RepoConfig::load(&args.config.config)?;
+            let snapshot = compute_repo_capabilities(
+                &config,
+                CapabilityOptions {
+                    config_path: PathBuf::from(&args.config.config),
+                    repo_root: args.repo_root.map(PathBuf::from),
+                    benchmark_catalog: args.benchmark_catalog.map(PathBuf::from),
+                    benchmark_integrations: args.benchmark_integrations.map(PathBuf::from),
+                    check_runtime: args.check_runtime,
+                },
+            )?;
+            print_structured_output(&snapshot, args.format, render_capabilities)?;
         }
         Commands::Stats(args) => {
             let config = RepoConfig::load(&args.config.config)?;
@@ -877,6 +909,150 @@ fn render_stats(stats: &CorpusStats) -> String {
     lines.push("parse_statuses:".to_string());
     lines.extend(render_count_map(&stats.parse_status_counts));
     lines.join("\n")
+}
+
+fn render_capabilities(snapshot: &RepoCapabilitySnapshot) -> String {
+    let mut lines = vec![
+        "litkg capability snapshot".to_string(),
+        format!("config: {}", snapshot.config_path.display()),
+    ];
+    if let Some(repo_root) = &snapshot.repo_root {
+        lines.push(format!("repo_root: {}", repo_root.display()));
+    }
+
+    lines.extend([
+        String::new(),
+        "enabled:".to_string(),
+        format!(
+            "  literature registry: {}, {} record(s), manifest={}, bib={}, registry_generated={}",
+            state_label(&snapshot.literature_registry.state),
+            snapshot.literature_registry.records_total,
+            yes_no(snapshot.literature_registry.manifest_present),
+            yes_no(snapshot.literature_registry.bib_present),
+            yes_no(snapshot.literature_registry.registry_generated),
+        ),
+        format!(
+            "  downloads: {}, arxiv_records={}, local_tex={}, local_pdf={}, download_pdfs={}",
+            state_label(&snapshot.downloads.state),
+            snapshot.downloads.arxiv_records,
+            snapshot.downloads.records_with_local_tex,
+            snapshot.downloads.records_with_local_pdf,
+            yes_no(snapshot.downloads.download_pdfs_configured),
+        ),
+        format!(
+            "  tex parsing: {}, parsed={}, structured={}, sections={}, citations={}, citation_refs={}",
+            state_label(&snapshot.parsing.state),
+            snapshot.parsing.parsed_papers,
+            snapshot.parsing.papers_with_structured_content,
+            snapshot.parsing.total_sections,
+            snapshot.parsing.total_citations,
+            snapshot.parsing.total_citation_references,
+        ),
+        format!(
+            "  graphify: {}, configured={}, index={}, manifest={}",
+            state_label(&snapshot.graph_outputs.graphify_state),
+            yes_no(snapshot.graph_outputs.graphify_configured),
+            yes_no(snapshot.graph_outputs.graphify_index_generated),
+            yes_no(snapshot.graph_outputs.graphify_manifest_generated),
+        ),
+        format!(
+            "  neo4j export: {}, configured={}, nodes={}, edges={}",
+            state_label(&snapshot.graph_outputs.neo4j_state),
+            yes_no(snapshot.graph_outputs.neo4j_configured),
+            yes_no(snapshot.graph_outputs.neo4j_nodes_generated),
+            yes_no(snapshot.graph_outputs.neo4j_edges_generated),
+        ),
+        format!(
+            "  native viewer: {}",
+            state_label(&snapshot.graph_outputs.native_viewer_state)
+        ),
+        format!(
+            "  semantic scholar: {}, configured={}, key_env={}, key_present={}, enriched={}",
+            state_label(&snapshot.semantic_scholar.state),
+            yes_no(snapshot.semantic_scholar.configured),
+            snapshot.semantic_scholar.api_key_env,
+            yes_no(snapshot.semantic_scholar.api_key_present),
+            snapshot.semantic_scholar.enriched_records,
+        ),
+        format!(
+            "  project memory: {}, configured={}, root_present={}, nodes={}, surfaces={}",
+            state_label(&snapshot.project_memory.state),
+            yes_no(snapshot.project_memory.configured),
+            yes_no(snapshot.project_memory.root_present),
+            snapshot.project_memory.imported_nodes,
+            snapshot.project_memory.imported_surfaces,
+        ),
+    ]);
+
+    lines.extend([
+        String::new(),
+        "runtime:".to_string(),
+        format!("  checked: {}", yes_no(snapshot.runtime.checked)),
+        render_runtime_check("docker", &snapshot.runtime.docker),
+        render_runtime_check("neo4j_service", &snapshot.runtime.neo4j_service),
+        render_runtime_check("uv", &snapshot.runtime.uv),
+        render_runtime_check("codegraphcontext", &snapshot.runtime.codegraphcontext),
+        render_runtime_check("graphiti_helpers", &snapshot.runtime.graphiti_helpers),
+        render_runtime_check("ollama_service", &snapshot.runtime.ollama_service),
+    ]);
+
+    if let Some(benchmarks) = &snapshot.benchmarks {
+        lines.extend([
+            String::new(),
+            "benchmarks:".to_string(),
+            format!("  state: {}", state_label(&benchmarks.state)),
+            format!("  catalog_present: {}", yes_no(benchmarks.catalog_present)),
+            format!(
+                "  integrations_present: {}",
+                yes_no(benchmarks.integrations_present)
+            ),
+            format!("  support_entries: {}", benchmarks.support_entries),
+            format!("  ready_entries: {}", benchmarks.ready_entries),
+        ]);
+        if !benchmarks.missing_binaries.is_empty() {
+            lines.push(format!(
+                "  missing_binaries: {}",
+                benchmarks.missing_binaries.join(", ")
+            ));
+        }
+        if !benchmarks.missing_env_vars.is_empty() {
+            lines.push(format!(
+                "  missing_env_vars: {}",
+                benchmarks.missing_env_vars.join(", ")
+            ));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("next actions:".to_string());
+    if snapshot.next_actions.is_empty() {
+        lines.push("  - none".to_string());
+    } else {
+        lines.extend(
+            snapshot
+                .next_actions
+                .iter()
+                .map(|action| format!("  - {action}")),
+        );
+    }
+
+    lines.join("\n")
+}
+
+fn render_runtime_check(name: &str, check: &RuntimeCheck) -> String {
+    format!("  {name}: {}, {}", state_label(&check.state), check.detail)
+}
+
+fn state_label(state: &CapabilityState) -> &'static str {
+    match state {
+        CapabilityState::Ready => "ready",
+        CapabilityState::Generated => "generated",
+        CapabilityState::Configured => "configured",
+        CapabilityState::Implemented => "implemented",
+        CapabilityState::Missing => "missing",
+        CapabilityState::NotChecked => "not checked",
+        CapabilityState::Unavailable => "unavailable",
+    }
 }
 
 fn render_search_results(results: &SearchResults) -> String {

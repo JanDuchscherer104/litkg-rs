@@ -292,6 +292,122 @@ fn stats_command_supports_json_output() {
 }
 
 #[test]
+fn capabilities_command_reports_json_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    let generated = dir.path().join("generated");
+    fs::write(generated.join("index.md"), "# Index\n").unwrap();
+    fs::write(generated.join("graphify-manifest.json"), "{}\n").unwrap();
+    let neo4j = generated.join("neo4j-export");
+    fs::create_dir_all(&neo4j).unwrap();
+    fs::write(neo4j.join("nodes.jsonl"), "{}\n").unwrap();
+    fs::write(neo4j.join("edges.jsonl"), "{}\n").unwrap();
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "capabilities",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["literature_registry"]["records_total"], 1);
+    assert_eq!(json["literature_registry"]["registry_generated"], true);
+    assert_eq!(json["downloads"]["records_with_local_tex"], 1);
+    assert_eq!(json["parsing"]["parsed_papers"], 1);
+    assert_eq!(json["parsing"]["total_sections"], 1);
+    assert_eq!(json["graph_outputs"]["graphify_state"], "generated");
+    assert_eq!(json["graph_outputs"]["neo4j_state"], "generated");
+    assert_eq!(json["graph_outputs"]["native_viewer_state"], "ready");
+    assert_eq!(json["runtime"]["checked"], false);
+    assert!(json["next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item.as_str().unwrap().contains("inspect-graph")));
+}
+
+#[test]
+fn capabilities_command_is_read_only_for_missing_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    let registry_path = dir.path().join("generated").join("registry.jsonl");
+    fs::remove_file(&registry_path).unwrap();
+    fs::write(
+        &config_path,
+        format!(
+            "{}\n[semantic_scholar]\nenabled = true\napi_key_env = \"LITKG_TEST_MISSING_SEMANTIC_KEY\"\n",
+            fs::read_to_string(&config_path).unwrap()
+        ),
+    )
+    .unwrap();
+    std::env::remove_var("LITKG_TEST_MISSING_SEMANTIC_KEY");
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "capabilities",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--format",
+            "text",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("litkg capability snapshot"));
+    assert!(text.contains("semantic scholar: configured"));
+    assert!(text.contains("sync-registry"));
+    assert!(!registry_path.exists());
+}
+
+#[test]
+fn capabilities_runtime_check_is_shallow_and_json_serializable() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_metadata_only_config(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "capabilities",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--check-runtime",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["runtime"]["checked"], true);
+    assert!(json["runtime"]["docker"]["state"].is_string());
+    assert!(json["runtime"]["codegraphcontext"]["detail"]
+        .as_str()
+        .unwrap()
+        .contains(".cache/kg/venvs/cgc"));
+}
+
+#[test]
 fn search_and_show_paper_commands_work_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = write_test_config(dir.path());

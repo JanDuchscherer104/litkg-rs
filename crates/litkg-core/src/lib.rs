@@ -35,8 +35,11 @@ pub use config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarCon
 pub use download::{download_registry_sources, DownloadOptions};
 pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
 pub use inspect::{
-    compute_corpus_stats, inspect_paper, search_papers, CorpusStats, PaperInspection,
-    PaperReference, SearchHit, SearchResults, SectionHeading,
+    compute_corpus_stats, compute_repo_capabilities, inspect_paper, search_papers,
+    BenchmarkCapability, CapabilityOptions, CapabilityState, CorpusStats, DownloadCapability,
+    GraphOutputCapability, LiteratureRegistryCapability, PaperInspection, PaperReference,
+    ParsingCapability, ProjectMemoryCapability, RepoCapabilitySnapshot, RuntimeCapability,
+    RuntimeCheck, SearchHit, SearchResults, SectionHeading, SemanticScholarCapability,
 };
 pub use manifest::{load_manifest, ManifestEntry};
 pub use materialize::{

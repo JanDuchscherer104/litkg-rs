@@ -41,7 +41,7 @@ flowchart TD
    - attach official Semantic Scholar metadata to registry rows by DOI/arXiv/S2 id
 6. `rebuild-graph` / `export-neo4j`
    - adapter-specific graph actions
-7. `stats` / `search` / `show-paper`
+7. `capabilities` / `stats` / `search` / `show-paper`
    - read-only inspection over registry and parsed-paper state
 
 ## Registry Merge Contract
@@ -194,6 +194,9 @@ This layer is intentionally repo-independent. It describes evaluation targets, c
 
 - `litkg-cli` exposes read-only inspection commands over the same normalized registry and parsed-paper artifacts used by the pipeline.
 - When `registry.jsonl` is absent, inspection commands derive the normalized registry in memory from manifest and BibTeX inputs rather than writing new generated state.
+- `capabilities` reports the repo-specific support surface for one config:
+  implemented features, configured paths, generated artifacts, optional runtime
+  readiness, benchmark support, and suggested next commands.
 - `stats` summarizes coverage and corpus shape from registry rows plus parsed-paper outputs.
 - `search` matches against metadata first and parsed content when available, keeping the query path useful even for mixed metadata-only and fully parsed corpora.
 - `show-paper` resolves a paper by `paper_id`, citation key, arXiv id, or exact title and reports local paths, extracted structure, outgoing citations, and inbound citation references from the local parsed set.

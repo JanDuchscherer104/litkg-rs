@@ -29,7 +29,7 @@ LOC_ARGS ?=
 .PHONY: help fmt test lint lint-check cargo-check clippy ci clean agents-db
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
 .PHONY: kg-up kg-down kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
-.PHONY: litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j litkg-semantic-enrich litkg-semantic-search
+.PHONY: capabilities litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j litkg-semantic-enrich litkg-semantic-search
 .PHONY: benchmark-validate benchmark-support benchmark-run autoresearch-target inspect-graph autoresearch-issue
 
 fmt: ## Run rustfmt across the workspace
@@ -118,6 +118,9 @@ kg-smoke: ## Run static checks for the local KG helper surface
 	bash -n scripts/kg/start_graphiti.sh
 	bash -n scripts/kg/ingest_docs.sh
 	$(PYTHON) -m py_compile scripts/kg/enrich_embeddings.py scripts/loc_stats.py
+
+capabilities: ## Show the read-only litkg capability snapshot for a config
+	$(CARGO) run -p litkg-cli -- capabilities --config "$(LITKG_CONFIG)"
 
 litkg-sync: ## Merge manifest and BibTeX into the normalized registry for a config
 	$(CARGO) run -p litkg-cli -- sync-registry --config "$(LITKG_CONFIG)"

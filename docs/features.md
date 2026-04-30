@@ -15,6 +15,7 @@ Mermaid diagrams, see [tooling-and-backends.md](tooling-and-backends.md).
 | KG materialization | Write one Markdown file per paper plus deterministic graphify-oriented index/manifest output. | `materialize`, `make litkg-materialize` |
 | Neo4j export | Write `nodes.jsonl` and `edges.jsonl` import bundles from the same parsed paper model. | `export-neo4j`, `make litkg-export-neo4j` |
 | Native graph view | Open a Rust `egui`/`petgraph` inspector over the Neo4j export bundle. | `inspect-graph`, `make inspect-graph` |
+| Capability snapshot | Show what is implemented, configured, generated, runtime-ready, and still missing for one config. | `capabilities`, `make capabilities` |
 | Corpus inspection | Compute stats, search records/content, and inspect one paper with local citation neighborhood. | `stats`, `search`, `show-paper` |
 | Semantic Scholar | Enrich registries, resolve papers, search papers, and get recommendations through official REST APIs. | `enrich-semantic-scholar`, `semantic-scholar-*` |
 | Local KG runtime | Start Neo4j, index code with CodeGraphContext, ingest docs with Graphiti, and refresh embedding links. | `make kg-*` |
@@ -41,6 +42,21 @@ make litkg-pipeline LITKG_CONFIG=examples/prml-vslam.toml
 ```
 
 Use `--download-pdfs` or `LITKG_PIPELINE_ARGS="--download-pdfs"` only when PDFs should be fetched.
+
+## Capability Snapshot
+
+Use `capabilities` before or after a pipeline run to see the repo-specific
+support surface without mutating generated state:
+
+```bash
+cargo run -p litkg-cli -- capabilities --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- capabilities --config examples/prml-vslam.toml --format json
+make capabilities LITKG_CONFIG=examples/prml-vslam.toml
+```
+
+The default snapshot checks configured files and generated artifacts only.
+Add `--check-runtime` when you also want shallow local checks for Docker/Neo4j,
+`uv`, CodeGraphContext, Graphiti helper scripts, and Ollama.
 
 ## Configuration Shape
 

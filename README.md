@@ -9,6 +9,7 @@
 - exporting to multiple graph adapters, including graphify-oriented corpora and optional Neo4j bundles
 - enriching registries with Semantic Scholar metadata through the official REST API
 - inspecting local corpora with search, stats, and per-paper drill-down commands
+- displaying a read-only capability snapshot for one configured client repo
 - opening a native Rust graph inspector over exported graph bundles
 - indexing local code and docs through optional Neo4j, CodeGraphContext, and Graphiti runtime helpers
 - validating benchmark catalogs, inspecting benchmark integration readiness, running benchmark adapters, and composing benchmark-driven auto research targets
@@ -62,6 +63,7 @@ Use Make wrappers for common operations:
 
 ```bash
 make litkg-pipeline LITKG_CONFIG=examples/prml-vslam.toml LITKG_PIPELINE_ARGS="--download-pdfs"
+make capabilities LITKG_CONFIG=examples/prml-vslam.toml
 make litkg-semantic-enrich LITKG_CONFIG=examples/prml-vslam.toml
 make litkg-semantic-search LITKG_CONFIG=examples/prml-vslam.toml SEMANTIC_QUERY='"next best view" + reconstruction'
 make inspect-graph GRAPH_CONFIG=examples/prml-vslam.toml
@@ -70,6 +72,8 @@ make inspect-graph GRAPH_CONFIG=examples/prml-vslam.toml
 Useful read-only and Semantic Scholar commands:
 
 ```bash
+cargo run -p litkg-cli -- capabilities --config examples/prml-vslam.toml
+cargo run -p litkg-cli -- capabilities --config examples/prml-vslam.toml --format json
 cargo run -p litkg-cli -- enrich-semantic-scholar --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- semantic-scholar-search --config examples/prml-vslam.toml --query '"next best view" + reconstruction'
 cargo run -p litkg-cli -- inspect-graph --config examples/prml-vslam.toml
