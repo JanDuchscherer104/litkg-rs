@@ -1,4 +1,4 @@
-meta = { updated_on = "2026-04-13" }
+meta = { updated_on = "2026-04-30" }
 
 [[issues]]
 id = "ISSUE-0001"
@@ -308,3 +308,38 @@ priority = "high"
 status = "closed"
 github_issue_number = 29
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/29"
+
+[[issues]]
+id = "ISSUE-0037"
+title = "Define canonical KG schema and provenance standards"
+summary = "Create a strictly typed schema for nodes, edges, and provenance metadata to ensure all ingested facts are traceable and interoperable."
+priority = "critical"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0038"
+title = "Implement rigorous citation resolver and alias preservation"
+summary = "Move beyond label-based merging to a DOI/arXiv/S2-aware resolution strategy that preserves original BibTeX keys as aliases."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0039"
+title = "Build first-class Semantic Scholar REST adapter"
+summary = "Implement a robust adapter for the Semantic Scholar Academic Graph API supporting batch lookups, throttled search, and recommendations."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0040"
+title = "Implement transcript ingestion pipeline for ChatGPT/Markdown"
+summary = "Create a first-class pipeline for ingesting research transcripts, extracting decisions and claims while maintaining verbatim evidence."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0041"
+title = "Expose litkg-rs as an MCP Server with high-level agent tools"
+summary = "Provide an MCP interface for graph retrieval, pathfinding, and the generation of 'context packs' for agent tasks."
+priority = "high"
+status = "open"

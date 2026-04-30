@@ -1,4 +1,4 @@
-meta = { updated_on = "2026-04-13" }
+meta = { updated_on = "2026-04-30" }
 
 [[todos]]
 id = "TODO-0001"
@@ -239,3 +239,63 @@ status = "pending"
 loc_min = 160
 loc_expected = 300
 loc_max = 520
+
+[[todos]]
+id = "TODO-0025"
+title = "Define Node/Edge/Provenance JSON schemas and Rust types"
+issue_ids = ["ISSUE-0037"]
+priority = "high"
+status = "pending"
+loc_min = 200
+loc_expected = 400
+loc_max = 800
+
+[[todos]]
+id = "TODO-0026"
+title = "Implement DOI/arXiv/S2 citation merge logic in registry resolver"
+issue_ids = ["ISSUE-0038"]
+priority = "high"
+status = "pending"
+loc_min = 150
+loc_expected = 300
+loc_max = 600
+
+[[todos]]
+id = "TODO-0027"
+title = "Implement Semantic Scholar REST client and throttled adapter"
+issue_ids = ["ISSUE-0039"]
+priority = "high"
+status = "pending"
+loc_min = 200
+loc_expected = 350
+loc_max = 700
+
+[[todos]]
+id = "TODO-0028"
+title = "Implement transcript-to-graph extraction format (Decisions, Claims)"
+issue_ids = ["ISSUE-0040"]
+priority = "high"
+status = "pending"
+loc_min = 180
+loc_expected = 320
+loc_max = 640
+
+[[todos]]
+id = "TODO-0029"
+title = "Implement Context7 leaf-node resolution workflow"
+issue_ids = ["ISSUE-0041"]
+priority = "medium"
+status = "pending"
+loc_min = 120
+loc_expected = 240
+loc_max = 480
+
+[[todos]]
+id = "TODO-0030"
+title = "Implement litkg_context_pack tool for evidence-bundle generation"
+issue_ids = ["ISSUE-0041"]
+priority = "high"
+status = "pending"
+loc_min = 200
+loc_expected = 400
+loc_max = 800
