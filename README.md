@@ -80,6 +80,7 @@ cargo run -p litkg-cli -- inspect-graph --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- stats --config examples/prml-vslam.toml
 cargo run -p litkg-cli -- search --config examples/prml-vslam.toml --query "loop closure"
 cargo run -p litkg-cli -- show-paper --config examples/prml-vslam.toml --paper zhang2026vistaslam
+cargo run -p litkg-cli -- context-pack --config examples/prml-vslam.toml --task "implement agents scaffold validation" --budget 12000 --profile agents-scaffold --format json
 ```
 
 Benchmark and autoresearch commands:

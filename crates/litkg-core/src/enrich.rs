@@ -474,7 +474,7 @@ fn tokenize_high_signal_text(paper: &ParsedPaper) -> BTreeSet<String> {
 
 fn tokenize(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter_map(|raw| normalize_token(raw))
+        .filter_map(normalize_token)
         .collect()
 }
 
@@ -800,6 +800,7 @@ mod tests {
         tables: &[&str],
     ) -> ParsedPaper {
         ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: paper_id.into(),
                 citation_key: Some(format!("{paper_id}2026")),

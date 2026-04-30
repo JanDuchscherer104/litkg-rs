@@ -18,6 +18,8 @@ resolved_issues = [
   "ISSUE-0026",
   "ISSUE-0027",
   "ISSUE-0028",
+  "ISSUE-0042",
+  "ISSUE-0048",
 ]
 resolved_todos = [
   "TODO-0001",
@@ -30,4 +32,13 @@ resolved_todos = [
   "TODO-0012",
   "TODO-0013",
   "TODO-0014",
+  "TODO-0025",
+  "TODO-0027",
+  "TODO-0030",
+  "TODO-0031",
+  "TODO-0032",
+  "TODO-0034",
+  "TODO-0036",
+  "TODO-0038",
+  "TODO-0046",
 ]

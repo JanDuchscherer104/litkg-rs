@@ -2,6 +2,7 @@ pub mod benchmark;
 pub mod benchmark_runner;
 pub mod bibtex;
 pub mod config;
+pub mod context_pack;
 pub mod download;
 pub mod enrich;
 pub mod identity;
@@ -35,6 +36,10 @@ pub use benchmark_runner::{
 };
 pub use bibtex::{parse_bibtex, BibEntry};
 pub use config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarConfig, SinkMode};
+pub use context_pack::{
+    build_context_pack, ContextBacklogItem, ContextEvidenceSpan, ContextPack, ContextPackRequest,
+    ContextPaper, MissingContextLeaf,
+};
 pub use download::{download_registry_sources, DownloadOptions};
 pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
 pub use identity::{

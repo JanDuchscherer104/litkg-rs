@@ -159,8 +159,7 @@ fn parse_bare_value(chars: &[char], index: &mut usize) -> String {
 
 fn cleanup_bib_value(value: &str) -> String {
     value
-        .replace('\n', " ")
-        .replace('\t', " ")
+        .replace(['\n', '\t'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

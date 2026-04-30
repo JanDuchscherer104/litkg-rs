@@ -153,17 +153,12 @@ pub enum AutoResearchRenderFormat {
     GithubIssue,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PromotionComponentSelection {
+    #[default]
     TemplateOnly,
     TemplateAndMatched,
     MatchedOnly,
-}
-
-impl Default for PromotionComponentSelection {
-    fn default() -> Self {
-        Self::TemplateOnly
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -9,9 +9,27 @@ pub struct GraphSnapshot {
 }
 
 impl GraphSnapshot {
+    pub fn validate(&self) -> Result<(), String> {
+        for node in self.nodes.values() {
+            node.validate()?;
+        }
+        for edge in self.edges.values() {
+            edge.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn to_deterministic_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string_pretty(self)
+    }
+
     pub fn assert_equal(&self, other: &Self) {
-        let s1 = serde_json::to_string_pretty(self).expect("Failed to serialize snapshot 1");
-        let s2 = serde_json::to_string_pretty(other).expect("Failed to serialize snapshot 2");
+        let s1 = self
+            .to_deterministic_json()
+            .expect("Failed to serialize snapshot 1");
+        let s2 = other
+            .to_deterministic_json()
+            .expect("Failed to serialize snapshot 2");
         assert_eq!(s1, s2, "Snapshots are not identical");
     }
 }

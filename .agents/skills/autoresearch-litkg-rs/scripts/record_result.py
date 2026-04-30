@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Append an autoresearch result row and update resumable run state."""
 
 from __future__ import annotations

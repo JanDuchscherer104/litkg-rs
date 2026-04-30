@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use litkg_core::{
-    write_parsed_papers, write_registry, DownloadMode, PaperFigure, PaperSection,
+    write_parsed_papers, write_registry, DocumentKind, DownloadMode, PaperFigure, PaperSection,
     PaperSourceRecord, PaperTable, ParseStatus, ParsedPaper, SourceKind,
 };
 use serde_json::Value;
@@ -57,6 +57,7 @@ fn write_test_config(root: &Path) -> PathBuf {
     write_registry(&registry_path, &registry).unwrap();
 
     let parsed = vec![ParsedPaper {
+        kind: DocumentKind::Literature,
         metadata: PaperSourceRecord {
             title: "Parsed Demo Paper".into(),
             ..registry[0].clone()
@@ -107,6 +108,56 @@ relevance_tags = [\"retrieval\"]\n",
     .unwrap();
 
     config_path
+}
+
+fn write_agents_scaffold(root: &Path) {
+    let agents = root.join(".agents");
+    fs::create_dir_all(agents.join("skills/context-pack-builder")).unwrap();
+    fs::write(
+        root.join("AGENTS.md"),
+        "# Test Agent Guidance\n\nUse context packs for scaffold work.\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("AGENTS_INTERNAL_DB.md"),
+        "# Internal DB\n\nContext-pack work is part of the backbone.\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("issues.toml"),
+        "meta = { updated_on = \"2026-04-30\" }\n\n\
+[[issues]]\n\
+id = \"ISSUE-0048\"\n\
+title = \"Implement context-pack CLI before MCP\"\n\
+summary = \"Build evidence bundles for agents before MCP wrapping.\"\n\
+priority = \"critical\"\n\
+status = \"open\"\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("todos.toml"),
+        "meta = { updated_on = \"2026-04-30\" }\n\n\
+[[todos]]\n\
+id = \"TODO-0030\"\n\
+title = \"Implement context-pack CLI evidence-bundle generation before MCP wrapping\"\n\
+issue_ids = [\"ISSUE-0048\"]\n\
+priority = \"critical\"\n\
+status = \"pending\"\n\
+loc_min = 200\n\
+loc_expected = 400\n\
+loc_max = 800\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("resolved.toml"),
+        "meta = { updated_on = \"2026-04-30\" }\nresolved_issues = []\nresolved_todos = []\n",
+    )
+    .unwrap();
+    fs::write(
+        agents.join("skills/context-pack-builder/SKILL.md"),
+        "---\nname: context-pack-builder\ndescription: Use when building context packs for agent handoff.\n---\n\n# Context Pack Builder\n",
+    )
+    .unwrap();
 }
 
 fn write_metadata_only_config(root: &Path) -> PathBuf {
@@ -202,6 +253,7 @@ fn write_stale_snapshot_config(root: &Path) -> PathBuf {
     write_parsed_papers(
         &parsed_root,
         &[ParsedPaper {
+            kind: DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: "old2024paper".into(),
                 citation_key: Some("old2024paper".into()),
@@ -405,6 +457,86 @@ fn capabilities_runtime_check_is_shallow_and_json_serializable() {
         .as_str()
         .unwrap()
         .contains(".cache/kg/venvs/cgc"));
+}
+
+#[test]
+fn context_pack_command_reports_stable_json_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    write_agents_scaffold(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--task",
+            "implement context pack retrieval",
+            "--budget",
+            "220",
+            "--profile",
+            "agents-scaffold",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["profile"], "agents-scaffold");
+    assert_eq!(json["active_issues"][0]["id"], "ISSUE-0048");
+    assert_eq!(json["active_todos"][0]["id"], "TODO-0030");
+    assert!(!json["evidence_spans"].as_array().unwrap().is_empty());
+    assert_eq!(json["relevant_papers"][0]["paper_id"], "demo2025paper");
+    assert!(json["missing_context_leaves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|leaf| leaf["provider"] == "Context7"));
+    assert!(json["verification_commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|command| command.as_str().unwrap().contains("cargo test")));
+}
+
+#[test]
+fn context_pack_command_reports_text_sections() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    write_agents_scaffold(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--task",
+            "implement context pack retrieval",
+            "--budget",
+            "220",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("litkg context pack"));
+    assert!(text.contains("active issues:"));
+    assert!(text.contains("evidence spans:"));
+    assert!(text.contains("missing context leaves:"));
+    assert!(text.contains("verification commands:"));
 }
 
 #[test]

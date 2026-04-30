@@ -38,12 +38,58 @@ def main():
     todos_data = load_toml(todos_path)
     resolved_data = load_toml(resolved_path)
     
-    issues = {i["id"]: i for i in issues_data.get("issues", [])}
-    todos = {t["id"]: t for t in todos_data.get("todos", [])}
+    issue_records = issues_data.get("issues", [])
+    todo_records = todos_data.get("todos", [])
+    issues = {i["id"]: i for i in issue_records}
+    todos = {t["id"]: t for t in todo_records}
     resolved_issues = set(resolved_data.get("resolved_issues", []))
     resolved_todos = set(resolved_data.get("resolved_todos", []))
     
     errors = []
+
+    valid_priorities = {"critical", "high", "medium", "low"}
+    valid_issue_statuses = {"open", "in_progress", "blocked", "closed"}
+    valid_todo_statuses = {"pending", "in_progress", "blocked", "done"}
+
+    # 0. Check duplicate IDs before map-based validation can hide them.
+    issue_ids = [str(issue.get("id", "")) for issue in issue_records]
+    todo_ids = [str(todo.get("id", "")) for todo in todo_records]
+    for issue_id in sorted({item for item in issue_ids if issue_ids.count(item) > 1}):
+        errors.append(f"Duplicate issue id {issue_id}")
+    for todo_id in sorted({item for item in todo_ids if todo_ids.count(item) > 1}):
+        errors.append(f"Duplicate todo id {todo_id}")
+
+    # 0b. Check required values and LOC invariants.
+    for issue in issue_records:
+        issue_id = issue.get("id", "<unknown>")
+        for field in ("id", "title", "summary", "priority", "status"):
+            if field not in issue:
+                errors.append(f"Issue {issue_id} missing required field {field}")
+        priority = issue.get("priority")
+        status = issue.get("status")
+        if priority is not None and priority not in valid_priorities:
+            errors.append(f"Issue {issue_id} has invalid priority '{priority}'")
+        if status is not None and status not in valid_issue_statuses:
+            errors.append(f"Issue {issue_id} has invalid status '{status}'")
+
+    for todo in todo_records:
+        todo_id = todo.get("id", "<unknown>")
+        for field in ("id", "title", "issue_ids", "priority", "status", "loc_min", "loc_expected", "loc_max"):
+            if field not in todo:
+                errors.append(f"Todo {todo_id} missing required field {field}")
+        priority = todo.get("priority")
+        status = todo.get("status")
+        if priority is not None and priority not in valid_priorities:
+            errors.append(f"Todo {todo_id} has invalid priority '{priority}'")
+        if status is not None and status not in valid_todo_statuses:
+            errors.append(f"Todo {todo_id} has invalid status '{status}'")
+        loc_min = todo.get("loc_min")
+        loc_expected = todo.get("loc_expected")
+        loc_max = todo.get("loc_max")
+        if not all(isinstance(value, int) for value in (loc_min, loc_expected, loc_max)):
+            errors.append(f"Todo {todo_id} must use integer LOC estimates")
+        elif not (0 <= loc_min <= loc_expected <= loc_max):
+            errors.append(f"Todo {todo_id} must satisfy 0 <= loc_min <= loc_expected <= loc_max")
     
     # 1. Check resolved issues
     for issue_id in resolved_issues:

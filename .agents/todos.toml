@@ -44,7 +44,7 @@ loc_max = 520
 id = "TODO-0005"
 title = "Define Auto Research target-function schema and overnight execution contract"
 issue_ids = ["ISSUE-0005"]
-priority = "high"
+priority = "medium"
 status = "pending"
 loc_min = 120
 loc_expected = 220
@@ -54,7 +54,7 @@ loc_max = 420
 id = "TODO-0006"
 title = "Define PR review fan-out contract and accepted-review feedback loop"
 issue_ids = ["ISSUE-0006", "ISSUE-0008"]
-priority = "high"
+priority = "medium"
 status = "pending"
 loc_min = 120
 loc_expected = 240
@@ -245,7 +245,7 @@ id = "TODO-0025"
 title = "Define Node/Edge/Provenance JSON schemas and Rust types"
 issue_ids = ["ISSUE-0037"]
 priority = "high"
-status = "pending"
+status = "done"
 loc_min = 200
 loc_expected = 400
 loc_max = 800
@@ -265,7 +265,7 @@ id = "TODO-0027"
 title = "Implement Semantic Scholar REST client and throttled adapter"
 issue_ids = ["ISSUE-0039"]
 priority = "high"
-status = "pending"
+status = "done"
 loc_min = 200
 loc_expected = 350
 loc_max = 700
@@ -292,10 +292,170 @@ loc_max = 480
 
 [[todos]]
 id = "TODO-0030"
-title = "Implement litkg_context_pack tool for evidence-bundle generation"
-issue_ids = ["ISSUE-0041"]
-priority = "high"
-status = "pending"
+title = "Implement context-pack CLI evidence-bundle generation before MCP wrapping"
+issue_ids = ["ISSUE-0048", "ISSUE-0041"]
+priority = "critical"
+status = "done"
 loc_min = 200
 loc_expected = 400
 loc_max = 800
+
+[[todos]]
+id = "TODO-0031"
+title = "Reconcile agents-db resolved state and wire make agents-db-check as a hard gate"
+issue_ids = ["ISSUE-0042"]
+priority = "critical"
+status = "done"
+loc_min = 80
+loc_expected = 180
+loc_max = 360
+
+[[todos]]
+id = "TODO-0032"
+title = "Apply M0 backbone milestone discipline and defer advanced orchestration"
+issue_ids = ["ISSUE-0042", "ISSUE-0037", "ISSUE-0038", "ISSUE-0039", "ISSUE-0048"]
+priority = "critical"
+status = "done"
+loc_min = 60
+loc_expected = 140
+loc_max = 280
+
+[[todos]]
+id = "TODO-0033"
+title = "Normalize root and nested AGENTS guidance into dispatcher plus local deltas"
+issue_ids = ["ISSUE-0045"]
+priority = "high"
+status = "pending"
+loc_min = 120
+loc_expected = 260
+loc_max = 520
+
+[[todos]]
+id = "TODO-0034"
+title = "Implement make skills-check for SKILL.md frontmatter, triggers, scripts, and leakage"
+issue_ids = ["ISSUE-0044"]
+priority = "high"
+status = "done"
+loc_min = 140
+loc_expected = 280
+loc_max = 560
+
+[[todos]]
+id = "TODO-0035"
+title = "Create focused scaffold workflow skills with precise trigger descriptions"
+issue_ids = ["ISSUE-0044"]
+priority = "high"
+status = "pending"
+loc_min = 220
+loc_expected = 480
+loc_max = 960
+
+[[todos]]
+id = "TODO-0036"
+title = "Implement make scaffold-check across AGENTS, skills, agents-db, MCP profiles, and secrets"
+issue_ids = ["ISSUE-0045", "ISSUE-0044", "ISSUE-0042", "ISSUE-0043"]
+priority = "high"
+status = "done"
+loc_min = 220
+loc_expected = 460
+loc_max = 920
+
+[[todos]]
+id = "TODO-0037"
+title = "Define MCP profile policy for readonly research, repo-dev, and communications surfaces"
+issue_ids = ["ISSUE-0045", "ISSUE-0046"]
+priority = "high"
+status = "pending"
+loc_min = 80
+loc_expected = 180
+loc_max = 360
+
+[[todos]]
+id = "TODO-0038"
+title = "Detect duplicate Docker MCP servers and broad default write tools"
+issue_ids = ["ISSUE-0045", "ISSUE-0046"]
+priority = "high"
+status = "done"
+loc_min = 80
+loc_expected = 180
+loc_max = 360
+
+[[todos]]
+id = "TODO-0039"
+title = "Document read-first MCP tools, stable litkg resources, and workflow prompts"
+issue_ids = ["ISSUE-0046", "ISSUE-0041"]
+priority = "high"
+status = "pending"
+loc_min = 160
+loc_expected = 320
+loc_max = 640
+
+[[todos]]
+id = "TODO-0040"
+title = "Gate MCP mutation tools behind explicit confirmation and non-default profiles"
+issue_ids = ["ISSUE-0046", "ISSUE-0041"]
+priority = "high"
+status = "pending"
+loc_min = 100
+loc_expected = 220
+loc_max = 440
+
+[[todos]]
+id = "TODO-0041"
+title = "Add agents-scaffold profile inputs and deterministic graph/context outputs"
+issue_ids = ["ISSUE-0047"]
+priority = "high"
+status = "pending"
+loc_min = 160
+loc_expected = 320
+loc_max = 640
+
+[[todos]]
+id = "TODO-0042"
+title = "Add AgentSkill, backlog, MCP, ContextPack, and ExternalDocLeaf schema nodes"
+issue_ids = ["ISSUE-0047", "ISSUE-0037"]
+priority = "high"
+status = "pending"
+loc_min = 200
+loc_expected = 420
+loc_max = 840
+
+[[todos]]
+id = "TODO-0043"
+title = "Link scaffold graph edges among skills, task types, backlog items, tools, resources, and source spans"
+issue_ids = ["ISSUE-0047", "ISSUE-0037"]
+priority = "high"
+status = "pending"
+loc_min = 180
+loc_expected = 360
+loc_max = 720
+
+[[todos]]
+id = "TODO-0044"
+title = "Add Code Index and OpenAI docs as external adapters/leaves instead of reimplementing them"
+issue_ids = ["ISSUE-0047", "ISSUE-0030", "ISSUE-0046"]
+priority = "high"
+status = "pending"
+loc_min = 120
+loc_expected = 260
+loc_max = 520
+
+[[todos]]
+id = "TODO-0045"
+title = "Add minimal Quarto/Markdown citation-link ingest after resolver contracts are stable"
+issue_ids = ["ISSUE-0038", "ISSUE-0037"]
+priority = "high"
+status = "pending"
+loc_min = 160
+loc_expected = 320
+loc_max = 640
+
+[[todos]]
+id = "TODO-0046"
+title = "Add context-pack JSON and Markdown output with evidence spans, staleness flags, and missing leaves"
+issue_ids = ["ISSUE-0048", "ISSUE-0041"]
+priority = "critical"
+status = "done"
+loc_min = 160
+loc_expected = 340
+loc_max = 680

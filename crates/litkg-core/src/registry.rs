@@ -305,6 +305,11 @@ mod tests {
 
     fn sample_config(root: &Path) -> RepoConfig {
         RepoConfig {
+            project: None,
+            sources: std::collections::BTreeMap::new(),
+            representation: None,
+            backends: None,
+            storage: None,
             manifest_path: root.join("sources.jsonl"),
             bib_path: root.join("references.bib"),
             tex_root: root.join("tex"),

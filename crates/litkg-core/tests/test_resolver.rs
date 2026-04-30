@@ -73,3 +73,43 @@ fn resolves_identity_with_priority() {
     assert_eq!(decisions[0].canonical_id, *id);
     assert_eq!(decisions[1].canonical_id, *id);
 }
+
+#[test]
+fn detects_title_conflicts_for_same_identifier() {
+    let mut resolver = IdentityResolver::new();
+
+    resolver.add_candidate(ResolutionCandidate {
+        title: "ViSTA-SLAM: Visual SLAM".to_string(),
+        authors: vec![],
+        year: None,
+        doi: Some("10.1234/vista".to_string()),
+        arxiv_id: None,
+        s2_paper_id: None,
+        bib_key: None,
+        provenance: dummy_provenance("source1"),
+    });
+
+    resolver.add_candidate(ResolutionCandidate {
+        title: "Completely Different Paper".to_string(),
+        authors: vec![],
+        year: None,
+        doi: Some("10.1234/vista".to_string()), // Same DOI!
+        arxiv_id: None,
+        s2_paper_id: None,
+        bib_key: None,
+        provenance: dummy_provenance("source2"),
+    });
+
+    let (grouped, _, conflicts) = resolver.resolve();
+
+    // They should still merge into one group because they share the DOI
+    assert_eq!(grouped.len(), 1);
+
+    // But a conflict should be emitted
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(
+        conflicts[0].kind,
+        litkg_core::schema::ConflictKind::DoiTitleMismatch
+    );
+    assert!(conflicts[0].message.contains("Title mismatch"));
+}

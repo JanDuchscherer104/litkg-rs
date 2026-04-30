@@ -60,7 +60,9 @@ fn build_manifest(config: &RepoConfig, written_docs: &[PathBuf]) -> Result<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use litkg_core::{DownloadMode, PaperSourceRecord, ParseStatus, SinkMode, SourceKind};
+    use litkg_core::{
+        DocumentKind, DownloadMode, PaperSourceRecord, ParseStatus, SinkMode, SourceKind,
+    };
 
     #[test]
     fn writes_graphify_docs() {
@@ -80,8 +82,14 @@ mod tests {
             download_pdfs: false,
             relevance_tags: vec!["ViSTA-SLAM".into()],
             semantic_scholar: None,
+            project: None,
+            sources: std::collections::BTreeMap::new(),
+            representation: None,
+            backends: None,
+            storage: None,
         };
         let papers = vec![ParsedPaper {
+            kind: DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: "vista".into(),
                 citation_key: Some("zhang2026vistaslam".into()),

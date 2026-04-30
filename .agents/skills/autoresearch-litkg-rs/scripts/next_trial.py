@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Allocate the next autoresearch experiment id and branch name."""
 
 from __future__ import annotations

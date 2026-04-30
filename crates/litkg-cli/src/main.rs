@@ -1,17 +1,17 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litkg_core::{
-    build_registry_snapshot, compute_corpus_stats, compute_repo_capabilities,
+    build_context_pack, build_registry_snapshot, compute_corpus_stats, compute_repo_capabilities,
     download_registry_sources, enrich_registry_with_semantic_scholar, inspect_benchmark_support,
     inspect_paper, load_parsed_papers, load_registry, parse_registry_papers,
     promote_benchmark_results, render_promoted_targets, run_benchmarks, search_papers,
     sync_registry, validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
     write_parsed_papers, AutoResearchRenderFormat, BenchmarkPromotionRequest, BenchmarkResults,
-    BenchmarkSupportStatus, CapabilityOptions, CapabilityState, CorpusStats, DownloadOptions,
-    MetricThresholdComparison, MetricThresholdRule, PaperInspection, PaperSourceRecord,
-    ParsedPaper, PromotionComponentSelection, RepoCapabilitySnapshot, RepoConfig, RuntimeCheck,
-    SearchResults, SemanticScholarClient, SemanticScholarConfig, SemanticScholarPaper,
-    SemanticScholarSearchRequest, SinkMode,
+    BenchmarkSupportStatus, CapabilityOptions, CapabilityState, ContextPack, ContextPackRequest,
+    CorpusStats, DownloadOptions, MetricThresholdComparison, MetricThresholdRule, PaperInspection,
+    PaperSourceRecord, ParsedPaper, PromotionComponentSelection, RepoCapabilitySnapshot,
+    RepoConfig, RuntimeCheck, SearchResults, SemanticScholarClient, SemanticScholarConfig,
+    SemanticScholarPaper, SemanticScholarSearchRequest, SinkMode,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
@@ -41,6 +41,7 @@ enum Commands {
     ExportNeo4j(WriteCommand),
     InspectGraph(ConfigArg),
     Capabilities(CapabilitiesCommand),
+    ContextPack(ContextPackCommand),
     Stats(StatsCommand),
     Search(SearchCommand),
     ShowPaper(ShowPaperCommand),
@@ -127,6 +128,22 @@ struct CapabilitiesCommand {
     benchmark_integrations: Option<String>,
     #[arg(long, default_value_t = false)]
     check_runtime: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct ContextPackCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    #[arg(long)]
+    task: String,
+    #[arg(long, default_value_t = 12_000)]
+    budget: usize,
+    #[arg(long, default_value = "agents-scaffold")]
+    profile: String,
+    #[arg(long = "repo-root")]
+    repo_root: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
 }
@@ -493,6 +510,23 @@ fn main() -> Result<()> {
             )?;
             print_structured_output(&snapshot, args.format, render_capabilities)?;
         }
+        Commands::ContextPack(args) => {
+            let config = RepoConfig::load(&args.config.config)?;
+            let repo_root = match args.repo_root {
+                Some(path) => PathBuf::from(path),
+                None => std::env::current_dir().context("Failed to determine current directory")?,
+            };
+            let pack = build_context_pack(
+                &config,
+                ContextPackRequest {
+                    repo_root,
+                    task: args.task,
+                    budget_tokens: args.budget,
+                    profile: args.profile,
+                },
+            )?;
+            print_structured_output(&pack, args.format, render_context_pack)?;
+        }
         Commands::Stats(args) => {
             let config = RepoConfig::load(&args.config.config)?;
             let papers = load_parsed_papers(config.parsed_root())?;
@@ -564,7 +598,7 @@ fn main() -> Result<()> {
         Commands::SemanticScholarSearch(args) => {
             let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
             let fields = semantic_fields(&semantic_config, &args.fields);
-            let mut client = SemanticScholarClient::from_config(semantic_config)?;
+            let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
             let mut request = SemanticScholarSearchRequest::new(args.query, args.limit, fields);
             request.year = args.year;
             request.publication_date_or_year = args.publication_date_or_year;
@@ -574,12 +608,14 @@ fn main() -> Result<()> {
             request.min_citation_count = args.min_citation_count;
             request.open_access_pdf = args.open_access_pdf;
             let papers = client.search_papers(&request)?;
-            print_structured_output(&papers, args.format, render_semantic_scholar_papers)?;
+            print_structured_output(&papers, args.format, |papers| {
+                render_semantic_scholar_papers(papers)
+            })?;
         }
         Commands::SemanticScholarPaper(args) => {
             let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
             let fields = semantic_fields(&semantic_config, &args.fields);
-            let mut client = SemanticScholarClient::from_config(semantic_config)?;
+            let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
             let paper = client.get_paper(&args.paper_id, &fields)?;
             print_structured_output(&paper, args.format, render_semantic_scholar_paper)?;
         }
@@ -591,14 +627,16 @@ fn main() -> Result<()> {
             }
             let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
             let fields = semantic_fields(&semantic_config, &args.fields);
-            let mut client = SemanticScholarClient::from_config(semantic_config)?;
+            let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
             let papers = client.recommend_papers(
                 &args.positive_paper_ids,
                 &args.negative_paper_ids,
                 args.limit,
                 &fields,
             )?;
-            print_structured_output(&papers, args.format, render_semantic_scholar_papers)?;
+            print_structured_output(&papers, args.format, |papers| {
+                render_semantic_scholar_papers(papers)
+            })?;
         }
         Commands::ValidateBenchmarks(args) => {
             let catalog = litkg_core::load_benchmark_catalog(&args.catalog.path)?;
@@ -860,7 +898,7 @@ where
     Ok(())
 }
 
-fn render_semantic_scholar_papers(papers: &Vec<SemanticScholarPaper>) -> String {
+fn render_semantic_scholar_papers(papers: &[SemanticScholarPaper]) -> String {
     if papers.is_empty() {
         return "No Semantic Scholar papers returned.".into();
     }
@@ -1086,6 +1124,77 @@ fn render_capabilities(snapshot: &RepoCapabilitySnapshot) -> String {
     }
 
     lines.join("\n")
+}
+
+fn render_context_pack(pack: &ContextPack) -> String {
+    let mut lines = vec![
+        "litkg context pack".to_string(),
+        format!("task: {}", pack.task),
+        format!("profile: {}", pack.profile),
+        format!("budget_tokens: {}", pack.budget_tokens),
+        format!("truncated: {}", yes_no(pack.truncated)),
+        String::new(),
+        "active issues:".to_string(),
+    ];
+    for issue in &pack.active_issues {
+        lines.push(format!(
+            "  - {} [{}/{}] {}",
+            issue.id, issue.priority, issue.status, issue.title
+        ));
+    }
+    lines.push(String::new());
+    lines.push("active todos:".to_string());
+    for todo in &pack.active_todos {
+        let issue_suffix = if todo.issue_ids.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", todo.issue_ids.join(", "))
+        };
+        lines.push(format!(
+            "  - {} [{}/{}] {}{}",
+            todo.id, todo.priority, todo.status, todo.title, issue_suffix
+        ));
+    }
+    lines.push(String::new());
+    lines.push("evidence spans:".to_string());
+    for span in &pack.evidence_spans {
+        lines.push(format!(
+            "  - {}:{}-{} [{}]",
+            span.source_path, span.line_start, span.line_end, span.kind
+        ));
+        lines.push(indent_block(&span.text, "    "));
+    }
+    lines.push(String::new());
+    lines.push("relevant papers:".to_string());
+    for paper in &pack.relevant_papers {
+        lines.push(format!(
+            "  - {} {} ({})",
+            paper.paper_id,
+            paper.title,
+            paper.year.as_deref().unwrap_or("n/a")
+        ));
+    }
+    lines.push(String::new());
+    lines.push("missing context leaves:".to_string());
+    for leaf in &pack.missing_context_leaves {
+        lines.push(format!(
+            "  - {} [{}]: {}",
+            leaf.provider, leaf.status, leaf.query
+        ));
+    }
+    lines.push(String::new());
+    lines.push("verification commands:".to_string());
+    for command in &pack.verification_commands {
+        lines.push(format!("  - {command}"));
+    }
+    lines.join("\n")
+}
+
+fn indent_block(text: &str, prefix: &str) -> String {
+    text.lines()
+        .map(|line| format!("{prefix}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn render_runtime_check(name: &str, check: &RuntimeCheck) -> String {

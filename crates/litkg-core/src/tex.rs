@@ -524,8 +524,7 @@ fn cleanup_tex(text: &str) -> String {
     let cleaned = latex_command_regex().replace_all(text, "");
     cleaned
         .replace('\n', " ")
-        .replace('{', "")
-        .replace('}', "")
+        .replace(['{', '}'], "")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -612,6 +611,11 @@ mod tests {
 
     fn sample_config(root: &Path) -> RepoConfig {
         RepoConfig {
+            project: None,
+            sources: std::collections::BTreeMap::new(),
+            representation: None,
+            backends: None,
+            storage: None,
             manifest_path: root.join("sources.jsonl"),
             bib_path: root.join("references.bib"),
             tex_root: root.join("tex"),
@@ -772,7 +776,7 @@ Overview text.
             );
             let expected_abstract = format!("Abstract {idx}.");
             assert_eq!(
-                paper.abstract_text.as_ref().map(String::as_str),
+                paper.abstract_text.as_deref(),
                 Some(expected_abstract.as_str())
             );
         }

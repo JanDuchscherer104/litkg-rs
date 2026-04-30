@@ -541,7 +541,7 @@ pub fn enrich_registry_with_semantic_scholar_client<T: SemanticScholarTransport>
             .map(|(_, identifier)| identifier.clone())
             .collect::<Vec<_>>();
         let papers = client.get_papers_batch(&ids, &fields)?;
-        for ((index, _), paper) in batch.iter().zip(papers.into_iter()) {
+        for ((index, _), paper) in batch.iter().zip(papers) {
             if let Some(paper) = paper {
                 merge_semantic_scholar_paper(&mut updated[*index], paper);
             }

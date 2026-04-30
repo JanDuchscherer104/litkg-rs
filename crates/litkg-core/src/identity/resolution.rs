@@ -89,7 +89,7 @@ impl IdentityResolver {
         Vec<Conflict>,
     ) {
         let mut decisions = Vec::new();
-        let conflicts = Vec::new();
+        let mut conflicts = Vec::new();
 
         if self.candidates.is_empty() {
             return (BTreeMap::new(), decisions, conflicts);
@@ -149,6 +149,8 @@ impl IdentityResolver {
             // 3. For each component, determine the canonical StableId
             let (canonical_id, primary_reason) =
                 self.select_canonical_id_for_component(&component, &candidate_ids);
+
+            self.detect_conflicts_in_component(&component, &canonical_id, &mut conflicts);
 
             for &idx in &component {
                 let candidate = &self.candidates[idx];
@@ -224,5 +226,55 @@ impl IdentityResolver {
             StableId::new(format!("paper:hash:{}", first_idx)),
             MergeReason::Manual,
         )
+    }
+
+    fn detect_conflicts_in_component(
+        &self,
+        component: &[usize],
+        canonical_id: &StableId,
+        conflicts: &mut Vec<Conflict>,
+    ) {
+        if component.len() < 2 {
+            return;
+        }
+
+        let mut titles = Vec::new();
+        for &idx in component {
+            let candidate = &self.candidates[idx];
+            if !candidate.title.is_empty() {
+                titles.push((idx, normalize_title(&candidate.title)));
+            }
+        }
+
+        if titles.len() >= 2 {
+            let first_title = &titles[0].1;
+            for i in 1..titles.len() {
+                if titles[i].1 != *first_title {
+                    use crate::schema::ConflictKind;
+                    conflicts.push(Conflict {
+                        id: StableId::new(format!("conflict:title-mismatch:{}", canonical_id)),
+                        kind: ConflictKind::DoiTitleMismatch,
+                        nodes: vec![canonical_id.clone()],
+                        message: format!(
+                            "Title mismatch in component {}: '{}' vs '{}'",
+                            canonical_id,
+                            self.candidates[titles[0].0].title,
+                            self.candidates[titles[i].0].title
+                        ),
+                        evidence: vec![
+                            self.candidates[titles[0].0].provenance.clone(),
+                            self.candidates[titles[i].0].provenance.clone(),
+                        ],
+                    });
+                    break;
+                }
+            }
+        }
+    }
+}
+
+impl Default for IdentityResolver {
+    fn default() -> Self {
+        Self::new()
     }
 }

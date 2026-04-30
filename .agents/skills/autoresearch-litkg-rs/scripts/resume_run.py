@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Summarize a resumable autoresearch run and recommend the next move."""
 
 from __future__ import annotations

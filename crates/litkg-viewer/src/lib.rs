@@ -677,13 +677,12 @@ fn build_semantic_layout(
         positions.insert(citation, citation_pos);
     }
 
-    let mut spill_index = 0usize;
     let mut leftovers: Vec<_> = graph
         .node_indices()
         .filter(|index| !positions.contains_key(index))
         .collect();
     leftovers.sort_by(|left, right| graph[*left].title.cmp(&graph[*right].title));
-    for leftover in leftovers {
+    for (spill_index, leftover) in leftovers.into_iter().enumerate() {
         let row = spill_index / 8;
         let col = spill_index % 8;
         positions.insert(
@@ -693,7 +692,6 @@ fn build_semantic_layout(
                 paper_ring + 260.0 + row as f32 * 70.0,
             ),
         );
-        spill_index += 1;
     }
 
     positions

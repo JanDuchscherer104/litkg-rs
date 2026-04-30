@@ -238,6 +238,7 @@ mod tests {
 
     fn sample_research_paper(paper_id: &str) -> ResearchPaper {
         ResearchPaper::from_parsed(ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: paper_id.to_string(),
                 citation_key: Some(format!("{paper_id}_key")),

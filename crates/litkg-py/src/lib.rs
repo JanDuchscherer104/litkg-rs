@@ -1,3 +1,5 @@
+#![allow(clippy::useless_conversion)]
+
 use litkg_core::{
     build_tabular_bundle_from_parsed, build_tabular_bundle_from_parsed_with_notebooks,
     load_notebook_documents, load_parsed_papers, write_tabular_exports, ParsedPaper,

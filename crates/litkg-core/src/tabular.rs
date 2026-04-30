@@ -783,6 +783,7 @@ mod tests {
         citations: Vec<&str>,
     ) -> ParsedPaper {
         ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: paper_id.to_string(),
                 citation_key: citation_key.map(str::to_string),

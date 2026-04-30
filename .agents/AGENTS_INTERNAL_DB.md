@@ -37,3 +37,8 @@ Purpose: a compact operational memory surface for this toolkit repo. Record stab
 - Repo-scoped Codex setup for skills and the optional Graphiti/Neo4j MCP path is documented in `docs/codex-setup.md`.
 - Strict downstream bootstrap templates for `AGENTS.md`, `README.md`, and `REQUIREMENTS.md` live under `templates/bootstrap/`.
 - Issue work now requires a short TODO or status comment on the GitHub issue that states the planned change and whether execution is happening in the local checkout or an isolated worktree.
+- M0 backbone work takes priority over advanced orchestration: Auto Research and PR fan-out stay open but are deferred until schema/provenance and context-pack surfaces are stable.
+- `make agents-db-check` and `make agents-db AGENTS_ARGS='validate'` are hard gates for backlog consistency, including duplicate IDs, stale resolved state, missing issue references, invalid status/priority values, and metadata drift.
+- `make skills-check` validates repo-local skill frontmatter, trigger descriptions, documented executable scripts, and wrong-repo/secrets/personal-path leakage.
+- `make scaffold-check` composes agents-db, skills, root/nested `AGENTS.md`, MCP profile risk, and secret-pattern checks.
+- `litkg context-pack --profile agents-scaffold` is the CLI-first evidence bundle path for agent handoffs; MCP should wrap this surface later instead of duplicating retrieval logic.

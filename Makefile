@@ -26,7 +26,7 @@ SEMANTIC_QUERY ?= "next best view"
 SEMANTIC_SEARCH_ARGS ?=
 LOC_ARGS ?=
 
-.PHONY: help fmt test lint lint-check cargo-check clippy ci clean agents-db
+.PHONY: help fmt test lint lint-check cargo-check clippy ci clean agents-db agents-db-check skills-check scaffold-check
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
 .PHONY: kg-up kg-down kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
 .PHONY: capabilities litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j litkg-semantic-enrich litkg-semantic-search
@@ -55,11 +55,19 @@ clippy: ## Run clippy across the workspace
 agents-db-check: ## Validate agents-db consistency
 	python3 .agents/scripts/check_backlog.py
 
+skills-check: ## Validate repo-local skill folders
+	python3 .agents/scripts/check_skills.py
+
+scaffold-check: ## Validate agent scaffold, skills, backlog, MCP profile risks, and secrets
+	python3 .agents/scripts/check_scaffold.py
+
 ci: ## Run the main local verification suite
 	$(MAKE) lint-check
 	$(MAKE) benchmark-validate
 	$(MAKE) kg-smoke
 	$(MAKE) agents-db-check
+	$(MAKE) skills-check
+	$(MAKE) scaffold-check
 
 clean: ## Remove Cargo build artifacts
 	$(CARGO) clean

@@ -39,5 +39,10 @@ fn verifies_graph_snapshot_idempotency() {
         edges: BTreeMap::new(),
     };
 
+    snapshot1.validate().unwrap();
+    assert_eq!(
+        snapshot1.to_deterministic_json().unwrap(),
+        snapshot2.to_deterministic_json().unwrap()
+    );
     snapshot1.assert_equal(&snapshot2);
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import tomllib
 from datetime import date
 from pathlib import Path
@@ -15,6 +16,7 @@ AGENTS_DIR = REPO_ROOT / ".agents"
 ISSUES_PATH = AGENTS_DIR / "issues.toml"
 TODOS_PATH = AGENTS_DIR / "todos.toml"
 RESOLVED_PATH = AGENTS_DIR / "resolved.toml"
+CHECK_BACKLOG_PATH = AGENTS_DIR / "scripts" / "check_backlog.py"
 
 PRIORITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 ISSUE_STATUS_ORDER = {"open": 3, "in_progress": 2, "blocked": 1, "closed": 0}
@@ -134,6 +136,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     rank_parser.add_argument("--kind", choices=("issues", "todos", "all"), default="all")
     rank_parser.add_argument("--format", choices=("text", "json"), default="text")
     rank_parser.add_argument("--limit", type=int, default=None)
+    subparsers.add_parser("validate", help="Validate agents-db consistency.")
     return parser.parse_args(argv)
 
 
@@ -148,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(render_ranked_text(args.kind, ranked, args.limit))
         return 0
+    if args.command == "validate":
+        return subprocess.run(["python3", str(CHECK_BACKLOG_PATH)], cwd=REPO_ROOT).returncode
     raise ValueError(f"Unsupported command: {args.command}")
 
 

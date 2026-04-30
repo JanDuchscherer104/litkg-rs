@@ -622,6 +622,7 @@ fn build_section_chunk(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_memory_node(
     kind: MemoryNodeKind,
     chunk_kind: MemoryChunkKind,
@@ -721,7 +722,7 @@ fn extract_supersedes_directives(text: &str) -> (String, Vec<String>) {
     let mut supersedes = BTreeSet::new();
     let cleaned = supersedes_regex()
         .replace_all(text, |caps: &regex::Captures| {
-            for raw_id in caps[1].split(|ch: char| ch == ',' || ch == ';') {
+            for raw_id in caps[1].split([',', ';']) {
                 let raw_id = raw_id.trim();
                 if !raw_id.is_empty() {
                     supersedes.insert(raw_id.to_string());
@@ -1167,6 +1168,11 @@ mod tests {
 
     fn config(root: &Path) -> RepoConfig {
         RepoConfig {
+            project: None,
+            sources: std::collections::BTreeMap::new(),
+            representation: None,
+            backends: None,
+            storage: None,
             manifest_path: root.join("sources.jsonl"),
             bib_path: root.join("references.bib"),
             tex_root: root.join("tex"),
@@ -1186,6 +1192,7 @@ mod tests {
 
     fn sample_paper() -> ParsedPaper {
         ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: "efm3d-foundation".into(),
                 citation_key: Some("efm3d2024".into()),

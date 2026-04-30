@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Initialize a bounded autoresearch run log for litkg-rs."""
 
 from __future__ import annotations

@@ -993,7 +993,7 @@ fn parsed_content_richness(paper: &ParsedPaper) -> usize {
         + paper.provenance.len()
 }
 
-fn unique_parsed_papers<'a>(papers: Vec<&'a ParsedPaper>) -> Vec<&'a ParsedPaper> {
+fn unique_parsed_papers(papers: Vec<&ParsedPaper>) -> Vec<&ParsedPaper> {
     let mut seen = BTreeSet::new();
     papers
         .into_iter()
@@ -1272,6 +1272,11 @@ mod tests {
 
     fn config(root: &Path) -> RepoConfig {
         RepoConfig {
+            project: None,
+            sources: std::collections::BTreeMap::new(),
+            representation: None,
+            backends: None,
+            storage: None,
             manifest_path: root.join("sources.jsonl"),
             bib_path: root.join("references.bib"),
             tex_root: root.join("tex"),
@@ -1351,6 +1356,7 @@ mod tests {
     fn sample_parsed() -> Vec<ParsedPaper> {
         vec![
             ParsedPaper {
+                kind: crate::model::DocumentKind::Literature,
                 metadata: sample_registry()[0].clone(),
                 abstract_text: Some("Alpha SLAM introduces loop closure robustness.".into()),
                 sections: vec![PaperSection {
@@ -1369,6 +1375,7 @@ mod tests {
                 provenance: vec!["manifest".into(), "bib".into()],
             },
             ParsedPaper {
+                kind: crate::model::DocumentKind::Literature,
                 metadata: sample_registry()[1].clone(),
                 abstract_text: Some("Beta focuses on navigation baselines.".into()),
                 sections: vec![PaperSection {
@@ -1389,6 +1396,7 @@ mod tests {
     fn computes_corpus_stats_from_registry_and_parsed_papers() {
         let mut parsed = sample_parsed();
         parsed.push(ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: "stale-paper".into(),
                 citation_key: Some("stale2024paper".into()),
@@ -1521,6 +1529,7 @@ mod tests {
             semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 parse_status: ParseStatus::Parsed,
@@ -1571,6 +1580,7 @@ mod tests {
             semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 has_local_tex: false,
@@ -1620,6 +1630,7 @@ mod tests {
         }];
         let parsed = vec![
             ParsedPaper {
+                kind: crate::model::DocumentKind::Literature,
                 metadata: PaperSourceRecord {
                     paper_id: "arxiv-2601-00001".into(),
                     citation_key: None,
@@ -1647,6 +1658,7 @@ mod tests {
                 provenance: vec![],
             },
             ParsedPaper {
+                kind: crate::model::DocumentKind::Literature,
                 metadata: PaperSourceRecord {
                     paper_id: "old2024paper".into(),
                     citation_key: Some("old2024paper".into()),
@@ -1710,6 +1722,7 @@ mod tests {
         }];
         let parsed = vec![
             ParsedPaper {
+                kind: crate::model::DocumentKind::Literature,
                 metadata: PaperSourceRecord {
                     paper_id: "old-a".into(),
                     citation_key: Some("old-a".into()),
@@ -1741,6 +1754,7 @@ mod tests {
                 provenance: vec!["a.tex".into()],
             },
             ParsedPaper {
+                kind: crate::model::DocumentKind::Literature,
                 metadata: PaperSourceRecord {
                     paper_id: "old-b".into(),
                     citation_key: Some("old-b".into()),
@@ -1824,6 +1838,7 @@ mod tests {
         std::fs::write(dir.path().join("pdf").join("alpha.pdf"), b"pdf").unwrap();
         let mut parsed = sample_parsed();
         parsed.push(ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 paper_id: "stale-citer".into(),
                 citation_key: Some("stale2025citer".into()),
@@ -1895,6 +1910,7 @@ mod tests {
             semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
+            kind: crate::model::DocumentKind::Literature,
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 parse_status: ParseStatus::Parsed,
