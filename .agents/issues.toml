@@ -53,7 +53,7 @@ id = "ISSUE-0007"
 title = "Add strict AGENTS, README, and REQUIREMENTS initialization templates for client repos"
 summary = "Create strict initialization templates influenced by aria-nbv and prml-vslam so downstream repos can bootstrap agent scaffolding consistently."
 priority = "high"
-status = "open"
+status = "closed"
 github_issue_number = 4
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/4"
 
@@ -89,7 +89,7 @@ id = "ISSUE-0013"
 title = "Promote benchmark results into selectable autoresearch targets and GitHub issue sync"
 summary = "Extend the benchmark-result layer so validated result bundles can feed overnight autoresearch targets directly and sync issue-ready target proposals into GitHub once the repo has a real remote."
 priority = "high"
-status = "open"
+status = "closed"
 github_issue_number = 8
 github_url = "https://github.com/JanDuchscherer104/litkg-rs/issues/8"
 
@@ -341,5 +341,19 @@ status = "open"
 id = "ISSUE-0041"
 title = "Expose litkg-rs as an MCP Server with high-level agent tools"
 summary = "Provide an MCP interface for graph retrieval, pathfinding, and the generation of 'context packs' for agent tasks."
+priority = "high"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0042"
+title = "Add agents-db consistency validator and reconcile resolved/open state"
+summary = "Implement a checker that validates resolved items are correctly marked and metadata is consistent across todos, issues, and resolved lists."
+priority = "critical"
+status = "open"
+
+[[issues]]
+id = "ISSUE-0043"
+title = "Add secrets, transcript privacy, and redaction policy"
+summary = "Establish policies and patterns to prevent committing API keys, private transcripts, or sensitive research data to the repository."
 priority = "high"
 status = "open"

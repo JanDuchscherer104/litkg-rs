@@ -12,6 +12,7 @@ pub mod memory;
 pub mod model;
 pub mod notebook;
 pub mod registry;
+pub mod schema;
 pub mod semantic_scholar;
 pub mod tabular;
 pub mod tex;
@@ -63,6 +64,10 @@ pub use notebook::{
     ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,
 };
 pub use registry::{build_registry_snapshot, load_registry, sync_registry, write_registry};
+pub use schema::{
+    Alias, CanonicalEdge, CanonicalNode, Conflict, ConflictKind, EdgeKind, MergeDecision,
+    MergeReason, NodeKind, Provenance, ProvenanceSpan, StableId,
+};
 pub use semantic_scholar::{
     enrich_registry_with_semantic_scholar, enrich_registry_with_semantic_scholar_client,
     semantic_scholar_identifier, SemanticScholarBatchResponse, SemanticScholarClient,

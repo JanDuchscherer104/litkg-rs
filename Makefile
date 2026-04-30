@@ -52,10 +52,14 @@ cargo-check: ## Run cargo check across the workspace
 clippy: ## Run clippy across the workspace
 	$(CARGO) clippy --workspace --all-targets
 
+agents-db-check: ## Validate agents-db consistency
+	python3 .agents/scripts/check_backlog.py
+
 ci: ## Run the main local verification suite
 	$(MAKE) lint-check
 	$(MAKE) benchmark-validate
 	$(MAKE) kg-smoke
+	$(MAKE) agents-db-check
 
 clean: ## Remove Cargo build artifacts
 	$(CARGO) clean
