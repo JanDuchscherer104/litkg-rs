@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use litkg_core::{
-    infer_enriched_edges, load_project_memory, MemoryChunkKind, MemoryNode, MemoryNodeKind,
-    MemorySurface, MemorySurfaceKind, ParsedPaper, RepoConfig,
+    build_python_code_graph, infer_enriched_edges, load_project_memory, CodeCall, CodeImport,
+    MemoryChunkKind, MemoryNode, MemoryNodeKind, MemorySurface, MemorySurfaceKind, ParsedPaper,
+    RepoConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -214,6 +215,102 @@ impl Neo4jSink {
             });
         }
 
+        add_generated_context_nodes(config, &mut nodes)?;
+
+        let code_graph = build_python_code_graph(config)?;
+        for file in code_graph.files {
+            nodes.insert(
+                file.id.clone(),
+                Neo4jNode {
+                    id: file.id,
+                    labels: vec!["CodeFile".into()],
+                    properties: serde_json::json!({
+                        "repo_path": file.repo_path,
+                        "module": file.module,
+                        "line_count": file.line_count,
+                        "source": "python_ast",
+                    }),
+                },
+            );
+        }
+        for module in code_graph.modules {
+            nodes.insert(
+                module.id.clone(),
+                Neo4jNode {
+                    id: module.id,
+                    labels: vec!["CodeModule".into()],
+                    properties: serde_json::json!({
+                        "name": module.name,
+                        "file_id": module.file_id,
+                        "repo_path": module.repo_path,
+                        "source": "python_ast",
+                    }),
+                },
+            );
+        }
+        for symbol in code_graph.symbols {
+            nodes.insert(
+                symbol.id.clone(),
+                Neo4jNode {
+                    id: symbol.id,
+                    labels: vec!["CodeSymbol".into()],
+                    properties: serde_json::json!({
+                        "qualified_name": symbol.qualified_name,
+                        "name": symbol.name,
+                        "symbol_kind": symbol.kind.as_str(),
+                        "module": symbol.module,
+                        "file_id": symbol.file_id,
+                        "repo_path": symbol.repo_path,
+                        "parent_id": symbol.parent_id,
+                        "line_start": symbol.line_start,
+                        "line_end": symbol.line_end,
+                        "signature": symbol.signature,
+                        "doc_summary": symbol.doc_summary,
+                        "source": "python_ast",
+                    }),
+                },
+            );
+        }
+        for containment in code_graph.contains {
+            edges.push(Neo4jEdge {
+                source: containment.source_id,
+                target: containment.target_id,
+                rel_type: containment.rel_type,
+                properties: serde_json::json!({"source": "python_ast"}),
+            });
+        }
+        for import in code_graph.imports {
+            let target = code_import_target(&import, &mut nodes);
+            edges.push(Neo4jEdge {
+                source: import.source_id,
+                target,
+                rel_type: "IMPORTS".into(),
+                properties: serde_json::json!({
+                    "imported": import.imported,
+                    "alias": import.alias,
+                    "line": import.line,
+                    "source": "python_ast",
+                    "resolved": import.target_id.is_some(),
+                }),
+            });
+        }
+        for call in code_graph.calls {
+            let Some(target) = code_call_target(&call) else {
+                continue;
+            };
+            edges.push(Neo4jEdge {
+                source: call.source_id,
+                target,
+                rel_type: "CALLS".into(),
+                properties: serde_json::json!({
+                    "target": call.target,
+                    "line": call.line,
+                    "source": "python_ast",
+                    "resolved": call.target_id.is_some(),
+                }),
+            });
+        }
+
         let mut nodes = nodes.into_values().collect::<Vec<_>>();
         nodes.sort_by(|left, right| left.id.cmp(&right.id));
         edges.sort_by(|left, right| {
@@ -233,6 +330,200 @@ impl Neo4jSink {
         fs::write(&nodes_path, jsonl(&nodes)?)?;
         fs::write(&edges_path, jsonl(&edges)?)?;
         Ok(vec![nodes_path, edges_path])
+    }
+}
+
+fn code_import_target(import: &CodeImport, nodes: &mut BTreeMap<String, Neo4jNode>) -> String {
+    import
+        .target_id
+        .clone()
+        .unwrap_or_else(|| insert_code_reference(nodes, "import", import.imported.as_str()))
+}
+
+fn code_call_target(call: &CodeCall) -> Option<String> {
+    call.target_id.clone()
+}
+
+fn insert_code_reference(
+    nodes: &mut BTreeMap<String, Neo4jNode>,
+    reference_kind: &str,
+    name: &str,
+) -> String {
+    let id = format!("code_ref:{}:{}", reference_kind, slugify(name));
+    nodes.entry(id.clone()).or_insert_with(|| Neo4jNode {
+        id: id.clone(),
+        labels: vec!["CodeReference".into()],
+        properties: serde_json::json!({
+            "name": name,
+            "reference_kind": reference_kind,
+            "source": "python_ast",
+        }),
+    });
+    id
+}
+
+fn add_generated_context_nodes(
+    config: &RepoConfig,
+    nodes: &mut BTreeMap<String, Neo4jNode>,
+) -> Result<()> {
+    let repo_root = config_repo_root(config);
+    for (stem, title) in [
+        ("source_index", "Context Sources Index"),
+        ("literature_index", "Literature Source Index"),
+        ("data_contracts", "Data Contracts"),
+    ] {
+        let source_path = format!("docs/_generated/context/{stem}.md");
+        let path = repo_root.join(&source_path);
+        if !path.is_file() {
+            continue;
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let id = format!("generated_context:{stem}");
+        nodes.insert(
+            id.clone(),
+            Neo4jNode {
+                id,
+                labels: vec!["GeneratedContext".into()],
+                properties: serde_json::json!({
+                    "title": title,
+                    "source_path": source_path,
+                    "content": content,
+                    "source": "make_context",
+                }),
+            },
+        );
+        if stem == "data_contracts" {
+            add_data_contract_nodes(&content, &source_path, nodes);
+        }
+    }
+
+    add_glossary_nodes(&repo_root, nodes)?;
+    Ok(())
+}
+
+fn add_data_contract_nodes(
+    content: &str,
+    source_path: &str,
+    nodes: &mut BTreeMap<String, Neo4jNode>,
+) {
+    let mut current_title = None::<String>;
+    let mut current_start = 0usize;
+    let mut current_lines = Vec::new();
+    for (line_index, line) in content.lines().enumerate() {
+        if let Some(title) = line.strip_prefix("## ") {
+            if let Some(previous_title) = current_title.take() {
+                insert_data_contract_node(
+                    previous_title,
+                    source_path,
+                    current_start,
+                    &current_lines,
+                    nodes,
+                );
+            }
+            current_title = Some(title.trim().to_string());
+            current_start = line_index + 1;
+            current_lines.clear();
+        } else if current_title.is_some() {
+            current_lines.push(line.to_string());
+        }
+    }
+    if let Some(title) = current_title {
+        insert_data_contract_node(title, source_path, current_start, &current_lines, nodes);
+    }
+}
+
+fn insert_data_contract_node(
+    title: String,
+    source_path: &str,
+    line_start: usize,
+    lines: &[String],
+    nodes: &mut BTreeMap<String, Neo4jNode>,
+) {
+    let content = lines.join("\n").trim().to_string();
+    if title == "Data Contracts (aria_nbv)" || content.is_empty() {
+        return;
+    }
+    let summary = content
+        .lines()
+        .find(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('-') && !trimmed.ends_with(':')
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let id = format!("data_contract:{}", slugify(&title));
+    nodes.insert(
+        id.clone(),
+        Neo4jNode {
+            id,
+            labels: vec!["DataContract".into(), "GeneratedContext".into()],
+            properties: serde_json::json!({
+                "title": title,
+                "summary": summary,
+                "content": content,
+                "source_path": source_path,
+                "line_start": line_start,
+                "line_end": line_start + lines.len(),
+                "source": "make_context",
+            }),
+        },
+    );
+}
+
+fn add_glossary_nodes(repo_root: &Path, nodes: &mut BTreeMap<String, Neo4jNode>) -> Result<()> {
+    let source_path = "docs/_generated/context/glossary.jsonl";
+    let path = repo_root.join(source_path);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let raw =
+        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
+        let value: serde_json::Value =
+            serde_json::from_str(line).context("Failed to parse generated glossary JSONL row")?;
+        let Some(id_value) = value.get("id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let id = format!("concept:{}", slugify(id_value));
+        nodes.insert(
+            id.clone(),
+            Neo4jNode {
+                id,
+                labels: vec!["Concept".into(), "GeneratedContext".into()],
+                properties: serde_json::json!({
+                    "title": value.get("label").and_then(|value| value.as_str()).unwrap_or(id_value),
+                    "name": id_value,
+                    "label": value.get("label").cloned().unwrap_or(serde_json::Value::Null),
+                    "short": value.get("short").cloned().unwrap_or(serde_json::Value::Null),
+                    "definition_short": value.get("definition_short").cloned().unwrap_or(serde_json::Value::Null),
+                    "definition_long": value.get("definition_long").cloned().unwrap_or(serde_json::Value::Null),
+                    "aliases": value.get("aliases").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+                    "kg_tags": value.get("kg_tags").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+                    "internal_links": value.get("internal_links").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+                    "source_path": source_path,
+                    "source": "make_context",
+                }),
+            },
+        );
+    }
+    Ok(())
+}
+
+fn config_repo_root(config: &RepoConfig) -> PathBuf {
+    let root = config
+        .project
+        .as_ref()
+        .map(|project| project.root.clone())
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("."));
+    if root.is_absolute() {
+        root
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(root)
     }
 }
 
@@ -670,5 +961,100 @@ tags: [frames]
 
         assert!(nodes.contains("\"labels\":[\"ProjectMemory\",\"ProjectState\"]"));
         assert!(edges.contains("\"rel_type\":\"DOCUMENTS_CODE\""));
+    }
+
+    #[test]
+    fn exports_ast_backed_python_code_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pkg")).unwrap();
+        fs::write(dir.path().join("pkg/__init__.py"), "").unwrap();
+        fs::write(
+            dir.path().join("pkg/a.py"),
+            r#"
+from .b import helper
+
+class Runner:
+    def run(self):
+        return helper()
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("pkg/b.py"),
+            r#"
+def helper():
+    return 1
+"#,
+        )
+        .unwrap();
+        let mut config = config(dir.path());
+        config.project = Some(litkg_core::config::ProjectConfig {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            root: dir.path().to_path_buf(),
+        });
+        config.sources.insert(
+            "python".into(),
+            litkg_core::config::SourceConfig {
+                required: true,
+                include: vec!["pkg/**/*.py".into()],
+                symbols: true,
+                edges: Some("codegraphcontext".into()),
+                ..Default::default()
+            },
+        );
+
+        Neo4jSink::export(&config, &[]).unwrap();
+        let nodes = fs::read_to_string(config.neo4j_export_root().join("nodes.jsonl")).unwrap();
+        let edges = fs::read_to_string(config.neo4j_export_root().join("edges.jsonl")).unwrap();
+
+        assert!(nodes.contains("\"labels\":[\"CodeFile\"]"));
+        assert!(nodes.contains("\"labels\":[\"CodeSymbol\"]"));
+        assert!(nodes.contains("\"qualified_name\":\"pkg.a.Runner.run\""));
+        assert!(edges.contains("\"rel_type\":\"IMPORTS\""));
+        assert!(edges.contains("\"target\":\"code_symbol:pkg.b.helper\""));
+        assert!(edges.contains("\"rel_type\":\"CALLS\""));
+    }
+
+    #[test]
+    fn exports_generated_context_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let context_root = dir.path().join("docs/_generated/context");
+        fs::create_dir_all(&context_root).unwrap();
+        fs::write(
+            context_root.join("source_index.md"),
+            "# Context Sources Index\n\nPython source and docs.\n",
+        )
+        .unwrap();
+        fs::write(
+            context_root.join("literature_index.md"),
+            "# Literature Source Index\n\nVIN-NBV paper family.\n",
+        )
+        .unwrap();
+        fs::write(
+            context_root.join("data_contracts.md"),
+            "# Data Contracts\n\n## app.state.VinPrediction\nPrediction contract.\n\nFields:\n- score: float\n",
+        )
+        .unwrap();
+        fs::write(
+            context_root.join("glossary.jsonl"),
+            "{\"id\":\"relative-reconstruction-improvement\",\"label\":\"Relative Reconstruction Improvement\",\"definition_short\":\"Oracle reconstruction gain.\",\"aliases\":[\"RRI\"],\"kg_tags\":[\"metric\"],\"internal_links\":[]}\n",
+        )
+        .unwrap();
+        let mut config = config(dir.path());
+        config.project = Some(litkg_core::config::ProjectConfig {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            root: dir.path().to_path_buf(),
+        });
+
+        Neo4jSink::export(&config, &[]).unwrap();
+        let nodes = fs::read_to_string(config.neo4j_export_root().join("nodes.jsonl")).unwrap();
+
+        assert!(nodes.contains("\"labels\":[\"GeneratedContext\"]"));
+        assert!(nodes.contains("\"labels\":[\"DataContract\",\"GeneratedContext\"]"));
+        assert!(nodes.contains("\"labels\":[\"Concept\",\"GeneratedContext\"]"));
+        assert!(nodes.contains("app.state.VinPrediction"));
+        assert!(nodes.contains("Relative Reconstruction Improvement"));
     }
 }

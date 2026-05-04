@@ -126,26 +126,31 @@ fn write_agents_scaffold(root: &Path) {
     fs::write(
         agents.join("issues.toml"),
         "meta = { updated_on = \"2026-04-30\" }\n\n\
-[[issues]]\n\
+[[issue]]\n\
 id = \"ISSUE-0048\"\n\
 title = \"Implement context-pack CLI before MCP\"\n\
-summary = \"Build evidence bundles for agents before MCP wrapping.\"\n\
+description = \"Build evidence bundles for agents before MCP wrapping.\"\n\
 priority = \"critical\"\n\
-status = \"open\"\n",
+status = \"open\"\n\
+context = [\"Client repo backlog records use singular TOML tables and description fields.\"]\n\
+references = [\"repo:.agents/issues.toml\", \"litkg:context-pack\"]\n",
     )
     .unwrap();
     fs::write(
         agents.join("todos.toml"),
         "meta = { updated_on = \"2026-04-30\" }\n\n\
-[[todos]]\n\
+[[todo]]\n\
 id = \"TODO-0030\"\n\
 title = \"Implement context-pack CLI evidence-bundle generation before MCP wrapping\"\n\
+description = \"Carry issue links, context, and references into context packs.\"\n\
 issue_ids = [\"ISSUE-0048\"]\n\
 priority = \"critical\"\n\
 status = \"pending\"\n\
 loc_min = 200\n\
 loc_expected = 400\n\
-loc_max = 800\n",
+loc_max = 800\n\
+context = [\"Backlog context should survive agent handoff.\"]\n\
+references = [\"repo:.agents/todos.toml\", \"litkg:context-pack\"]\n",
     )
     .unwrap();
     fs::write(
@@ -325,6 +330,7 @@ fn stats_command_supports_json_output() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "stats",
             "--config",
             config_path.to_str().unwrap(),
@@ -358,6 +364,7 @@ fn capabilities_command_reports_json_snapshot() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "capabilities",
             "--config",
             config_path.to_str().unwrap(),
@@ -381,12 +388,52 @@ fn capabilities_command_reports_json_snapshot() {
     assert_eq!(json["graph_outputs"]["graphify_state"], "generated");
     assert_eq!(json["graph_outputs"]["neo4j_state"], "generated");
     assert_eq!(json["graph_outputs"]["native_viewer_state"], "ready");
+    assert!(json["conformance"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source["name"] == "literature"));
+    assert!(json["conformance"]["backends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(
+            |backend| backend["name"] == "graphify" && backend["agent_recommendation"] == "use_now"
+        ));
     assert_eq!(json["runtime"]["checked"], false);
     assert!(json["next_actions"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|item| item.as_str().unwrap().contains("inspect-graph")));
+        .any(|item| item.as_str().unwrap().contains("kg visualize")));
+}
+
+#[test]
+fn top_level_capabilities_alias_reports_json_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "capabilities",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["conformance"]["backends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|backend| backend["name"] == "semantic_scholar"));
 }
 
 #[test]
@@ -408,6 +455,7 @@ fn capabilities_command_is_read_only_for_missing_artifacts() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "capabilities",
             "--config",
             config_path.to_str().unwrap(),
@@ -422,8 +470,10 @@ fn capabilities_command_is_read_only_for_missing_artifacts() {
 
     let text = String::from_utf8(output).unwrap();
     assert!(text.contains("litkg capability snapshot"));
-    assert!(text.contains("semantic scholar: configured"));
-    assert!(text.contains("sync-registry"));
+    assert!(text.contains("Semantic Scholar"));
+    assert!(text.contains("agent backend contract:"));
+    assert!(text.contains("semantic_scholar"));
+    assert!(text.contains("ingest"));
     assert!(!registry_path.exists());
 }
 
@@ -435,6 +485,7 @@ fn capabilities_runtime_check_is_shallow_and_json_serializable() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "capabilities",
             "--config",
             config_path.to_str().unwrap(),
@@ -460,6 +511,41 @@ fn capabilities_runtime_check_is_shallow_and_json_serializable() {
 }
 
 #[test]
+fn kg_find_returns_stable_json_hits() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "kg",
+            "find",
+            "--config",
+            config_path.to_str().unwrap(),
+            "Results",
+            "--modality",
+            "literature",
+            "--no-rg",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    let hits = json.as_array().unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().any(|hit| {
+        hit["kind"] == "PaperSection"
+            && hit["modality"] == "literature"
+            && hit["matched_field"] == "title"
+    }));
+}
+
+#[test]
 fn context_pack_command_reports_stable_json_contract() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = write_test_config(dir.path());
@@ -468,6 +554,7 @@ fn context_pack_command_reports_stable_json_contract() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "context-pack",
             "--config",
             config_path.to_str().unwrap(),
@@ -490,8 +577,49 @@ fn context_pack_command_reports_stable_json_contract() {
 
     let json: Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["profile"], "agents-scaffold");
+    assert!(json["task_summary"]
+        .as_str()
+        .unwrap()
+        .contains("Context pack"));
+    for field in [
+        "action_plan",
+        "evidence_spans",
+        "relevant_symbols",
+        "relevant_papers",
+        "active_backlog",
+        "missing_leaves",
+        "risk_flags",
+        "verification_commands",
+        "backend_status",
+    ] {
+        assert!(json[field].is_array(), "{field} should be an array");
+    }
     assert_eq!(json["active_issues"][0]["id"], "ISSUE-0048");
+    assert_eq!(
+        json["active_issues"][0]["summary"],
+        "Build evidence bundles for agents before MCP wrapping."
+    );
+    assert_eq!(
+        json["active_issues"][0]["context"][0],
+        "Client repo backlog records use singular TOML tables and description fields."
+    );
+    assert_eq!(
+        json["active_issues"][0]["references"][0],
+        "repo:.agents/issues.toml"
+    );
     assert_eq!(json["active_todos"][0]["id"], "TODO-0030");
+    assert_eq!(
+        json["active_todos"][0]["summary"],
+        "Carry issue links, context, and references into context packs."
+    );
+    assert_eq!(
+        json["active_todos"][0]["context"][0],
+        "Backlog context should survive agent handoff."
+    );
+    assert_eq!(
+        json["active_todos"][0]["references"][0],
+        "repo:.agents/todos.toml"
+    );
     assert!(!json["evidence_spans"].as_array().unwrap().is_empty());
     assert_eq!(json["relevant_papers"][0]["paper_id"], "demo2025paper");
     assert!(json["missing_context_leaves"]
@@ -507,6 +635,65 @@ fn context_pack_command_reports_stable_json_contract() {
 }
 
 #[test]
+fn top_level_context_pack_alias_supports_thesis_profile_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    write_agents_scaffold(dir.path());
+    fs::create_dir_all(dir.path().join("docs/typst/seminar_paper")).unwrap();
+    fs::create_dir_all(dir.path().join("docs/contents/thesis")).unwrap();
+    fs::create_dir_all(dir.path().join("aria_nbv")).unwrap();
+    fs::write(
+        dir.path().join("docs/typst/seminar_paper/main.typ"),
+        "Thesis coding evidence for retrieval.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("docs/contents/thesis/roadmap.qmd"),
+        "Roadmap retrieval task.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("docs/contents/thesis/questions.qmd"),
+        "Question about retrieval.\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("aria_nbv/AGENTS.md"), "# Package guide\n").unwrap();
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--task",
+            "implement thesis coding retrieval",
+            "--profile",
+            "thesis-coding",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["profile"], "thesis-coding");
+    assert!(json["action_plan"][0]
+        .as_str()
+        .unwrap()
+        .contains("smallest edit"));
+    assert!(json["backend_status"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|backend| backend["name"] == "openai_developer_docs"));
+}
+
+#[test]
 fn context_pack_command_reports_text_sections() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = write_test_config(dir.path());
@@ -515,6 +702,7 @@ fn context_pack_command_reports_text_sections() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "context-pack",
             "--config",
             config_path.to_str().unwrap(),
@@ -533,9 +721,12 @@ fn context_pack_command_reports_text_sections() {
 
     let text = String::from_utf8(output).unwrap();
     assert!(text.contains("litkg context pack"));
+    assert!(text.contains("action plan:"));
     assert!(text.contains("active issues:"));
     assert!(text.contains("evidence spans:"));
-    assert!(text.contains("missing context leaves:"));
+    assert!(text.contains("missing leaves:"));
+    assert!(text.contains("risk flags:"));
+    assert!(text.contains("backend status:"));
     assert!(text.contains("verification commands:"));
 }
 
@@ -547,6 +738,7 @@ fn search_and_show_paper_commands_work_end_to_end() {
     let search_output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "lit",
             "search",
             "--config",
             config_path.to_str().unwrap(),
@@ -573,6 +765,7 @@ fn search_and_show_paper_commands_work_end_to_end() {
     Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "lit",
             "search",
             "--config",
             config_path.to_str().unwrap(),
@@ -587,6 +780,7 @@ fn search_and_show_paper_commands_work_end_to_end() {
     Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "lit",
             "search",
             "--config",
             config_path.to_str().unwrap(),
@@ -599,7 +793,8 @@ fn search_and_show_paper_commands_work_end_to_end() {
     let show_output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
-            "show-paper",
+            "lit",
+            "show",
             "--config",
             config_path.to_str().unwrap(),
             "--paper",
@@ -629,6 +824,7 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
     Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "info",
             "stats",
             "--config",
             config_path.to_str().unwrap(),
@@ -643,6 +839,7 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
     let search_output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
+            "lit",
             "search",
             "--config",
             config_path.to_str().unwrap(),
@@ -664,7 +861,8 @@ fn stats_does_not_write_registry_when_building_a_read_only_snapshot() {
     let show_output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
-            "show-paper",
+            "lit",
+            "show",
             "--config",
             config_path.to_str().unwrap(),
             "--paper",
@@ -696,7 +894,8 @@ fn show_paper_json_uses_null_for_missing_artifacts() {
     let output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
-            "show-paper",
+            "lit",
+            "show",
             "--config",
             config_path.to_str().unwrap(),
             "--paper",
@@ -726,7 +925,8 @@ fn no_registry_fallback_does_not_resurrect_stale_parsed_metadata() {
     let show_output = Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
-            "show-paper",
+            "lit",
+            "show",
             "--config",
             config_path.to_str().unwrap(),
             "--paper",
@@ -750,7 +950,8 @@ fn no_registry_fallback_does_not_resurrect_stale_parsed_metadata() {
     Command::cargo_bin("litkg-cli")
         .unwrap()
         .args([
-            "show-paper",
+            "lit",
+            "show",
             "--config",
             config_path.to_str().unwrap(),
             "--paper",

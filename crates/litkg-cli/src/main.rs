@@ -1,24 +1,32 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use colored::Colorize;
+use comfy_table::Table;
+use indicatif::{ProgressBar, ProgressStyle};
 use litkg_core::{
     build_context_pack, build_registry_snapshot, compute_corpus_stats, compute_repo_capabilities,
     download_registry_sources, enrich_registry_with_semantic_scholar, inspect_benchmark_support,
     inspect_paper, load_parsed_papers, load_registry, parse_registry_papers,
     promote_benchmark_results, render_promoted_targets, run_benchmarks, search_papers,
     sync_registry, validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
-    write_parsed_papers, AutoResearchRenderFormat, BenchmarkPromotionRequest, BenchmarkResults,
-    BenchmarkSupportStatus, CapabilityOptions, CapabilityState, ContextPack, ContextPackRequest,
-    CorpusStats, DownloadOptions, MetricThresholdComparison, MetricThresholdRule, PaperInspection,
-    PaperSourceRecord, ParsedPaper, PromotionComponentSelection, RepoCapabilitySnapshot,
-    RepoConfig, RuntimeCheck, SearchResults, SemanticScholarClient, SemanticScholarConfig,
-    SemanticScholarPaper, SemanticScholarSearchRequest, SinkMode,
+    write_parsed_papers, AgentRecommendation, AutoResearchRenderFormat, BenchmarkPromotionRequest,
+    BenchmarkResults, BenchmarkSupportStatus, CapabilityOptions, CapabilityState, ContextPack,
+    ContextPackRequest, CorpusStats, DownloadOptions, MetricThresholdComparison,
+    MetricThresholdRule, PaperInspection, PaperSourceRecord, ParsedPaper,
+    PromotionComponentSelection, RepoCapabilitySnapshot, RepoConfig, RuntimeCheck, SearchResults,
+    SemanticScholarClient, SemanticScholarConfig, SemanticScholarPaper,
+    SemanticScholarSearchRequest, SinkMode,
 };
 use litkg_graphify::GraphifySink;
 use litkg_neo4j::Neo4jSink;
-use litkg_viewer::run_bundle as run_viewer_bundle;
+use litkg_viewer::{
+    load_and_search_bundle, run_bundle_with_options as run_viewer_bundle_with_options,
+    GraphEntryQuery, GraphFilter, GraphModality, GraphSearchHit, ViewerOptions,
+};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "litkg")]
@@ -30,37 +38,150 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    SyncRegistry(ConfigArg),
-    IngestDocs(IngestDocsCommand),
-    IngestConfiguredSources(ConfigArg),
+    /// Ingest documents and sync registry
+    Ingest(IngestCommand),
+    /// Agent-facing capability contract
+    Capabilities(CapabilitiesCommand),
+    /// Agent-facing task context/action pack
+    ContextPack(ContextPackCommand),
+    /// Knowledge graph operations
+    #[command(subcommand)]
+    Kg(KgCommand),
+    /// Literature operations
+    #[command(subcommand)]
+    Lit(LitCommand),
+    /// Semantic Scholar operations
+    #[command(subcommand)]
+    S2(S2Command),
+    /// Benchmark operations
+    #[command(subcommand)]
+    Benchmark(BenchmarkCommand),
+    /// Information and capabilities
+    #[command(subcommand)]
+    Info(InfoCommand),
+}
+
+#[derive(Args, Clone)]
+struct IngestCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    /// Optional directory to ingest documents from
+    dir: Option<String>,
+    #[arg(long, default_value_t = false)]
+    recursive: bool,
+    #[arg(long, value_enum, default_value_t = DocKindArg::Documentation)]
+    kind: DocKindArg,
+}
+
+#[derive(Subcommand)]
+enum KgCommand {
+    Visualize(VisualizeCommand),
+    Find(KgFindCommand),
+    Build(WriteCommand),
+    Export(WriteCommand),
+}
+
+#[derive(Subcommand)]
+enum LitCommand {
     Download(DownloadCommand),
     Parse(ConfigArg),
-    Materialize(WriteCommand),
-    RebuildGraph(ConfigArg),
-    Pipeline(DownloadCommand),
-    ExportNeo4j(WriteCommand),
-    InspectGraph(ConfigArg),
-    Capabilities(CapabilitiesCommand),
-    ContextPack(ContextPackCommand),
-    Stats(StatsCommand),
     Search(SearchCommand),
-    ShowPaper(ShowPaperCommand),
-    EnrichSemanticScholar(SemanticScholarEnrichCommand),
-    SemanticScholarSearch(SemanticScholarSearchCommand),
-    SemanticScholarPaper(SemanticScholarPaperCommand),
-    SemanticScholarRecommend(SemanticScholarRecommendCommand),
-    ValidateBenchmarks(BenchmarkCatalogArg),
-    BenchmarkSupport(BenchmarkSupportCommand),
-    RunBenchmarks(BenchmarkRunCommand),
-    RenderAutoresearchTarget(AutoResearchTargetCommand),
-    SyncAutoresearchTargetIssue(AutoResearchIssueSyncCommand),
-    PromoteBenchmarkResults(PromoteBenchmarkResultsCommand),
+    Show(ShowPaperCommand),
+}
+
+#[derive(Subcommand)]
+enum S2Command {
+    Enrich(SemanticScholarEnrichCommand),
+    Search(SemanticScholarSearchCommand),
+    Recommend(SemanticScholarRecommendCommand),
+    Paper(SemanticScholarPaperCommand),
+}
+
+#[derive(Subcommand)]
+enum BenchmarkCommand {
+    Validate(BenchmarkCatalogArg),
+    Run(BenchmarkRunCommand),
+    Support(BenchmarkSupportCommand),
+    Promote(PromoteBenchmarkResultsCommand),
+    RenderTarget(AutoResearchTargetCommand),
+    SyncIssue(AutoResearchIssueSyncCommand),
+}
+
+#[derive(Subcommand)]
+enum InfoCommand {
+    Capabilities(CapabilitiesCommand),
+    Stats(StatsCommand),
+    ContextPack(ContextPackCommand),
 }
 
 #[derive(Args, Clone)]
 struct ConfigArg {
     #[arg(long)]
     config: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum GraphModalityArg {
+    All,
+    Code,
+    Docs,
+    GeneratedContext,
+    Literature,
+    Memory,
+    Backlog,
+    ExternalDocs,
+}
+
+impl From<GraphModalityArg> for GraphModality {
+    fn from(value: GraphModalityArg) -> Self {
+        match value {
+            GraphModalityArg::All => GraphModality::All,
+            GraphModalityArg::Code => GraphModality::Code,
+            GraphModalityArg::Docs => GraphModality::Docs,
+            GraphModalityArg::GeneratedContext => GraphModality::GeneratedContext,
+            GraphModalityArg::Literature => GraphModality::Literature,
+            GraphModalityArg::Memory => GraphModality::Memory,
+            GraphModalityArg::Backlog => GraphModality::Backlog,
+            GraphModalityArg::ExternalDocs => GraphModality::ExternalDocs,
+        }
+    }
+}
+
+#[derive(Args, Clone)]
+struct VisualizeCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    #[arg(long = "modality", value_enum)]
+    modalities: Vec<GraphModalityArg>,
+    #[arg(long = "exclude-modality", value_enum)]
+    exclude_modalities: Vec<GraphModalityArg>,
+    #[arg(long)]
+    entry: Option<String>,
+    #[arg(long = "entry-rg")]
+    entry_rg: Option<String>,
+    #[arg(long = "focus-depth", default_value_t = 0)]
+    focus_depth: usize,
+    #[arg(long = "repo-root")]
+    repo_root: Option<String>,
+}
+
+#[derive(Args, Clone)]
+struct KgFindCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    query: String,
+    #[arg(long = "modality", value_enum)]
+    modalities: Vec<GraphModalityArg>,
+    #[arg(long = "exclude-modality", value_enum)]
+    exclude_modalities: Vec<GraphModalityArg>,
+    #[arg(long = "repo-root")]
+    repo_root: Option<String>,
+    #[arg(long, default_value_t = 24)]
+    limit: usize,
+    #[arg(long = "no-rg", default_value_t = false)]
+    no_rg: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
 }
 
 #[derive(Args, Clone)]
@@ -358,422 +479,573 @@ struct SinkWriteSummary {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::SyncRegistry(args) => {
-            let config = RepoConfig::load(&args.config)?;
-            let registry = sync_registry(&config)?;
-            println!(
-                "Synced {} registry records into {}",
-                registry.len(),
-                config.registry_path().display()
-            );
-        }
-        Commands::IngestDocs(args) => {
+        Commands::Ingest(args) => {
             let config = RepoConfig::load(&args.config.config)?;
-            let docs = litkg_core::ingest_markdown_docs(
-                &config,
-                &PathBuf::from(&args.dir),
-                args.recursive,
-                args.kind.into(),
-            )?;
-            println!("Successfully ingested {} documents.", docs.len());
-        }
-        Commands::IngestConfiguredSources(args) => {
-            let config = RepoConfig::load(&args.config)?;
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} {msg}")
+                    .unwrap(),
+            );
+            pb.enable_steady_tick(Duration::from_millis(100));
+
+            pb.set_message("Syncing registry...");
+            let registry = sync_registry(&config)?;
+            let mut total_docs = 0;
+
+            if let Some(dir) = &args.dir {
+                pb.set_message(format!("Ingesting documents from {}...", dir));
+                let docs = litkg_core::ingest_markdown_docs(
+                    &config,
+                    &PathBuf::from(dir),
+                    args.recursive,
+                    args.kind.into(),
+                )?;
+                total_docs += docs.len();
+            }
+
+            pb.set_message("Ingesting configured sources...");
             let docs = litkg_core::ingest_configured_sources(&config)?;
-            println!(
-                "Successfully ingested {} documents from configured sources.",
-                docs.len()
-            );
+            total_docs += docs.len();
+
+            pb.finish_with_message(format!(
+                "{}",
+                format!(
+                    "Successfully synced {} registry records and ingested {} documents.",
+                    registry.len(),
+                    total_docs
+                )
+                .green()
+                .bold()
+            ));
         }
-        Commands::Download(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let registry = if config.registry_path().exists() {
-                load_registry(config.registry_path())?
-            } else {
-                sync_registry(&config)?
-            };
-            let updated = download_registry_sources(
-                &config,
-                &registry,
-                DownloadOptions {
-                    overwrite: args.overwrite,
-                    download_pdfs: args.download_pdfs,
-                },
-            )?;
-            litkg_core::write_registry(&config.registry_path(), &updated)?;
-            println!("Downloaded literature assets for {} records", updated.len());
-        }
-        Commands::Parse(args) => {
-            let config = RepoConfig::load(&args.config)?;
-            let registry = if config.registry_path().exists() {
-                load_registry(config.registry_path())?
-            } else {
-                sync_registry(&config)?
-            };
-            let papers = parse_registry_papers(&config, &registry)?;
-            write_parsed_papers(config.parsed_root(), &papers)?;
-            let updated_registry = papers
-                .iter()
-                .map(|paper| paper.metadata.clone())
-                .collect::<Vec<_>>();
-            litkg_core::write_registry(&config.registry_path(), &updated_registry)?;
-            println!(
-                "Parsed {} papers into {}",
-                papers.len(),
-                config.parsed_root().display()
-            );
-        }
-        Commands::Materialize(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
-            let allow_memory_only_neo4j = papers.is_empty()
-                && matches!(config.sink, SinkMode::Neo4j)
-                && config.memory_state_root().is_some();
-            if papers.is_empty() && !allow_memory_only_neo4j {
-                anyhow::bail!(
-                    "No parsed papers found under {}",
-                    config.parsed_root().display()
+        Commands::Capabilities(args) => run_capabilities(args)?,
+        Commands::ContextPack(args) => run_context_pack(args)?,
+        Commands::Kg(kg_cmd) => match kg_cmd {
+            KgCommand::Visualize(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                inspect_graph(&config, &args)?;
+            }
+            KgCommand::Find(args) => {
+                run_kg_find(args)?;
+            }
+            KgCommand::Build(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                let repo_root = resolve_repo_root(&config, &args.config.config, None)?;
+                let config = config_with_repo_root(config, &repo_root);
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
                 );
-            }
-            let summaries = materialize(&config, &papers)?;
-            print_write_summaries(
-                "materialize",
-                &summaries,
-                parse_output_mode(&args.format)?,
-                args.verbose_paths,
-            )?;
-        }
-        Commands::RebuildGraph(args) => {
-            let config = RepoConfig::load(&args.config)?;
-            rebuild_graph(&config)?;
-        }
-        Commands::Pipeline(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let registry = sync_registry(&config)?;
-            let updated = download_registry_sources(
-                &config,
-                &registry,
-                DownloadOptions {
-                    overwrite: args.overwrite,
-                    download_pdfs: args.download_pdfs,
-                },
-            )?;
-            litkg_core::write_registry(&config.registry_path(), &updated)?;
-            let papers = parse_registry_papers(&config, &updated)?;
-            write_parsed_papers(config.parsed_root(), &papers)?;
-            let updated_registry = papers
-                .iter()
-                .map(|paper| paper.metadata.clone())
-                .collect::<Vec<_>>();
-            litkg_core::write_registry(&config.registry_path(), &updated_registry)?;
-            materialize(&config, &papers)?;
-            if matches!(config.sink, SinkMode::Graphify | SinkMode::Both) {
-                rebuild_graph(&config)?;
-            }
-        }
-        Commands::ExportNeo4j(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
-            if papers.is_empty() && config.memory_state_root().is_none() {
-                anyhow::bail!(
-                    "No parsed papers found under {} and no memory_state_root was configured",
-                    config.parsed_root().display()
-                );
-            }
-            let summaries = vec![SinkWriteSummary {
-                kind: "neo4j",
-                root: config.neo4j_export_root(),
-                written_paths: Neo4jSink::export(&config, &papers)?,
-            }];
-            print_write_summaries(
-                "export-neo4j",
-                &summaries,
-                parse_output_mode(&args.format)?,
-                args.verbose_paths,
-            )?;
-        }
-        Commands::InspectGraph(args) => {
-            let config = RepoConfig::load(&args.config)?;
-            inspect_graph(&config)?;
-        }
-        Commands::Capabilities(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let snapshot = compute_repo_capabilities(
-                &config,
-                CapabilityOptions {
-                    config_path: PathBuf::from(&args.config.config),
-                    repo_root: args.repo_root.map(PathBuf::from),
-                    benchmark_catalog: args.benchmark_catalog.map(PathBuf::from),
-                    benchmark_integrations: args.benchmark_integrations.map(PathBuf::from),
-                    check_runtime: args.check_runtime,
-                },
-            )?;
-            print_structured_output(&snapshot, args.format, render_capabilities)?;
-        }
-        Commands::ContextPack(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let repo_root = match args.repo_root {
-                Some(path) => PathBuf::from(path),
-                None => std::env::current_dir().context("Failed to determine current directory")?,
-            };
-            let pack = build_context_pack(
-                &config,
-                ContextPackRequest {
-                    repo_root,
-                    task: args.task,
-                    budget_tokens: args.budget,
-                    profile: args.profile,
-                },
-            )?;
-            print_structured_output(&pack, args.format, render_context_pack)?;
-        }
-        Commands::Stats(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let papers = load_parsed_papers(config.parsed_root())?;
-            let registry = load_registry_or_sync(&config, &papers)?;
-            let stats = compute_corpus_stats(&registry, &papers);
-            print_structured_output(&stats, args.format, render_stats)?;
-        }
-        Commands::Search(args) => {
-            if args.limit == 0 {
-                anyhow::bail!("--limit must be at least 1");
-            }
-            let config = RepoConfig::load(&args.config.config)?;
-            let papers = load_parsed_papers(config.parsed_root())?;
-            let registry = load_registry_or_sync(&config, &papers)?;
-            let hits = search_papers(
-                &registry,
-                &papers,
-                &config.relevance_tags,
-                &args.query,
-                args.limit,
-            )?;
-            print_structured_output(&hits, args.format, render_search_results)?;
-        }
-        Commands::ShowPaper(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let papers = load_parsed_papers(config.parsed_root())?;
-            let registry = load_registry_or_sync(&config, &papers)?;
-            let inspection = inspect_paper(&config, &registry, &papers, &args.paper_selector)?;
-            print_structured_output(&inspection, args.format, render_paper_inspection)?;
-        }
-        Commands::EnrichSemanticScholar(args) => {
-            let config = RepoConfig::load(&args.config.config)?;
-            let registry = if config.registry_path().exists() {
-                load_registry(config.registry_path())?
-            } else {
-                sync_registry(&config)?
-            };
-            let updated = enrich_registry_with_semantic_scholar(&config, &registry)?;
-            let enriched_count = updated
-                .iter()
-                .filter(|record| record.semantic_scholar.is_some())
-                .count();
-            if !args.dry_run {
-                litkg_core::write_registry(&config.registry_path(), &updated)?;
-            }
-            match args.format {
-                OutputFormat::Text => {
-                    let action = if args.dry_run {
-                        "Would enrich"
-                    } else {
-                        "Enriched"
-                    };
-                    println!(
-                        "{action} {enriched_count} of {} registry records with Semantic Scholar metadata",
-                        updated.len()
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                pb.set_message("Loading parsed papers...");
+                let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
+                let allow_memory_only_neo4j = papers.is_empty()
+                    && matches!(config.sink, SinkMode::Neo4j)
+                    && config.memory_state_root().is_some();
+                if papers.is_empty() && !allow_memory_only_neo4j {
+                    anyhow::bail!(
+                        "No parsed papers found under {}",
+                        config.parsed_root().display()
                     );
                 }
-                OutputFormat::Json => println!(
+
+                pb.set_message("Materializing graph...");
+                let summaries = materialize(&config, &papers)?;
+                pb.set_message("Rebuilding graph...");
+                if matches!(config.sink, SinkMode::Graphify | SinkMode::Both) {
+                    rebuild_graph(&config)?;
+                }
+                pb.finish_with_message(format!(
                     "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "records": updated.len(),
-                        "enriched": enriched_count,
-                        "dry_run": args.dry_run,
-                        "registry_path": config.registry_path(),
-                    }))?
-                ),
+                    "Graph build completed successfully!".green().bold()
+                ));
+
+                print_write_summaries(
+                    "materialize",
+                    &summaries,
+                    parse_output_mode(&args.format)?,
+                    args.verbose_paths,
+                )?;
             }
-        }
-        Commands::SemanticScholarSearch(args) => {
-            let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
-            let fields = semantic_fields(&semantic_config, &args.fields);
-            let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
-            let mut request = SemanticScholarSearchRequest::new(args.query, args.limit, fields);
-            request.year = args.year;
-            request.publication_date_or_year = args.publication_date_or_year;
-            request.fields_of_study = args.fields_of_study;
-            request.venue = args.venue;
-            request.sort = args.sort;
-            request.min_citation_count = args.min_citation_count;
-            request.open_access_pdf = args.open_access_pdf;
-            let papers = client.search_papers(&request)?;
-            print_structured_output(&papers, args.format, |papers| {
-                render_semantic_scholar_papers(papers)
-            })?;
-        }
-        Commands::SemanticScholarPaper(args) => {
-            let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
-            let fields = semantic_fields(&semantic_config, &args.fields);
-            let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
-            let paper = client.get_paper(&args.paper_id, &fields)?;
-            print_structured_output(&paper, args.format, render_semantic_scholar_paper)?;
-        }
-        Commands::SemanticScholarRecommend(args) => {
-            if args.positive_paper_ids.is_empty() {
-                anyhow::bail!(
-                    "semantic-scholar-recommend requires at least one --positive paper id"
+            KgCommand::Export(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                let repo_root = resolve_repo_root(&config, &args.config.config, None)?;
+                let config = config_with_repo_root(config, &repo_root);
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                pb.set_message("Loading parsed papers for export...");
+                let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
+                if papers.is_empty() && config.memory_state_root().is_none() {
+                    anyhow::bail!(
+                        "No parsed papers found under {} and no memory_state_root was configured",
+                        config.parsed_root().display()
+                    );
+                }
+
+                pb.set_message("Exporting to Neo4j...");
+                let summaries = vec![SinkWriteSummary {
+                    kind: "neo4j",
+                    root: config.neo4j_export_root(),
+                    written_paths: Neo4jSink::export(&config, &papers)?,
+                }];
+                pb.finish_with_message(format!(
+                    "{}",
+                    "Neo4j export completed successfully!".green().bold()
+                ));
+                print_write_summaries(
+                    "export-neo4j",
+                    &summaries,
+                    parse_output_mode(&args.format)?,
+                    args.verbose_paths,
+                )?;
+            }
+        },
+        Commands::Lit(lit_cmd) => match lit_cmd {
+            LitCommand::Download(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                pb.set_message("Loading registry...");
+                let registry = if config.registry_path().exists() {
+                    load_registry(config.registry_path())?
+                } else {
+                    sync_registry(&config)?
+                };
+
+                pb.set_message("Downloading literature assets...");
+                let updated = download_registry_sources(
+                    &config,
+                    &registry,
+                    DownloadOptions {
+                        overwrite: args.overwrite,
+                        download_pdfs: args.download_pdfs,
+                    },
+                )?;
+                litkg_core::write_registry(&config.registry_path(), &updated)?;
+                pb.finish_with_message(format!(
+                    "{}",
+                    format!("Downloaded literature assets for {} records", updated.len())
+                        .green()
+                        .bold()
+                ));
+            }
+            LitCommand::Parse(args) => {
+                let config = RepoConfig::load(&args.config)?;
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                pb.set_message("Loading registry...");
+                let registry = if config.registry_path().exists() {
+                    load_registry(config.registry_path())?
+                } else {
+                    sync_registry(&config)?
+                };
+
+                pb.set_message("Parsing papers...");
+                let papers = parse_registry_papers(&config, &registry)?;
+                write_parsed_papers(config.parsed_root(), &papers)?;
+                let updated_registry = papers
+                    .iter()
+                    .map(|paper| paper.metadata.clone())
+                    .collect::<Vec<_>>();
+                litkg_core::write_registry(&config.registry_path(), &updated_registry)?;
+                pb.finish_with_message(format!(
+                    "{}",
+                    format!(
+                        "Parsed {} papers into {}",
+                        papers.len(),
+                        config.parsed_root().display()
+                    )
+                    .green()
+                    .bold()
+                ));
+            }
+            LitCommand::Search(args) => {
+                if args.limit == 0 {
+                    anyhow::bail!("--limit must be at least 1");
+                }
+                let config = RepoConfig::load(&args.config.config)?;
+                let papers = load_parsed_papers(config.parsed_root())?;
+                let registry = load_registry_or_sync(&config, &papers)?;
+                let hits = search_papers(
+                    &registry,
+                    &papers,
+                    &config.relevance_tags,
+                    &args.query,
+                    args.limit,
+                )?;
+                print_structured_output(&hits, args.format, render_search_results)?;
+            }
+            LitCommand::Show(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                let papers = load_parsed_papers(config.parsed_root())?;
+                let registry = load_registry_or_sync(&config, &papers)?;
+                let inspection = inspect_paper(&config, &registry, &papers, &args.paper_selector)?;
+                print_structured_output(&inspection, args.format, render_paper_inspection)?;
+            }
+        },
+        Commands::S2(s2_cmd) => match s2_cmd {
+            S2Command::Enrich(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                pb.set_message("Loading registry...");
+                let registry = if config.registry_path().exists() {
+                    load_registry(config.registry_path())?
+                } else {
+                    sync_registry(&config)?
+                };
+
+                pb.set_message("Enriching with Semantic Scholar...");
+                let updated = enrich_registry_with_semantic_scholar(&config, &registry)?;
+                let enriched_count = updated
+                    .iter()
+                    .filter(|record| record.semantic_scholar.is_some())
+                    .count();
+                if !args.dry_run {
+                    litkg_core::write_registry(&config.registry_path(), &updated)?;
+                }
+                match args.format {
+                    OutputFormat::Text => {
+                        let action = if args.dry_run {
+                            "Would enrich"
+                        } else {
+                            "Enriched"
+                        };
+                        pb.finish_with_message(format!(
+                            "{}",
+                            format!(
+                                "{} {} of {} registry records with Semantic Scholar metadata",
+                                action,
+                                enriched_count,
+                                updated.len()
+                            )
+                            .green()
+                            .bold()
+                        ));
+                    }
+                    OutputFormat::Json => {
+                        pb.finish_and_clear();
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "records": updated.len(),
+                                "enriched": enriched_count,
+                                "dry_run": args.dry_run,
+                                "registry_path": config.registry_path(),
+                            }))?
+                        )
+                    }
+                }
+            }
+            S2Command::Search(args) => {
+                let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
+                let fields = semantic_fields(&semantic_config, &args.fields);
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+                pb.set_message("Searching Semantic Scholar...");
+                let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
+                let mut request =
+                    SemanticScholarSearchRequest::new(args.query.clone(), args.limit, fields);
+                request.year = args.year.clone();
+                request.publication_date_or_year = args.publication_date_or_year.clone();
+                request.fields_of_study = args.fields_of_study.clone();
+                request.venue = args.venue.clone();
+                request.sort = args.sort.clone();
+                request.min_citation_count = args.min_citation_count;
+                request.open_access_pdf = args.open_access_pdf;
+                let papers = client.search_papers(&request)?;
+                pb.finish_and_clear();
+                print_structured_output(&papers, args.format, |papers| {
+                    render_semantic_scholar_papers(papers)
+                })?;
+            }
+            S2Command::Paper(args) => {
+                let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
+                let fields = semantic_fields(&semantic_config, &args.fields);
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+                pb.set_message("Fetching paper from Semantic Scholar...");
+                let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
+                let paper = client.get_paper(&args.paper_id, &fields)?;
+                pb.finish_and_clear();
+                print_structured_output(&paper, args.format, render_semantic_scholar_paper)?;
+            }
+            S2Command::Recommend(args) => {
+                if args.positive_paper_ids.is_empty() {
+                    anyhow::bail!(
+                        "semantic-scholar-recommend requires at least one --positive paper id"
+                    );
+                }
+                let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
+                let fields = semantic_fields(&semantic_config, &args.fields);
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+                pb.set_message("Fetching recommendations from Semantic Scholar...");
+                let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
+                let papers = client.recommend_papers(
+                    &args.positive_paper_ids,
+                    &args.negative_paper_ids,
+                    args.limit,
+                    &fields,
+                )?;
+                pb.finish_and_clear();
+                print_structured_output(&papers, args.format, |papers| {
+                    render_semantic_scholar_papers(papers)
+                })?;
+            }
+        },
+        Commands::Benchmark(bench_cmd) => match bench_cmd {
+            BenchmarkCommand::Validate(args) => {
+                let catalog = litkg_core::load_benchmark_catalog(&args.catalog.path)?;
+                let mut summary = validate_benchmark_catalog(&catalog)?;
+                if let Some(results_path) = &args.results {
+                    let results = litkg_core::load_benchmark_results(results_path)?;
+                    summary = validate_benchmark_results(&catalog, &results)?;
+                }
+                println!(
+                    "{}",
+                    format!("Validated benchmark catalog: {} benchmarks, {} metrics, {} autoresearch components, {} autoresearch targets, {} benchmark runs",
+                    summary.benchmark_count,
+                    summary.metric_count,
+                    summary.component_count,
+                    summary.target_count,
+                    summary.run_count).green().bold()
                 );
             }
-            let semantic_config = load_semantic_scholar_config(args.config.as_deref())?;
-            let fields = semantic_fields(&semantic_config, &args.fields);
-            let mut client = SemanticScholarClient::from_config(semantic_config, None)?;
-            let papers = client.recommend_papers(
-                &args.positive_paper_ids,
-                &args.negative_paper_ids,
-                args.limit,
-                &fields,
-            )?;
-            print_structured_output(&papers, args.format, |papers| {
-                render_semantic_scholar_papers(papers)
-            })?;
-        }
-        Commands::ValidateBenchmarks(args) => {
-            let catalog = litkg_core::load_benchmark_catalog(&args.catalog.path)?;
-            let mut summary = validate_benchmark_catalog(&catalog)?;
-            if let Some(results_path) = &args.results {
-                let results = litkg_core::load_benchmark_results(results_path)?;
-                summary = validate_benchmark_results(&catalog, &results)?;
-            }
-            println!(
-                "Validated benchmark catalog: {} benchmarks, {} metrics, {} autoresearch components, {} autoresearch targets, {} benchmark runs",
-                summary.benchmark_count,
-                summary.metric_count,
-                summary.component_count,
-                summary.target_count,
-                summary.run_count,
-            );
-        }
-        Commands::BenchmarkSupport(args) => {
-            let catalog = litkg_core::load_benchmark_catalog(&args.execution.catalog.path)?;
-            let integrations =
-                litkg_core::load_benchmark_integrations(&args.execution.integrations)?;
-            let plan = match &args.execution.plan {
-                Some(path) => Some(litkg_core::load_benchmark_run_plan(path)?),
-                None => None,
-            };
-            let statuses = inspect_benchmark_support(
-                &catalog,
-                &integrations,
-                plan.as_ref(),
-                &args.execution.benchmark_ids,
-            )?;
-            match args.format.as_str() {
-                "text" => println!("{}", render_support_statuses(&statuses)),
-                "json" => println!("{}", serde_json::to_string_pretty(&statuses)?),
-                other => anyhow::bail!("Unsupported benchmark support format `{other}`"),
-            }
-        }
-        Commands::RunBenchmarks(args) => {
-            let catalog = litkg_core::load_benchmark_catalog(&args.execution.catalog.path)?;
-            let integrations =
-                litkg_core::load_benchmark_integrations(&args.execution.integrations)?;
-            let plan = match &args.execution.plan {
-                Some(path) => Some(litkg_core::load_benchmark_run_plan(path)?),
-                None => None,
-            };
-            let results = run_benchmarks(
-                &catalog,
-                &integrations,
-                plan.as_ref(),
-                &args.execution.benchmark_ids,
-            )?;
-            write_benchmark_results(&args.output, &results)?;
-            let summary = validate_benchmark_results(&catalog, &results)?;
-            println!(
-                "Ran benchmark integrations: {} benchmarks, {} runs written to {}",
-                summary.benchmark_count, summary.run_count, args.output,
-            );
-        }
-        Commands::RenderAutoresearchTarget(args) => {
-            let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog.path)?;
-            let results: Option<BenchmarkResults> = match &args.catalog.results {
-                Some(path) => Some(litkg_core::load_benchmark_results(path)?),
-                None => None,
-            };
-            let format = parse_render_format(&args.format)?;
-            let rendered = litkg_core::render_autoresearch_target(
-                &catalog,
-                results.as_ref(),
-                &args.target_id,
-                &args.component_ids,
-                &args.benchmark_ids,
-                format,
-            )?;
-            println!("{rendered}");
-        }
-        Commands::SyncAutoresearchTargetIssue(args) => {
-            let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog.path)?;
-            let results = match &args.catalog.results {
-                Some(path) => Some(litkg_core::load_benchmark_results(path)?),
-                None => None,
-            };
-            let body = litkg_core::render_autoresearch_target(
-                &catalog,
-                results.as_ref(),
-                &args.target_id,
-                &args.component_ids,
-                &args.benchmark_ids,
-                AutoResearchRenderFormat::GithubIssue,
-            )?;
-            let title = match &args.title {
-                Some(title) => title.clone(),
-                None => extract_issue_title(&body)?,
-            };
-            let repo = match &args.repo {
-                Some(repo) => repo.clone(),
-                None => infer_github_repo_from_origin()?,
-            };
-
-            if args.dry_run {
-                println!("Repository: {repo}");
-                println!("Title: {title}");
-                if !args.labels.is_empty() {
-                    println!("Labels: {}", args.labels.join(", "));
+            BenchmarkCommand::Support(args) => {
+                let catalog = litkg_core::load_benchmark_catalog(&args.execution.catalog.path)?;
+                let integrations =
+                    litkg_core::load_benchmark_integrations(&args.execution.integrations)?;
+                let plan = match &args.execution.plan {
+                    Some(path) => Some(litkg_core::load_benchmark_run_plan(path)?),
+                    None => None,
+                };
+                let statuses = inspect_benchmark_support(
+                    &catalog,
+                    &integrations,
+                    plan.as_ref(),
+                    &args.execution.benchmark_ids,
+                )?;
+                match args.format.as_str() {
+                    "text" => println!("{}", render_support_statuses(&statuses)),
+                    "json" => println!("{}", serde_json::to_string_pretty(&statuses)?),
+                    other => anyhow::bail!("Unsupported benchmark support format `{other}`"),
                 }
-                println!();
-                println!("{body}");
-            } else {
-                let issue_url = create_github_issue(&repo, &title, &body, &args.labels)?;
-                println!("{issue_url}");
             }
-        }
-        Commands::PromoteBenchmarkResults(args) => {
-            let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog.path)?;
-            let results_path = args
-                .catalog
-                .results
-                .as_ref()
-                .context("`promote-benchmark-results` requires --results")?;
-            let results = litkg_core::load_benchmark_results(results_path)?;
-            let request = BenchmarkPromotionRequest {
-                target_ids: args.target_ids,
-                benchmark_ids: args.benchmark_ids,
-                status_filters: args.status_filters,
-                metric_thresholds: args
-                    .metric_thresholds
-                    .iter()
-                    .map(|raw| parse_metric_threshold(raw))
-                    .collect::<Result<Vec<_>>>()?,
-                component_selection: parse_component_selection(&args.component_selection)?,
-                component_ids: args.component_ids,
-            };
-            let promoted = promote_benchmark_results(&catalog, &results, &request)?;
-            let rendered = render_promoted_targets(&promoted, parse_render_format(&args.format)?)?;
-            println!("{rendered}");
-        }
+            BenchmarkCommand::Run(args) => {
+                let catalog = litkg_core::load_benchmark_catalog(&args.execution.catalog.path)?;
+                let integrations =
+                    litkg_core::load_benchmark_integrations(&args.execution.integrations)?;
+                let plan = match &args.execution.plan {
+                    Some(path) => Some(litkg_core::load_benchmark_run_plan(path)?),
+                    None => None,
+                };
+                let pb = ProgressBar::new_spinner();
+                pb.set_style(
+                    ProgressStyle::default_spinner()
+                        .template("{spinner:.green} {msg}")
+                        .unwrap(),
+                );
+                pb.enable_steady_tick(Duration::from_millis(100));
+                pb.set_message("Running benchmarks...");
+                let results = run_benchmarks(
+                    &catalog,
+                    &integrations,
+                    plan.as_ref(),
+                    &args.execution.benchmark_ids,
+                )?;
+                write_benchmark_results(&args.output, &results)?;
+                let summary = validate_benchmark_results(&catalog, &results)?;
+                pb.finish_with_message(format!(
+                    "{}",
+                    format!(
+                        "Ran benchmark integrations: {} benchmarks, {} runs written to {}",
+                        summary.benchmark_count, summary.run_count, args.output
+                    )
+                    .green()
+                    .bold()
+                ));
+            }
+            BenchmarkCommand::RenderTarget(args) => {
+                let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog.path)?;
+                let results: Option<BenchmarkResults> = match &args.catalog.results {
+                    Some(path) => Some(litkg_core::load_benchmark_results(path)?),
+                    None => None,
+                };
+                let format = parse_render_format(&args.format)?;
+                let rendered = litkg_core::render_autoresearch_target(
+                    &catalog,
+                    results.as_ref(),
+                    &args.target_id,
+                    &args.component_ids,
+                    &args.benchmark_ids,
+                    format,
+                )?;
+                println!("{rendered}");
+            }
+            BenchmarkCommand::SyncIssue(args) => {
+                let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog.path)?;
+                let results = match &args.catalog.results {
+                    Some(path) => Some(litkg_core::load_benchmark_results(path)?),
+                    None => None,
+                };
+                let body = litkg_core::render_autoresearch_target(
+                    &catalog,
+                    results.as_ref(),
+                    &args.target_id,
+                    &args.component_ids,
+                    &args.benchmark_ids,
+                    AutoResearchRenderFormat::GithubIssue,
+                )?;
+                let title = match &args.title {
+                    Some(title) => title.clone(),
+                    None => extract_issue_title(&body)?,
+                };
+                let repo = match &args.repo {
+                    Some(repo) => repo.clone(),
+                    None => infer_github_repo_from_origin()?,
+                };
+
+                if args.dry_run {
+                    println!("Repository: {repo}");
+                    println!("Title: {title}");
+                    if !args.labels.is_empty() {
+                        println!("Labels: {}", args.labels.join(", "));
+                    }
+                    println!();
+                    println!("{body}");
+                } else {
+                    let pb = ProgressBar::new_spinner();
+                    pb.set_style(
+                        ProgressStyle::default_spinner()
+                            .template("{spinner:.green} {msg}")
+                            .unwrap(),
+                    );
+                    pb.enable_steady_tick(Duration::from_millis(100));
+                    pb.set_message("Syncing issue to GitHub...");
+                    let issue_url = create_github_issue(&repo, &title, &body, &args.labels)?;
+                    pb.finish_with_message(format!(
+                        "{}",
+                        format!("Created issue: {}", issue_url).green().bold()
+                    ));
+                }
+            }
+            BenchmarkCommand::Promote(args) => {
+                let catalog = litkg_core::load_benchmark_catalog(&args.catalog.catalog.path)?;
+                let results_path = args
+                    .catalog
+                    .results
+                    .as_ref()
+                    .context("`promote-benchmark-results` requires --results")?;
+                let results = litkg_core::load_benchmark_results(results_path)?;
+                let request = BenchmarkPromotionRequest {
+                    target_ids: args.target_ids.clone(),
+                    benchmark_ids: args.benchmark_ids.clone(),
+                    status_filters: args.status_filters.clone(),
+                    metric_thresholds: args
+                        .metric_thresholds
+                        .iter()
+                        .map(|raw| parse_metric_threshold(raw))
+                        .collect::<Result<Vec<_>>>()?,
+                    component_selection: parse_component_selection(&args.component_selection)?,
+                    component_ids: args.component_ids.clone(),
+                };
+                let promoted = promote_benchmark_results(&catalog, &results, &request)?;
+                let rendered =
+                    render_promoted_targets(&promoted, parse_render_format(&args.format)?)?;
+                println!("{rendered}");
+            }
+        },
+        Commands::Info(info_cmd) => match info_cmd {
+            InfoCommand::Capabilities(args) => run_capabilities(args)?,
+            InfoCommand::ContextPack(args) => run_context_pack(args)?,
+            InfoCommand::Stats(args) => {
+                let config = RepoConfig::load(&args.config.config)?;
+                let papers = load_parsed_papers(config.parsed_root())?;
+                let registry = load_registry_or_sync(&config, &papers)?;
+                let stats = compute_corpus_stats(&registry, &papers);
+                print_structured_output(&stats, args.format, render_stats)?;
+            }
+        },
     }
     Ok(())
+}
+
+fn run_capabilities(args: CapabilitiesCommand) -> Result<()> {
+    let config = RepoConfig::load(&args.config.config)?;
+    let snapshot = compute_repo_capabilities(
+        &config,
+        CapabilityOptions {
+            config_path: PathBuf::from(&args.config.config),
+            repo_root: args.repo_root.clone().map(PathBuf::from),
+            benchmark_catalog: args.benchmark_catalog.clone().map(PathBuf::from),
+            benchmark_integrations: args.benchmark_integrations.clone().map(PathBuf::from),
+            check_runtime: args.check_runtime,
+        },
+    )?;
+    print_structured_output(&snapshot, args.format, render_capabilities)
+}
+
+fn run_context_pack(args: ContextPackCommand) -> Result<()> {
+    let config = RepoConfig::load(&args.config.config)?;
+    let repo_root = match args.repo_root.clone() {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir().context("Failed to determine current directory")?,
+    };
+    let pack = build_context_pack(
+        &config,
+        ContextPackRequest {
+            config_path: Some(PathBuf::from(&args.config.config)),
+            repo_root,
+            task: args.task.clone(),
+            budget_tokens: args.budget,
+            profile: args.profile.clone(),
+        },
+    )?;
+    print_structured_output(&pack, args.format, render_context_pack)
 }
 
 fn materialize(
@@ -825,27 +1097,193 @@ fn rebuild_graph(config: &RepoConfig) -> Result<()> {
     Ok(())
 }
 
-fn inspect_graph(config: &RepoConfig) -> Result<()> {
+fn inspect_graph(config: &RepoConfig, args: &VisualizeCommand) -> Result<()> {
+    let repo_root = resolve_repo_root(
+        config,
+        args.config.config.as_str(),
+        args.repo_root.as_deref(),
+    )?;
+    let config = config_with_repo_root(config.clone(), &repo_root);
     let bundle_root = config.neo4j_export_root();
     let nodes_path = bundle_root.join("nodes.jsonl");
     let edges_path = bundle_root.join("edges.jsonl");
 
     if !(nodes_path.exists() && edges_path.exists()) {
         let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
-        if papers.is_empty() {
-            anyhow::bail!(
-                "No parsed papers found under {}; run parse/materialize first or export the Neo4j bundle before inspecting.",
-                config.parsed_root().display()
-            );
-        }
-        Neo4jSink::export(config, &papers)?;
+        Neo4jSink::export(&config, &papers)?;
         println!(
             "Generated Neo4j export bundle under {}",
             bundle_root.display()
         );
     }
 
-    run_viewer_bundle(&bundle_root)
+    let options = ViewerOptions {
+        filter: graph_filter(&args.modalities, &args.exclude_modalities),
+        repo_root: Some(repo_root),
+        entry: args.entry.clone(),
+        entry_rg: args.entry_rg.clone(),
+        focus_depth: args.focus_depth,
+    };
+    run_viewer_bundle_with_options(&bundle_root, options)
+}
+
+fn run_kg_find(args: KgFindCommand) -> Result<()> {
+    let config = RepoConfig::load(&args.config.config)?;
+    let repo_root = resolve_repo_root(
+        &config,
+        args.config.config.as_str(),
+        args.repo_root.as_deref(),
+    )?;
+    let config = config_with_repo_root(config, &repo_root);
+    let bundle_root = config.neo4j_export_root();
+    let nodes_path = bundle_root.join("nodes.jsonl");
+    let edges_path = bundle_root.join("edges.jsonl");
+    if !(nodes_path.exists() && edges_path.exists()) {
+        let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
+        Neo4jSink::export(&config, &papers)?;
+    }
+    let query = GraphEntryQuery {
+        query: args.query.clone(),
+        filter: graph_filter(&args.modalities, &args.exclude_modalities),
+        repo_root: Some(repo_root),
+        use_rg: !args.no_rg,
+        limit: args.limit,
+    };
+    let hits = load_and_search_bundle(&bundle_root, query)?;
+    print_structured_output(&hits, args.format, |hits| render_graph_search_hits(hits))
+}
+
+fn graph_filter(
+    modalities: &[GraphModalityArg],
+    exclude_modalities: &[GraphModalityArg],
+) -> GraphFilter {
+    let mut filter = if modalities.is_empty() {
+        GraphFilter::all()
+    } else {
+        GraphFilter::only(modalities.iter().copied().map(GraphModality::from))
+    };
+    filter
+        .exclude
+        .extend(exclude_modalities.iter().copied().map(GraphModality::from));
+    filter
+}
+
+fn resolve_repo_root(
+    config: &RepoConfig,
+    config_path: &str,
+    cli_repo_root: Option<&str>,
+) -> Result<PathBuf> {
+    if let Some(repo_root) = cli_repo_root {
+        return absolutize(PathBuf::from(repo_root));
+    }
+    let project_root = config
+        .project
+        .as_ref()
+        .map(|project| project.root.clone())
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("."));
+    if project_root.is_absolute() {
+        return Ok(project_root);
+    }
+
+    let cwd_candidate = std::env::current_dir()?.join(&project_root);
+    if cwd_candidate.join(&config.manifest_path).exists() {
+        return Ok(cwd_candidate.canonicalize().unwrap_or(cwd_candidate));
+    }
+
+    let config_path = PathBuf::from(config_path);
+    let config_path = absolutize(config_path)?;
+    let config_parent = config_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let anchored_parent = if config_parent
+        .file_name()
+        .is_some_and(|name| name == ".configs")
+    {
+        config_parent.parent().unwrap_or(config_parent)
+    } else {
+        config_parent
+    };
+    let anchored = anchored_parent.join(project_root);
+    Ok(anchored.canonicalize().unwrap_or(anchored))
+}
+
+fn absolutize(path: PathBuf) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    Ok(absolute.canonicalize().unwrap_or(absolute))
+}
+
+fn config_with_repo_root(mut config: RepoConfig, repo_root: &Path) -> RepoConfig {
+    absolutize_config_path(repo_root, &mut config.manifest_path);
+    absolutize_config_path(repo_root, &mut config.bib_path);
+    absolutize_config_path(repo_root, &mut config.tex_root);
+    absolutize_config_path(repo_root, &mut config.pdf_root);
+    absolutize_config_path(repo_root, &mut config.generated_docs_root);
+    if let Some(path) = &mut config.registry_path {
+        absolutize_config_path(repo_root, path);
+    }
+    if let Some(path) = &mut config.parsed_root {
+        absolutize_config_path(repo_root, path);
+    }
+    if let Some(path) = &mut config.neo4j_export_root {
+        absolutize_config_path(repo_root, path);
+    }
+    if let Some(path) = &mut config.memory_state_root {
+        absolutize_config_path(repo_root, path);
+    }
+    if let Some(project) = &mut config.project {
+        project.root = repo_root.to_path_buf();
+    }
+    if let Some(storage) = &mut config.storage {
+        absolutize_config_path(repo_root, &mut storage.generated_root);
+        absolutize_config_path(repo_root, &mut storage.db_root);
+        absolutize_config_path(repo_root, &mut storage.runtime_cache_root);
+    }
+    config
+}
+
+fn absolutize_config_path(repo_root: &Path, path: &mut PathBuf) {
+    if !path.is_absolute() {
+        *path = repo_root.join(&path);
+    }
+}
+
+fn render_graph_search_hits(hits: &[GraphSearchHit]) -> String {
+    if hits.is_empty() {
+        return "No graph entries matched.".into();
+    }
+    hits.iter()
+        .map(|hit| {
+            let location = hit
+                .repo_path
+                .as_ref()
+                .map(|path| {
+                    hit.line_start
+                        .map(|line| format!("{path}:{line}"))
+                        .unwrap_or_else(|| path.clone())
+                })
+                .unwrap_or_else(|| hit.node_id.clone());
+            let snippet = hit
+                .snippet
+                .as_ref()
+                .map(|snippet| format!("\n  {}", snippet.replace('\n', "\n  ")))
+                .unwrap_or_default();
+            format!(
+                "- {} [{}] score={} via={} at {}{}",
+                hit.title,
+                hit.modality.as_str(),
+                hit.score,
+                hit.matched_field,
+                location,
+                snippet
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn load_registry_or_sync(
@@ -974,27 +1412,62 @@ fn render_semantic_authors(authors: &[litkg_core::SemanticScholarAuthor]) -> Str
 }
 
 fn render_stats(stats: &CorpusStats) -> String {
-    let mut lines = vec![
-        "litkg corpus stats".to_string(),
-        String::new(),
-        format!("papers: {}", stats.total_papers),
-        format!("parsed_papers: {}", stats.papers_with_parsed_content),
-        format!("local_tex: {}", stats.papers_with_local_tex),
-        format!("local_pdf: {}", stats.papers_with_local_pdf),
-        format!("sections: {}", stats.total_sections),
-        format!("figures: {}", stats.total_figures),
-        format!("tables: {}", stats.total_tables),
-        format!("citations: {}", stats.total_citations),
-        String::new(),
-        "source_kinds:".to_string(),
-    ];
-    lines.extend(render_count_map(&stats.source_kind_counts));
+    let mut lines = vec!["litkg corpus stats".to_string(), String::new()];
+
+    let mut table = Table::new();
+    table.set_header(vec!["Metric", "Value"]);
+    table.add_row(vec!["papers", &stats.total_papers.to_string()]);
+    table.add_row(vec![
+        "parsed_papers",
+        &stats.papers_with_parsed_content.to_string(),
+    ]);
+    table.add_row(vec!["local_tex", &stats.papers_with_local_tex.to_string()]);
+    table.add_row(vec!["local_pdf", &stats.papers_with_local_pdf.to_string()]);
+    table.add_row(vec!["sections", &stats.total_sections.to_string()]);
+    table.add_row(vec!["figures", &stats.total_figures.to_string()]);
+    table.add_row(vec!["tables", &stats.total_tables.to_string()]);
+    table.add_row(vec!["citations", &stats.total_citations.to_string()]);
+    lines.push(table.to_string());
+
+    lines.push(String::new());
+    lines.push("source_kinds:".to_string());
+    let mut table2 = Table::new();
+    table2.set_header(vec!["Source Kind", "Count"]);
+    if stats.source_kind_counts.is_empty() {
+        table2.add_row(vec!["none", ""]);
+    } else {
+        for (k, v) in &stats.source_kind_counts {
+            table2.add_row(vec![k.as_str(), &v.to_string()]);
+        }
+    }
+    lines.push(table2.to_string());
+
     lines.push(String::new());
     lines.push("download_modes:".to_string());
-    lines.extend(render_count_map(&stats.download_mode_counts));
+    let mut table3 = Table::new();
+    table3.set_header(vec!["Download Mode", "Count"]);
+    if stats.download_mode_counts.is_empty() {
+        table3.add_row(vec!["none", ""]);
+    } else {
+        for (k, v) in &stats.download_mode_counts {
+            table3.add_row(vec![k.as_str(), &v.to_string()]);
+        }
+    }
+    lines.push(table3.to_string());
+
     lines.push(String::new());
     lines.push("parse_statuses:".to_string());
-    lines.extend(render_count_map(&stats.parse_status_counts));
+    let mut table4 = Table::new();
+    table4.set_header(vec!["Parse Status", "Count"]);
+    if stats.parse_status_counts.is_empty() {
+        table4.add_row(vec!["none", ""]);
+    } else {
+        for (k, v) in &stats.parse_status_counts {
+            table4.add_row(vec![k.as_str(), &v.to_string()]);
+        }
+    }
+    lines.push(table4.to_string());
+
     lines.join("\n")
 }
 
@@ -1007,81 +1480,152 @@ fn render_capabilities(snapshot: &RepoCapabilitySnapshot) -> String {
         lines.push(format!("repo_root: {}", repo_root.display()));
     }
 
-    lines.extend([
-        String::new(),
-        "enabled:".to_string(),
-        format!(
-            "  literature registry: {}, {} record(s), manifest={}, bib={}, registry_generated={}",
-            state_label(&snapshot.literature_registry.state),
+    lines.push(String::new());
+    lines.push("enabled:".to_string());
+
+    let mut table = Table::new();
+    table.set_header(vec!["Capability", "State", "Details"]);
+
+    table.add_row(vec![
+        "Literature Registry",
+        state_label(&snapshot.literature_registry.state),
+        &format!(
+            "records={}, manifest={}, bib={}, registry_generated={}",
             snapshot.literature_registry.records_total,
             yes_no(snapshot.literature_registry.manifest_present),
             yes_no(snapshot.literature_registry.bib_present),
-            yes_no(snapshot.literature_registry.registry_generated),
+            yes_no(snapshot.literature_registry.registry_generated)
         ),
-        format!(
-            "  downloads: {}, arxiv_records={}, local_tex={}, local_pdf={}, download_pdfs={}",
-            state_label(&snapshot.downloads.state),
+    ]);
+
+    table.add_row(vec![
+        "Downloads",
+        state_label(&snapshot.downloads.state),
+        &format!(
+            "arxiv_records={}, local_tex={}, local_pdf={}, download_pdfs={}",
             snapshot.downloads.arxiv_records,
             snapshot.downloads.records_with_local_tex,
             snapshot.downloads.records_with_local_pdf,
-            yes_no(snapshot.downloads.download_pdfs_configured),
+            yes_no(snapshot.downloads.download_pdfs_configured)
         ),
-        format!(
-            "  tex parsing: {}, parsed={}, structured={}, sections={}, citations={}, citation_refs={}",
-            state_label(&snapshot.parsing.state),
+    ]);
+
+    table.add_row(vec![
+        "Tex Parsing",
+        state_label(&snapshot.parsing.state),
+        &format!(
+            "parsed={}, structured={}, sections={}, citations={}, citation_refs={}",
             snapshot.parsing.parsed_papers,
             snapshot.parsing.papers_with_structured_content,
             snapshot.parsing.total_sections,
             snapshot.parsing.total_citations,
-            snapshot.parsing.total_citation_references,
-        ),
-        format!(
-            "  graphify: {}, configured={}, index={}, manifest={}",
-            state_label(&snapshot.graph_outputs.graphify_state),
-            yes_no(snapshot.graph_outputs.graphify_configured),
-            yes_no(snapshot.graph_outputs.graphify_index_generated),
-            yes_no(snapshot.graph_outputs.graphify_manifest_generated),
-        ),
-        format!(
-            "  neo4j export: {}, configured={}, nodes={}, edges={}",
-            state_label(&snapshot.graph_outputs.neo4j_state),
-            yes_no(snapshot.graph_outputs.neo4j_configured),
-            yes_no(snapshot.graph_outputs.neo4j_nodes_generated),
-            yes_no(snapshot.graph_outputs.neo4j_edges_generated),
-        ),
-        format!(
-            "  native viewer: {}",
-            state_label(&snapshot.graph_outputs.native_viewer_state)
-        ),
-        format!(
-            "  semantic scholar: {}, configured={}, key_env={}, key_present={}, enriched={}",
-            state_label(&snapshot.semantic_scholar.state),
-            yes_no(snapshot.semantic_scholar.configured),
-            snapshot.semantic_scholar.api_key_env,
-            yes_no(snapshot.semantic_scholar.api_key_present),
-            snapshot.semantic_scholar.enriched_records,
-        ),
-        format!(
-            "  project memory: {}, configured={}, root_present={}, nodes={}, surfaces={}",
-            state_label(&snapshot.project_memory.state),
-            yes_no(snapshot.project_memory.configured),
-            yes_no(snapshot.project_memory.root_present),
-            snapshot.project_memory.imported_nodes,
-            snapshot.project_memory.imported_surfaces,
+            snapshot.parsing.total_citation_references
         ),
     ]);
 
-    lines.extend([
-        String::new(),
-        "runtime:".to_string(),
-        format!("  checked: {}", yes_no(snapshot.runtime.checked)),
-        render_runtime_check("docker", &snapshot.runtime.docker),
-        render_runtime_check("neo4j_service", &snapshot.runtime.neo4j_service),
-        render_runtime_check("uv", &snapshot.runtime.uv),
-        render_runtime_check("codegraphcontext", &snapshot.runtime.codegraphcontext),
-        render_runtime_check("graphiti_helpers", &snapshot.runtime.graphiti_helpers),
-        render_runtime_check("ollama_service", &snapshot.runtime.ollama_service),
+    table.add_row(vec![
+        "Graphify",
+        state_label(&snapshot.graph_outputs.graphify_state),
+        &format!(
+            "configured={}, index={}, manifest={}",
+            yes_no(snapshot.graph_outputs.graphify_configured),
+            yes_no(snapshot.graph_outputs.graphify_index_generated),
+            yes_no(snapshot.graph_outputs.graphify_manifest_generated)
+        ),
     ]);
+
+    table.add_row(vec![
+        "Neo4j Export",
+        state_label(&snapshot.graph_outputs.neo4j_state),
+        &format!(
+            "configured={}, nodes={}, edges={}",
+            yes_no(snapshot.graph_outputs.neo4j_configured),
+            yes_no(snapshot.graph_outputs.neo4j_nodes_generated),
+            yes_no(snapshot.graph_outputs.neo4j_edges_generated)
+        ),
+    ]);
+
+    table.add_row(vec![
+        "Native Viewer",
+        state_label(&snapshot.graph_outputs.native_viewer_state),
+        "",
+    ]);
+
+    table.add_row(vec![
+        "Semantic Scholar",
+        state_label(&snapshot.semantic_scholar.state),
+        &format!(
+            "configured={}, key_env={}, key_present={}, enriched={}",
+            yes_no(snapshot.semantic_scholar.configured),
+            snapshot.semantic_scholar.api_key_env,
+            yes_no(snapshot.semantic_scholar.api_key_present),
+            snapshot.semantic_scholar.enriched_records
+        ),
+    ]);
+
+    table.add_row(vec![
+        "Project Memory",
+        state_label(&snapshot.project_memory.state),
+        &format!(
+            "configured={}, root_present={}, nodes={}, surfaces={}",
+            yes_no(snapshot.project_memory.configured),
+            yes_no(snapshot.project_memory.root_present),
+            snapshot.project_memory.imported_nodes,
+            snapshot.project_memory.imported_surfaces
+        ),
+    ]);
+
+    lines.push(table.to_string());
+
+    lines.push(String::new());
+    lines.push("agent backend contract:".to_string());
+    let mut backend_table = Table::new();
+    backend_table.set_header(vec!["Backend", "State", "Recommendation", "Repair"]);
+    for backend in &snapshot.conformance.backends {
+        backend_table.add_row(vec![
+            backend.name.as_str(),
+            state_label(&backend.state),
+            recommendation_label(&backend.agent_recommendation),
+            backend.repair_command.as_deref().unwrap_or("n/a"),
+        ]);
+    }
+    lines.push(backend_table.to_string());
+
+    lines.push(String::new());
+    lines.push("runtime:".to_string());
+    lines.push(format!("  checked: {}", yes_no(snapshot.runtime.checked)));
+
+    let mut runtime_table = Table::new();
+    runtime_table.set_header(vec!["Dependency", "State", "Detail"]);
+
+    let add_runtime_row = |table: &mut Table, name: &str, check: &RuntimeCheck| {
+        table.add_row(vec![name, state_label(&check.state), &check.detail]);
+    };
+
+    add_runtime_row(&mut runtime_table, "docker", &snapshot.runtime.docker);
+    add_runtime_row(
+        &mut runtime_table,
+        "neo4j_service",
+        &snapshot.runtime.neo4j_service,
+    );
+    add_runtime_row(&mut runtime_table, "uv", &snapshot.runtime.uv);
+    add_runtime_row(
+        &mut runtime_table,
+        "codegraphcontext",
+        &snapshot.runtime.codegraphcontext,
+    );
+    add_runtime_row(
+        &mut runtime_table,
+        "graphiti_helpers",
+        &snapshot.runtime.graphiti_helpers,
+    );
+    add_runtime_row(
+        &mut runtime_table,
+        "ollama_service",
+        &snapshot.runtime.ollama_service,
+    );
+
+    lines.push(runtime_table.to_string());
 
     if let Some(benchmarks) = &snapshot.benchmarks {
         lines.extend([
@@ -1134,8 +1678,33 @@ fn render_context_pack(pack: &ContextPack) -> String {
         format!("budget_tokens: {}", pack.budget_tokens),
         format!("truncated: {}", yes_no(pack.truncated)),
         String::new(),
-        "active issues:".to_string(),
+        "action plan:".to_string(),
     ];
+    for action in &pack.action_plan {
+        lines.push(format!("  - {action}"));
+    }
+    lines.extend([String::new(), "active backlog:".to_string()]);
+    for item in &pack.active_backlog {
+        let issue_suffix = if item.issue_ids.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", item.issue_ids.join(", "))
+        };
+        lines.push(format!(
+            "  - {} [{}/{}] {}{}",
+            item.id, item.priority, item.status, item.title, issue_suffix
+        ));
+        if !item.summary.trim().is_empty() {
+            lines.push(format!("    summary: {}", item.summary));
+        }
+        if !item.context.is_empty() {
+            lines.push(format!("    context: {}", item.context.join(" | ")));
+        }
+        if !item.references.is_empty() {
+            lines.push(format!("    refs: {}", item.references.join(", ")));
+        }
+    }
+    lines.extend([String::new(), "active issues:".to_string()]);
     for issue in &pack.active_issues {
         lines.push(format!(
             "  - {} [{}/{}] {}",
@@ -1165,6 +1734,14 @@ fn render_context_pack(pack: &ContextPack) -> String {
         lines.push(indent_block(&span.text, "    "));
     }
     lines.push(String::new());
+    lines.push("relevant symbols:".to_string());
+    for symbol in &pack.relevant_symbols {
+        lines.push(format!(
+            "  - {} {} at {} ({})",
+            symbol.kind, symbol.name, symbol.path, symbol.reason
+        ));
+    }
+    lines.push(String::new());
     lines.push("relevant papers:".to_string());
     for paper in &pack.relevant_papers {
         lines.push(format!(
@@ -1175,11 +1752,27 @@ fn render_context_pack(pack: &ContextPack) -> String {
         ));
     }
     lines.push(String::new());
-    lines.push("missing context leaves:".to_string());
-    for leaf in &pack.missing_context_leaves {
+    lines.push("missing leaves:".to_string());
+    for leaf in &pack.missing_leaves {
         lines.push(format!(
-            "  - {} [{}]: {}",
-            leaf.provider, leaf.status, leaf.query
+            "  - {} [{}]: {} -> {}",
+            leaf.provider, leaf.status, leaf.query, leaf.resolution_command
+        ));
+    }
+    lines.push(String::new());
+    lines.push("risk flags:".to_string());
+    for flag in &pack.risk_flags {
+        lines.push(format!("  - {flag}"));
+    }
+    lines.push(String::new());
+    lines.push("backend status:".to_string());
+    for backend in &pack.backend_status {
+        lines.push(format!(
+            "  - {} [{} / {}]: {}",
+            backend.name,
+            state_label(&backend.state),
+            recommendation_label(&backend.agent_recommendation),
+            backend.repair_command.as_deref().unwrap_or("n/a")
         ));
     }
     lines.push(String::new());
@@ -1197,19 +1790,25 @@ fn indent_block(text: &str, prefix: &str) -> String {
         .join("\n")
 }
 
-fn render_runtime_check(name: &str, check: &RuntimeCheck) -> String {
-    format!("  {name}: {}, {}", state_label(&check.state), check.detail)
-}
-
 fn state_label(state: &CapabilityState) -> &'static str {
     match state {
         CapabilityState::Ready => "ready",
         CapabilityState::Generated => "generated",
+        CapabilityState::Stale => "stale",
         CapabilityState::Configured => "configured",
         CapabilityState::Implemented => "implemented",
         CapabilityState::Missing => "missing",
         CapabilityState::NotChecked => "not checked",
         CapabilityState::Unavailable => "unavailable",
+    }
+}
+
+fn recommendation_label(recommendation: &AgentRecommendation) -> &'static str {
+    match recommendation {
+        AgentRecommendation::UseNow => "use_now",
+        AgentRecommendation::RefreshFirst => "refresh_first",
+        AgentRecommendation::MissingLeaf => "missing_leaf",
+        AgentRecommendation::DoNotUse => "do_not_use",
     }
 }
 
@@ -1231,39 +1830,56 @@ fn render_search_results(results: &SearchResults) -> String {
         lines.push(format!("limit: {}", results.limit));
     }
 
+    let mut table = Table::new();
+    table.set_header(vec![
+        "Index", "Title", "ID", "Year", "Status", "Score", "Assets", "Matches",
+    ]);
+
     for (index, hit) in results.hits.iter().enumerate() {
-        lines.push(String::new());
-        lines.push(format!("{}. {} ({})", index + 1, hit.title, hit.paper_id));
-        lines.push(format!(
-            "   citation_key: {}",
-            hit.citation_key.as_deref().unwrap_or("n/a")
-        ));
-        lines.push(format!(
-            "   year: {} | parse_status: {:?} | score: {}",
-            hit.year.as_deref().unwrap_or("n/a"),
-            hit.parse_status,
-            hit.score
-        ));
-        lines.push(format!(
-            "   local_assets: tex={} pdf={}",
+        let assets = format!(
+            "tex={} pdf={}",
             yes_no(hit.has_local_tex),
             yes_no(hit.has_local_pdf)
-        ));
-        lines.push(format!(
-            "   matched_fields: {}",
-            hit.matched_fields.join(", ")
-        ));
+        );
+        table.add_row(vec![
+            (index + 1).to_string(),
+            hit.title.clone(),
+            hit.paper_id.clone(),
+            hit.year.clone().unwrap_or_else(|| "n/a".to_string()),
+            format!("{:?}", hit.parse_status),
+            hit.score.to_string(),
+            assets,
+            hit.matched_fields.join(", "),
+        ]);
+
+        // Add optional detail rows if they exist
         if !hit.relevance_tags.is_empty() {
-            lines.push(format!(
-                "   relevance_tags: {}",
-                hit.relevance_tags.join(", ")
-            ));
+            table.add_row(vec![
+                "".to_string(),
+                format!("Tags: {}", hit.relevance_tags.join(", ")),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+            ]);
         }
         if let Some(snippet) = &hit.snippet {
-            lines.push(format!("   snippet: {snippet}"));
+            table.add_row(vec![
+                "".to_string(),
+                format!("Snippet: {}", snippet),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+            ]);
         }
     }
 
+    lines.push(table.to_string());
     lines.join("\n")
 }
 
@@ -1428,16 +2044,6 @@ fn parse_output_mode(raw: &str) -> Result<OutputMode> {
         "json" => Ok(OutputMode::Json),
         other => anyhow::bail!("Unsupported output format `{other}`"),
     }
-}
-
-fn render_count_map(counts: &BTreeMap<String, usize>) -> Vec<String> {
-    if counts.is_empty() {
-        return vec!["  - none".to_string()];
-    }
-    counts
-        .iter()
-        .map(|(name, count)| format!("  - {name}: {count}"))
-        .collect()
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -1769,5 +2375,39 @@ mod tests {
             rendered["outputs"][0]["written_paths"][0],
             "/tmp/export/nodes.jsonl"
         );
+    }
+
+    #[test]
+    fn parses_kg_visualize_filter_options() {
+        let cli = Cli::try_parse_from([
+            "litkg",
+            "kg",
+            "visualize",
+            "--config",
+            "repo.toml",
+            "--modality",
+            "code",
+            "--modality",
+            "generated-context",
+            "--exclude-modality",
+            "literature",
+            "--entry",
+            "VinPrediction",
+            "--focus-depth",
+            "1",
+        ])
+        .unwrap();
+
+        let Commands::Kg(KgCommand::Visualize(args)) = cli.command else {
+            panic!("expected kg visualize command");
+        };
+        assert_eq!(args.config.config, "repo.toml");
+        assert_eq!(
+            args.modalities,
+            vec![GraphModalityArg::Code, GraphModalityArg::GeneratedContext]
+        );
+        assert_eq!(args.exclude_modalities, vec![GraphModalityArg::Literature]);
+        assert_eq!(args.entry.as_deref(), Some("VinPrediction"));
+        assert_eq!(args.focus_depth, 1);
     }
 }

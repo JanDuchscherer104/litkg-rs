@@ -3,22 +3,40 @@ use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, RichText, ScrollArea, Sense, SidePanel, Stroke,
     TopBottomPanel, Vec2,
 };
-use litkg_neo4j::{load_export_bundle, Neo4jEdge, Neo4jExportBundle, Neo4jNode};
+use litkg_neo4j::{load_export_bundle, Neo4jEdge, Neo4jExportBundle};
 use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use petgraph::Direction;
-use serde_json::Value;
+mod query;
+pub use query::{
+    build_node_records, classify_modality, load_and_search_bundle, search_export_bundle,
+    search_records, GraphEntryQuery, GraphFilter, GraphModality, GraphNodeRecord, GraphSearchHit,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::f32::consts::TAU;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 pub fn run_bundle(bundle_root: impl AsRef<Path>) -> Result<()> {
+    run_bundle_with_options(bundle_root, ViewerOptions::default())
+}
+
+pub fn run_bundle_with_options(
+    bundle_root: impl AsRef<Path>,
+    options: ViewerOptions,
+) -> Result<()> {
     let bundle = load_export_bundle(bundle_root)?;
-    run_export_bundle(bundle)
+    run_export_bundle_with_options(bundle, options)
 }
 
 pub fn run_export_bundle(bundle: Neo4jExportBundle) -> Result<()> {
+    run_export_bundle_with_options(bundle, ViewerOptions::default())
+}
+
+pub fn run_export_bundle_with_options(
+    bundle: Neo4jExportBundle,
+    options: ViewerOptions,
+) -> Result<()> {
     let window_title = format!("litkg graph inspector - {}", bundle.root.display());
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1440.0, 920.0]),
@@ -28,9 +46,18 @@ pub fn run_export_bundle(bundle: Neo4jExportBundle) -> Result<()> {
     eframe::run_native(
         window_title.as_str(),
         native_options,
-        Box::new(move |_creation_context| Box::new(LitkgViewerApp::new(bundle))),
+        Box::new(move |_creation_context| Box::new(LitkgViewerApp::new(bundle, options))),
     )
     .map_err(|err| anyhow!("Failed to launch litkg graph inspector: {err}"))
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ViewerOptions {
+    pub filter: GraphFilter,
+    pub repo_root: Option<PathBuf>,
+    pub entry: Option<String>,
+    pub entry_rg: Option<String>,
+    pub focus_depth: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -39,9 +66,10 @@ struct ViewerNode {
     kind: String,
     title: String,
     subtitle: String,
+    description: String,
     labels: Vec<String>,
+    modality: GraphModality,
     properties: BTreeMap<String, String>,
-    search_text: String,
     in_degree: usize,
     out_degree: usize,
 }
@@ -56,6 +84,8 @@ struct GraphModel {
     bundle_root: PathBuf,
     graph: StableDiGraph<ViewerNode, ViewerEdge>,
     positions: HashMap<NodeIndex, Pos2>,
+    node_by_id: HashMap<String, NodeIndex>,
+    records: Vec<GraphNodeRecord>,
 }
 
 impl GraphModel {
@@ -63,12 +93,11 @@ impl GraphModel {
         let mut graph = StableDiGraph::new();
         let mut node_map = HashMap::new();
 
-        let mut nodes = bundle.nodes;
-        nodes.sort_by(|left, right| left.id.cmp(&right.id));
-        for raw in nodes {
-            let node = ViewerNode::from_raw(&raw);
+        let records = build_node_records(&bundle);
+        for record in &records {
+            let node = ViewerNode::from_record(record);
             let index = graph.add_node(node);
-            node_map.insert(raw.id, index);
+            node_map.insert(record.id.clone(), index);
         }
 
         let mut edges = bundle.edges;
@@ -104,40 +133,74 @@ impl GraphModel {
             bundle_root: bundle.root,
             graph,
             positions,
+            node_by_id: node_map,
+            records,
         }
     }
 
-    fn visible_nodes(&self, show_sections: bool, show_citations: bool) -> Vec<NodeIndex> {
+    fn visible_nodes(
+        &self,
+        filter: &GraphFilter,
+        focus_root: Option<NodeIndex>,
+        focus_depth: usize,
+    ) -> Vec<NodeIndex> {
+        let focus_set = focus_root.map(|root| self.neighborhood(root, focus_depth));
         self.graph
             .node_indices()
             .filter(|index| {
-                let kind = self.graph[*index].kind.as_str();
-                (show_sections || kind != "PaperSection") && (show_citations || kind != "Citation")
+                filter.matches(self.graph[*index].modality)
+                    && focus_set
+                        .as_ref()
+                        .is_none_or(|focused| focused.contains(index))
             })
             .collect()
+    }
+
+    fn neighborhood(&self, root: NodeIndex, depth: usize) -> HashSet<NodeIndex> {
+        let mut seen = HashSet::from([root]);
+        let mut frontier = vec![root];
+        for _ in 0..depth {
+            let mut next = Vec::new();
+            for index in frontier {
+                for neighbor in self.graph.neighbors_undirected(index) {
+                    if seen.insert(neighbor) {
+                        next.push(neighbor);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        seen
+    }
+
+    fn modality_counts(&self) -> BTreeMap<GraphModality, usize> {
+        let mut counts = BTreeMap::new();
+        for index in self.graph.node_indices() {
+            *counts.entry(self.graph[index].modality).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    fn search_hits(&self, query: GraphEntryQuery) -> Vec<GraphSearchHit> {
+        search_records(&self.records, query)
+    }
+
+    fn hit_index(&self, hit: &GraphSearchHit) -> Option<NodeIndex> {
+        self.node_by_id.get(hit.node_id.as_str()).copied()
     }
 }
 
 impl ViewerNode {
-    fn from_raw(raw: &Neo4jNode) -> Self {
-        let properties = properties_map(&raw.properties);
-        let kind = raw
-            .labels
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "Node".to_string());
-        let title = primary_title(raw.id.as_str(), &kind, &properties);
-        let subtitle = subtitle_for_node(&kind, &properties);
-        let search_text = build_search_text(raw.id.as_str(), &kind, &properties);
-
+    fn from_record(record: &GraphNodeRecord) -> Self {
         Self {
-            id: raw.id.clone(),
-            kind,
-            title,
-            subtitle,
-            labels: raw.labels.clone(),
-            properties,
-            search_text,
+            id: record.id.clone(),
+            kind: record.kind.clone(),
+            title: record.title.clone(),
+            subtitle: record.subtitle.clone(),
+            description: record.description.clone(),
+            labels: record.labels.clone(),
+            modality: record.modality,
+            properties: record.properties.clone(),
             in_degree: 0,
             out_degree: 0,
         }
@@ -156,8 +219,13 @@ struct LitkgViewerApp {
     model: GraphModel,
     selected: Option<NodeIndex>,
     search_query: String,
-    show_sections: bool,
-    show_citations: bool,
+    rg_query: String,
+    rg_hits: Vec<GraphSearchHit>,
+    rg_status: String,
+    filter: GraphFilter,
+    repo_root: Option<PathBuf>,
+    focus_root: Option<NodeIndex>,
+    focus_depth: usize,
     zoom: f32,
     pan: Vec2,
     fit_to_visible: bool,
@@ -165,18 +233,128 @@ struct LitkgViewerApp {
 }
 
 impl LitkgViewerApp {
-    fn new(bundle: Neo4jExportBundle) -> Self {
-        Self {
-            model: GraphModel::from_bundle(bundle),
+    fn new(bundle: Neo4jExportBundle, options: ViewerOptions) -> Self {
+        let model = GraphModel::from_bundle(bundle);
+        let filter = options.filter.explicit_for_ui();
+        let mut app = Self {
+            model,
             selected: None,
-            search_query: String::new(),
-            show_sections: true,
-            show_citations: true,
+            search_query: options.entry.clone().unwrap_or_default(),
+            rg_query: options.entry_rg.clone().unwrap_or_default(),
+            rg_hits: Vec::new(),
+            rg_status: String::new(),
+            filter,
+            repo_root: options.repo_root,
+            focus_root: None,
+            focus_depth: options.focus_depth,
             zoom: 1.0,
             pan: Vec2::ZERO,
             fit_to_visible: true,
             center_selected: false,
+        };
+        app.select_initial_entry(options.entry.as_deref(), options.entry_rg.as_deref());
+        app
+    }
+
+    fn select_initial_entry(&mut self, entry: Option<&str>, entry_rg: Option<&str>) {
+        if let Some(entry_rg) = entry_rg.filter(|value| !value.trim().is_empty()) {
+            self.rg_query = entry_rg.to_string();
+            self.run_rg_search();
+            if let Some(index) = self
+                .rg_hits
+                .first()
+                .and_then(|hit| self.model.hit_index(hit))
+            {
+                self.selected = Some(index);
+                if self.focus_depth > 0 {
+                    self.focus_root = Some(index);
+                }
+                self.center_selected = true;
+                return;
+            }
         }
+        let Some(entry) = entry.filter(|value| !value.trim().is_empty()) else {
+            return;
+        };
+        let hits = self.model.search_hits(GraphEntryQuery {
+            query: entry.to_string(),
+            filter: self.filter.clone(),
+            repo_root: self.repo_root.clone(),
+            use_rg: false,
+            limit: 1,
+        });
+        if let Some(index) = hits.first().and_then(|hit| self.model.hit_index(hit)) {
+            self.selected = Some(index);
+            if self.focus_depth > 0 {
+                self.focus_root = Some(index);
+            }
+            self.center_selected = true;
+        }
+    }
+
+    fn draw_modality_controls(&mut self, ui: &mut egui::Ui) {
+        let counts = self.model.modality_counts();
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Code").clicked() {
+                self.filter = GraphFilter::only([GraphModality::Code]);
+                self.fit_to_visible = true;
+            }
+            if ui.button("Docs").clicked() {
+                self.filter =
+                    GraphFilter::only([GraphModality::Docs, GraphModality::GeneratedContext]);
+                self.fit_to_visible = true;
+            }
+            if ui.button("Thesis").clicked() {
+                self.filter = GraphFilter::only([
+                    GraphModality::Docs,
+                    GraphModality::GeneratedContext,
+                    GraphModality::Literature,
+                ]);
+                self.fit_to_visible = true;
+            }
+            if ui.button("Agent Memory").clicked() {
+                self.filter = GraphFilter::only([GraphModality::Memory, GraphModality::Backlog]);
+                self.fit_to_visible = true;
+            }
+            if ui.button("All").clicked() {
+                self.filter = GraphFilter::explicit_all();
+                self.fit_to_visible = true;
+            }
+        });
+        ui.collapsing("Modalities", |ui| {
+            for modality in GraphModality::selectable() {
+                let mut enabled = self.filter.is_enabled(*modality);
+                let count = counts.get(modality).copied().unwrap_or_default();
+                if ui
+                    .checkbox(&mut enabled, format!("{} ({count})", modality.as_str()))
+                    .changed()
+                {
+                    self.filter.set_enabled(*modality, enabled);
+                    self.fit_to_visible = true;
+                }
+            }
+        });
+    }
+
+    fn run_rg_search(&mut self) {
+        if self.rg_query.trim().is_empty() {
+            self.rg_hits.clear();
+            self.rg_status.clear();
+            return;
+        }
+        let Some(repo_root) = self.repo_root.clone() else {
+            self.rg_hits.clear();
+            self.rg_status = "No repo root configured for rg search.".into();
+            return;
+        };
+        self.rg_hits = self.model.search_hits(GraphEntryQuery {
+            query: self.rg_query.clone(),
+            filter: self.filter.clone(),
+            repo_root: Some(repo_root),
+            use_rg: true,
+            limit: 24,
+        });
+        self.rg_status = format!("{} result(s)", self.rg_hits.len());
     }
 
     fn draw_side_panel(&mut self, ctx: &egui::Context, visible_nodes: &[NodeIndex]) {
@@ -207,15 +385,7 @@ impl LitkgViewerApp {
                         self.center_selected = true;
                     }
                 });
-                ui.horizontal(|ui| {
-                    let sections_changed =
-                        ui.checkbox(&mut self.show_sections, "Sections").changed();
-                    let citations_changed =
-                        ui.checkbox(&mut self.show_citations, "Citations").changed();
-                    if sections_changed || citations_changed {
-                        self.fit_to_visible = true;
-                    }
-                });
+                self.draw_modality_controls(ui);
                 ui.label(format!(
                     "{} / {} nodes visible",
                     visible_nodes.len(),
@@ -241,6 +411,56 @@ impl LitkgViewerApp {
                 });
 
                 ui.separator();
+                ui.label("Repo rg");
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut self.rg_query);
+                    if ui.button("Run rg").clicked() {
+                        self.run_rg_search();
+                    }
+                });
+                if !self.rg_status.is_empty() {
+                    ui.small(self.rg_status.as_str());
+                }
+                ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                    let hits = self.rg_hits.clone();
+                    for hit in hits {
+                        if let Some(index) = self.model.hit_index(&hit) {
+                            let selected = self.selected == Some(index);
+                            if ui.selectable_label(selected, hit.title.as_str()).clicked() {
+                                self.selected = Some(index);
+                                if self.focus_depth > 0 {
+                                    self.focus_root = Some(index);
+                                }
+                                self.center_selected = true;
+                            }
+                            ui.small(format!(
+                                "{} · {}{}",
+                                hit.modality.as_str(),
+                                hit.repo_path.clone().unwrap_or_else(|| hit.node_id.clone()),
+                                hit.line_start
+                                    .map(|line| format!(":{line}"))
+                                    .unwrap_or_default()
+                            ));
+                            if let Some(snippet) = &hit.snippet {
+                                ui.small(snippet);
+                            }
+                            ui.add_space(6.0);
+                        }
+                    }
+                });
+
+                if self.focus_root.is_some() {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Focused depth {}", self.focus_depth));
+                        if ui.button("Clear focus").clicked() {
+                            self.focus_root = None;
+                            self.fit_to_visible = true;
+                        }
+                    });
+                }
+
+                ui.separator();
                 if let Some(selected) = self.selected {
                     self.draw_node_details(ui, selected);
                 } else {
@@ -251,23 +471,53 @@ impl LitkgViewerApp {
 
     fn draw_node_details(&mut self, ui: &mut egui::Ui, index: NodeIndex) {
         let node = &self.model.graph[index];
-        ui.heading(node.title.as_str());
-        if !node.subtitle.is_empty() {
-            ui.label(node.subtitle.as_str());
+        let title = node.title.clone();
+        let subtitle = node.subtitle.clone();
+        let kind = node.kind.clone();
+        let id = node.id.clone();
+        let labels = node.labels.clone();
+        let modality = node.modality;
+        let description = node.description.clone();
+        let properties = node.properties.clone();
+        let in_degree = node.in_degree;
+        let out_degree = node.out_degree;
+        let path_for_rg = properties
+            .get("repo_path")
+            .or_else(|| properties.get("source_path"))
+            .cloned();
+
+        ui.heading(title.as_str());
+        if !subtitle.is_empty() {
+            ui.label(subtitle.as_str());
         }
-        ui.label(RichText::new(node.kind.as_str()).strong());
-        ui.code(node.id.as_str());
-        ui.small(format!(
-            "{} incoming · {} outgoing",
-            node.in_degree, node.out_degree
-        ));
-        if !node.labels.is_empty() {
-            ui.small(format!("labels: {}", node.labels.join(", ")));
+        ui.label(RichText::new(kind.as_str()).strong());
+        ui.code(id.as_str());
+        ui.small(format!("{in_degree} incoming · {out_degree} outgoing"));
+        if !labels.is_empty() {
+            ui.small(format!("labels: {}", labels.join(", ")));
         }
+        ui.small(format!("modality: {}", modality.as_str()));
+        if !description.is_empty() {
+            ui.separator();
+            ui.label(RichText::new("Description").strong());
+            ui.label(description.as_str());
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Focus neighbors").clicked() {
+                self.focus_root = Some(index);
+                self.focus_depth = self.focus_depth.max(1);
+                self.fit_to_visible = true;
+            }
+            if ui.button("Use path in rg").clicked() {
+                if let Some(path) = &path_for_rg {
+                    self.rg_query = path.clone();
+                }
+            }
+        });
 
         ui.separator();
         ui.collapsing("Properties", |ui| {
-            for (key, value) in &node.properties {
+            for (key, value) in &properties {
                 ui.label(RichText::new(key.as_str()).strong());
                 ui.label(value.as_str());
                 ui.add_space(6.0);
@@ -325,27 +575,23 @@ impl LitkgViewerApp {
     }
 
     fn search_results(&self, visible_nodes: &[NodeIndex]) -> Vec<NodeIndex> {
-        let query = self.search_query.trim().to_lowercase();
+        let query = self.search_query.trim();
         if query.is_empty() {
             return visible_nodes.iter().copied().take(16).collect();
         }
-
-        let mut matches: Vec<_> = visible_nodes
-            .iter()
-            .copied()
-            .filter(|index| {
-                self.model.graph[*index]
-                    .search_text
-                    .contains(query.as_str())
+        let visible_set: HashSet<_> = visible_nodes.iter().copied().collect();
+        self.model
+            .search_hits(GraphEntryQuery {
+                query: query.to_string(),
+                filter: self.filter.clone(),
+                repo_root: self.repo_root.clone(),
+                use_rg: false,
+                limit: 24,
             })
-            .collect();
-        matches.sort_by(|left, right| {
-            self.model.graph[*left]
-                .title
-                .cmp(&self.model.graph[*right].title)
-        });
-        matches.truncate(24);
-        matches
+            .into_iter()
+            .filter_map(|hit| self.model.hit_index(&hit))
+            .filter(|index| visible_set.contains(index))
+            .collect()
     }
 
     fn world_to_screen(&self, world: Pos2, rect: Rect) -> Pos2 {
@@ -436,9 +682,9 @@ impl LitkgViewerApp {
 
 impl eframe::App for LitkgViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let visible_nodes = self
-            .model
-            .visible_nodes(self.show_sections, self.show_citations);
+        let visible_nodes =
+            self.model
+                .visible_nodes(&self.filter, self.focus_root, self.focus_depth);
         let visible_set: HashSet<_> = visible_nodes.iter().copied().collect();
         if self.selected.is_some() && !visible_set.contains(&self.selected.unwrap()) {
             self.selected = None;
@@ -560,7 +806,7 @@ impl eframe::App for LitkgViewerApp {
             }
 
             let legend_rect =
-                Rect::from_min_size(rect.min + Vec2::new(14.0, 14.0), Vec2::new(220.0, 92.0));
+                Rect::from_min_size(rect.min + Vec2::new(14.0, 14.0), Vec2::new(220.0, 128.0));
             painter.rect_filled(legend_rect, 8.0, Color32::from_black_alpha(150));
             painter.text(
                 legend_rect.min + Vec2::new(12.0, 12.0),
@@ -573,6 +819,8 @@ impl eframe::App for LitkgViewerApp {
                 ("Paper", node_color("Paper", false, false)),
                 ("Section", node_color("PaperSection", false, false)),
                 ("Citation", node_color("Citation", false, false)),
+                ("Code", node_color("CodeSymbol", false, false)),
+                ("Context", node_color("GeneratedContext", false, false)),
             ];
             for (row, (label, color)) in legend_rows.into_iter().enumerate() {
                 let y = legend_rect.min.y + 36.0 + row as f32 * 18.0;
@@ -697,100 +945,6 @@ fn build_semantic_layout(
     positions
 }
 
-fn primary_title(id: &str, kind: &str, properties: &BTreeMap<String, String>) -> String {
-    match kind {
-        "Paper" | "PaperSection" => properties
-            .get("title")
-            .cloned()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| id.to_string()),
-        "Citation" => properties
-            .get("citation_key")
-            .cloned()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| id.to_string()),
-        _ => properties
-            .get("title")
-            .cloned()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| id.to_string()),
-    }
-}
-
-fn subtitle_for_node(kind: &str, properties: &BTreeMap<String, String>) -> String {
-    match kind {
-        "Paper" => {
-            let mut parts = Vec::new();
-            if let Some(year) = properties.get("year").filter(|value| !value.is_empty()) {
-                parts.push(year.clone());
-            }
-            if let Some(arxiv) = properties.get("arxiv_id").filter(|value| !value.is_empty()) {
-                parts.push(format!("arXiv:{arxiv}"));
-            }
-            parts.join(" · ")
-        }
-        "PaperSection" => {
-            let mut parts = Vec::new();
-            if let Some(level) = properties.get("level").filter(|value| !value.is_empty()) {
-                parts.push(format!("Level {level}"));
-            }
-            if let Some(paper_id) = properties.get("paper_id").filter(|value| !value.is_empty()) {
-                parts.push(paper_id.clone());
-            }
-            parts.join(" · ")
-        }
-        "Citation" => properties
-            .get("citation_key")
-            .cloned()
-            .unwrap_or_else(String::new),
-        _ => String::new(),
-    }
-}
-
-fn build_search_text(id: &str, kind: &str, properties: &BTreeMap<String, String>) -> String {
-    let mut parts = vec![id.to_lowercase(), kind.to_lowercase()];
-    for key in [
-        "title",
-        "paper_id",
-        "citation_key",
-        "arxiv_id",
-        "year",
-        "content",
-    ] {
-        if let Some(value) = properties.get(key) {
-            let snippet = if key == "content" {
-                truncate(value.as_str(), 220)
-            } else {
-                value.clone()
-            };
-            parts.push(snippet.to_lowercase());
-        }
-    }
-    parts.join(" ")
-}
-
-fn properties_map(value: &Value) -> BTreeMap<String, String> {
-    match value {
-        Value::Object(map) => map
-            .iter()
-            .map(|(key, value)| (key.clone(), json_value_string(value)))
-            .collect(),
-        _ => {
-            let mut properties = BTreeMap::new();
-            properties.insert("value".to_string(), json_value_string(value));
-            properties
-        }
-    }
-}
-
-fn json_value_string(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        Value::String(value) => value.clone(),
-        _ => value.to_string(),
-    }
-}
-
 fn truncate(value: &str, max_len: usize) -> String {
     if value.chars().count() <= max_len {
         return value.to_string();
@@ -823,6 +977,13 @@ fn node_color(kind: &str, selected: bool, neighbor: bool) -> Color32 {
         "Paper" => Color32::from_rgb(78, 121, 167),
         "PaperSection" => Color32::from_rgb(89, 161, 79),
         "Citation" => Color32::from_rgb(237, 201, 72),
+        "CodeFile" | "CodeModule" | "CodeSymbol" | "CodeReference" => {
+            Color32::from_rgb(83, 158, 208)
+        }
+        "GeneratedContext" | "DataContract" | "Concept" => Color32::from_rgb(242, 142, 43),
+        "ProjectMemory" | "Decision" | "OpenQuestion" | "Gotcha" | "ProjectState" => {
+            Color32::from_rgb(176, 122, 161)
+        }
         _ => Color32::from_rgb(176, 122, 161),
     };
 
@@ -882,6 +1043,17 @@ mod tests {
                         "citation_key": "foo2025"
                     }),
                 },
+                Neo4jNode {
+                    id: "code_symbol:pkg.VinPrediction".into(),
+                    labels: vec!["CodeSymbol".into()],
+                    properties: serde_json::json!({
+                        "qualified_name": "pkg.VinPrediction",
+                        "repo_path": "pkg/model.py",
+                        "line_start": 1,
+                        "line_end": 4,
+                        "doc_summary": "Predicts RRI."
+                    }),
+                },
             ],
             edges: vec![
                 Neo4jEdge {
@@ -903,7 +1075,7 @@ mod tests {
     #[test]
     fn builds_graph_model_from_export_bundle() {
         let model = GraphModel::from_bundle(sample_bundle());
-        assert_eq!(model.graph.node_count(), 3);
+        assert_eq!(model.graph.node_count(), 4);
         assert_eq!(model.graph.edge_count(), 2);
         assert_eq!(
             model
@@ -913,6 +1085,14 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn filters_visible_nodes_by_modality() {
+        let model = GraphModel::from_bundle(sample_bundle());
+        let visible = model.visible_nodes(&GraphFilter::only([GraphModality::Code]), None, 0);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(model.graph[visible[0]].kind, "CodeSymbol");
     }
 
     #[test]

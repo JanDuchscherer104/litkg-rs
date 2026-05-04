@@ -87,6 +87,7 @@ pub struct PaperInspection {
 pub enum CapabilityState {
     Ready,
     Generated,
+    Stale,
     Configured,
     Implemented,
     Missing,
@@ -107,6 +108,7 @@ pub struct CapabilityOptions {
 pub struct RepoCapabilitySnapshot {
     pub config_path: PathBuf,
     pub repo_root: Option<PathBuf>,
+    pub conformance: ConformanceReport,
     pub literature_registry: LiteratureRegistryCapability,
     pub downloads: DownloadCapability,
     pub parsing: ParsingCapability,
@@ -116,6 +118,62 @@ pub struct RepoCapabilitySnapshot {
     pub runtime: RuntimeCapability,
     pub benchmarks: Option<BenchmarkCapability>,
     pub next_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRecommendation {
+    UseNow,
+    RefreshFirst,
+    MissingLeaf,
+    DoNotUse,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SourceDescriptor {
+    pub name: String,
+    pub kind: String,
+    pub configured_paths: Vec<String>,
+    pub supported_node_types: Vec<String>,
+    pub supported_edge_types: Vec<String>,
+    pub freshness_inputs: Vec<String>,
+    pub required_env: Vec<String>,
+    pub required_tools: Vec<String>,
+    pub state: CapabilityState,
+    pub agent_recommendation: AgentRecommendation,
+    pub repair_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BackendDescriptor {
+    pub name: String,
+    pub kind: String,
+    pub configured: bool,
+    pub output_paths: Vec<String>,
+    pub supported_node_types: Vec<String>,
+    pub supported_edge_types: Vec<String>,
+    pub required_env: Vec<String>,
+    pub required_tools: Vec<String>,
+    pub state: CapabilityState,
+    pub agent_recommendation: AgentRecommendation,
+    pub repair_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CapabilityProbe {
+    pub name: String,
+    pub target_type: String,
+    pub state: CapabilityState,
+    pub agent_recommendation: AgentRecommendation,
+    pub detail: String,
+    pub repair_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ConformanceReport {
+    pub sources: Vec<SourceDescriptor>,
+    pub backends: Vec<BackendDescriptor>,
+    pub probes: Vec<CapabilityProbe>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -380,6 +438,12 @@ pub fn compute_repo_capabilities(
         options.benchmark_catalog.as_deref(),
         options.benchmark_integrations.as_deref(),
     );
+    let conformance = compute_agent_conformance_report(
+        config,
+        &options.config_path,
+        options.repo_root.as_deref(),
+        options.check_runtime,
+    );
     let next_actions = next_actions(
         &options.config_path,
         &literature_registry,
@@ -392,6 +456,7 @@ pub fn compute_repo_capabilities(
     Ok(RepoCapabilitySnapshot {
         config_path: options.config_path,
         repo_root: options.repo_root,
+        conformance,
         literature_registry,
         downloads,
         parsing,
@@ -402,6 +467,584 @@ pub fn compute_repo_capabilities(
         benchmarks,
         next_actions,
     })
+}
+
+pub fn compute_agent_conformance_report(
+    config: &RepoConfig,
+    config_path: &Path,
+    repo_root: Option<&Path>,
+    check_runtime: bool,
+) -> ConformanceReport {
+    let mut sources = configured_source_descriptors(config, repo_root);
+    sources.push(literature_source_descriptor(config));
+    sources.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let runtime = inspect_runtime(repo_root, check_runtime);
+    let mut backends = vec![
+        graphify_backend_descriptor(config, config_path),
+        neo4j_backend_descriptor(config, config_path),
+        code_index_backend_descriptor(config, repo_root, &runtime),
+        graphiti_backend_descriptor(config, repo_root, &runtime),
+        context7_backend_descriptor(config),
+        openai_docs_backend_descriptor(),
+        semantic_scholar_backend_descriptor(config, config_path),
+        mempalace_backend_descriptor(config, repo_root),
+    ];
+    backends.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let probes = sources
+        .iter()
+        .map(|source| CapabilityProbe {
+            name: source.name.clone(),
+            target_type: "source".into(),
+            state: source.state.clone(),
+            agent_recommendation: source.agent_recommendation.clone(),
+            detail: format!("{} source contract", source.kind),
+            repair_command: source.repair_command.clone(),
+        })
+        .chain(backends.iter().map(|backend| CapabilityProbe {
+            name: backend.name.clone(),
+            target_type: "backend".into(),
+            state: backend.state.clone(),
+            agent_recommendation: backend.agent_recommendation.clone(),
+            detail: format!("{} backend contract", backend.kind),
+            repair_command: backend.repair_command.clone(),
+        }))
+        .collect();
+
+    ConformanceReport {
+        sources,
+        backends,
+        probes,
+    }
+}
+
+fn configured_source_descriptors(
+    config: &RepoConfig,
+    repo_root: Option<&Path>,
+) -> Vec<SourceDescriptor> {
+    config
+        .sources
+        .iter()
+        .map(|(name, source)| {
+            let configured_paths = source_paths(source);
+            let missing_required_paths = configured_paths
+                .iter()
+                .filter(|raw| is_exact_path(raw))
+                .filter(|raw| {
+                    let path = repo_root
+                        .map(|root| root.join(raw))
+                        .unwrap_or_else(|| PathBuf::from(raw));
+                    !path.exists()
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut required_tools = Vec::new();
+            if source.symbols || source.edges.as_deref() == Some("codegraphcontext") {
+                required_tools.push("code-index/CodeGraphContext".into());
+            }
+            if !source.context7_libraries.is_empty() {
+                required_tools.push("Context7 MCP".into());
+            }
+            if source.markitdown {
+                required_tools.push("MarkItDown".into());
+            }
+
+            let state = if source.required && !missing_required_paths.is_empty() {
+                CapabilityState::Missing
+            } else if configured_paths.is_empty() && !source.enabled {
+                CapabilityState::Configured
+            } else {
+                CapabilityState::Ready
+            };
+            let repair_command = if missing_required_paths.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "restore source paths: {}",
+                    missing_required_paths.join(", ")
+                ))
+            };
+
+            SourceDescriptor {
+                name: name.clone(),
+                kind: source_kind(name, source),
+                configured_paths,
+                supported_node_types: source_node_types(name, source),
+                supported_edge_types: source_edge_types(name, source),
+                freshness_inputs: source_freshness_inputs(source),
+                required_env: Vec::new(),
+                required_tools,
+                agent_recommendation: recommendation_for_state(&state),
+                state,
+                repair_command,
+            }
+        })
+        .collect()
+}
+
+fn literature_source_descriptor(config: &RepoConfig) -> SourceDescriptor {
+    let configured_paths = vec![
+        config.manifest_path.display().to_string(),
+        config.bib_path.display().to_string(),
+        config.tex_root.display().to_string(),
+        config.pdf_root.display().to_string(),
+    ];
+    let missing = [&config.manifest_path, &config.bib_path]
+        .into_iter()
+        .filter(|path| !path.is_file())
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    let state = if !missing.is_empty() {
+        CapabilityState::Missing
+    } else {
+        CapabilityState::Ready
+    };
+    SourceDescriptor {
+        name: "literature".into(),
+        kind: "manifest_bib_tex_pdf".into(),
+        configured_paths,
+        supported_node_types: vec!["Paper".into(), "CitationMention".into()],
+        supported_edge_types: vec!["cites".into(), "mentions".into()],
+        freshness_inputs: vec![
+            config.manifest_path.display().to_string(),
+            config.bib_path.display().to_string(),
+            config.tex_root.display().to_string(),
+        ],
+        required_env: Vec::new(),
+        required_tools: Vec::new(),
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: if missing.is_empty() {
+            None
+        } else {
+            Some(format!("restore literature inputs: {}", missing.join(", ")))
+        },
+    }
+}
+
+fn graphify_backend_descriptor(config: &RepoConfig, config_path: &Path) -> BackendDescriptor {
+    let configured = matches!(config.sink, SinkMode::Graphify | SinkMode::Both)
+        || config
+            .backends
+            .as_ref()
+            .is_some_and(|backends| backends.graphify);
+    let index_path = config.generated_docs_root.join("index.md");
+    let manifest_path = config.generated_docs_root.join("graphify-manifest.json");
+    let generated = index_path.is_file() && manifest_path.is_file();
+    let state = if generated && stale_against_inputs(&[&index_path, &manifest_path], config) {
+        CapabilityState::Stale
+    } else if generated {
+        CapabilityState::Generated
+    } else if configured {
+        CapabilityState::Configured
+    } else {
+        CapabilityState::Unavailable
+    };
+    BackendDescriptor {
+        name: "graphify".into(),
+        kind: "durable_static_graph_docs".into(),
+        configured,
+        output_paths: vec![
+            index_path.display().to_string(),
+            manifest_path.display().to_string(),
+        ],
+        supported_node_types: vec!["Paper".into(), "DocSection".into(), "MemoryNode".into()],
+        supported_edge_types: vec!["cites".into(), "related_to".into()],
+        required_env: Vec::new(),
+        required_tools: Vec::new(),
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: configured.then(|| {
+            format!(
+                "cargo run -p litkg-cli -- kg build --config {}",
+                config_path.display()
+            )
+        }),
+    }
+}
+
+fn neo4j_backend_descriptor(config: &RepoConfig, config_path: &Path) -> BackendDescriptor {
+    let configured = matches!(config.sink, SinkMode::Neo4j | SinkMode::Both)
+        || config
+            .backends
+            .as_ref()
+            .is_some_and(|backends| backends.neo4j_export);
+    let nodes_path = config.neo4j_export_root().join("nodes.jsonl");
+    let edges_path = config.neo4j_export_root().join("edges.jsonl");
+    let generated = nodes_path.is_file() && edges_path.is_file();
+    let state = if generated && stale_against_inputs(&[&nodes_path, &edges_path], config) {
+        CapabilityState::Stale
+    } else if generated {
+        CapabilityState::Generated
+    } else if configured {
+        CapabilityState::Configured
+    } else {
+        CapabilityState::Unavailable
+    };
+    BackendDescriptor {
+        name: "neo4j_export".into(),
+        kind: "durable_neo4j_jsonl_export".into(),
+        configured,
+        output_paths: vec![
+            nodes_path.display().to_string(),
+            edges_path.display().to_string(),
+        ],
+        supported_node_types: vec!["Paper".into(), "DocSection".into(), "MemoryNode".into()],
+        supported_edge_types: vec!["cites".into(), "imports".into(), "related_to".into()],
+        required_env: Vec::new(),
+        required_tools: Vec::new(),
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: configured.then(|| {
+            format!(
+                "cargo run -p litkg-cli -- kg export --config {}",
+                config_path.display()
+            )
+        }),
+    }
+}
+
+fn code_index_backend_descriptor(
+    config: &RepoConfig,
+    repo_root: Option<&Path>,
+    runtime: &RuntimeCapability,
+) -> BackendDescriptor {
+    let configured = config
+        .backends
+        .as_ref()
+        .is_some_and(|backends| backends.code_index)
+        || config
+            .sources
+            .values()
+            .any(|source| source.symbols || source.edges.as_deref() == Some("codegraphcontext"));
+    let state = if !configured {
+        CapabilityState::Unavailable
+    } else if runtime.checked {
+        runtime.codegraphcontext.state.clone()
+    } else {
+        CapabilityState::Configured
+    };
+    BackendDescriptor {
+        name: "codegraphcontext".into(),
+        kind: "code_symbol_index_adapter".into(),
+        configured,
+        output_paths: repo_root
+            .map(|root| root.join(".cache/kg/venvs/cgc").display().to_string())
+            .into_iter()
+            .collect(),
+        supported_node_types: vec![
+            "CodeFile".into(),
+            "CodeSymbol".into(),
+            "SymbolSummary".into(),
+        ],
+        supported_edge_types: vec!["imports".into(), "calls".into()],
+        required_env: Vec::new(),
+        required_tools: vec!["code-index MCP".into(), "CodeGraphContext".into()],
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: configured.then(|| "make kg-index-code".into()),
+    }
+}
+
+fn graphiti_backend_descriptor(
+    config: &RepoConfig,
+    repo_root: Option<&Path>,
+    runtime: &RuntimeCapability,
+) -> BackendDescriptor {
+    let configured = config
+        .backends
+        .as_ref()
+        .is_some_and(|backends| backends.graphiti)
+        || config
+            .representation
+            .as_ref()
+            .is_some_and(|repr| repr.optional_runtime.iter().any(|item| item == "graphiti"));
+    let state = if !configured {
+        CapabilityState::Unavailable
+    } else if runtime.checked {
+        runtime.graphiti_helpers.state.clone()
+    } else {
+        CapabilityState::Configured
+    };
+    BackendDescriptor {
+        name: "graphiti".into(),
+        kind: "optional_temporal_memory_runtime".into(),
+        configured,
+        output_paths: repo_root
+            .map(|root| root.join(".cache/kg/graphiti").display().to_string())
+            .into_iter()
+            .collect(),
+        supported_node_types: vec!["Decision".into(), "OpenQuestion".into(), "Claim".into()],
+        supported_edge_types: vec!["supersedes".into(), "mentions".into()],
+        required_env: Vec::new(),
+        required_tools: vec!["Graphiti helpers".into()],
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: configured.then(|| "make kg-ingest-docs".into()),
+    }
+}
+
+fn context7_backend_descriptor(config: &RepoConfig) -> BackendDescriptor {
+    let libraries = config
+        .sources
+        .values()
+        .flat_map(|source| source.context7_libraries.clone())
+        .collect::<BTreeSet<_>>();
+    let configured = !libraries.is_empty();
+    let state = if configured {
+        CapabilityState::Configured
+    } else {
+        CapabilityState::Unavailable
+    };
+    BackendDescriptor {
+        name: "context7".into(),
+        kind: "external_library_docs_leaf".into(),
+        configured,
+        output_paths: libraries.into_iter().collect(),
+        supported_node_types: vec!["ExternalDocLeaf".into()],
+        supported_edge_types: vec!["requires_external_provider".into()],
+        required_env: Vec::new(),
+        required_tools: vec!["Context7 MCP".into()],
+        agent_recommendation: if configured {
+            AgentRecommendation::MissingLeaf
+        } else {
+            AgentRecommendation::DoNotUse
+        },
+        state,
+        repair_command: configured
+            .then(|| "resolve configured Context7 libraries, then rerun litkg context-pack".into()),
+    }
+}
+
+fn openai_docs_backend_descriptor() -> BackendDescriptor {
+    BackendDescriptor {
+        name: "openai_developer_docs".into(),
+        kind: "external_openai_docs_leaf".into(),
+        configured: true,
+        output_paths: Vec::new(),
+        supported_node_types: vec!["ExternalDocLeaf".into()],
+        supported_edge_types: vec!["requires_external_provider".into()],
+        required_env: Vec::new(),
+        required_tools: vec!["openaiDeveloperDocs MCP".into()],
+        state: CapabilityState::Configured,
+        agent_recommendation: AgentRecommendation::MissingLeaf,
+        repair_command: Some(
+            "use openaiDeveloperDocs MCP for current OpenAI/Codex/MCP docs when relevant".into(),
+        ),
+    }
+}
+
+fn semantic_scholar_backend_descriptor(
+    config: &RepoConfig,
+    config_path: &Path,
+) -> BackendDescriptor {
+    let semantic = config.semantic_scholar_config();
+    let key_present = env::var(&semantic.api_key_env)
+        .ok()
+        .is_some_and(|value| !value.is_empty());
+    let state = if !semantic.enabled {
+        CapabilityState::Unavailable
+    } else if key_present {
+        CapabilityState::Ready
+    } else {
+        CapabilityState::Configured
+    };
+    BackendDescriptor {
+        name: "semantic_scholar".into(),
+        kind: "academic_graph_rest_adapter".into(),
+        configured: semantic.enabled,
+        output_paths: vec![config.registry_path().display().to_string()],
+        supported_node_types: vec!["Paper".into(), "Author".into()],
+        supported_edge_types: vec!["cites".into(), "references".into()],
+        required_env: if semantic.enabled {
+            vec![semantic.api_key_env.clone()]
+        } else {
+            Vec::new()
+        },
+        required_tools: Vec::new(),
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: semantic.enabled.then(|| {
+            format!(
+                "export {}=... && cargo run -p litkg-cli -- s2 enrich --config {}",
+                semantic.api_key_env,
+                config_path.display()
+            )
+        }),
+    }
+}
+
+fn mempalace_backend_descriptor(
+    config: &RepoConfig,
+    repo_root: Option<&Path>,
+) -> BackendDescriptor {
+    let configured = config
+        .backends
+        .as_ref()
+        .is_some_and(|backends| backends.mempalace)
+        || config
+            .representation
+            .as_ref()
+            .and_then(|repr| repr.memory_backend.as_deref())
+            .is_some_and(|backend| backend == "mempalace");
+    let root = repo_root.map(|root| root.join(".agents/memory"));
+    let state = if !configured {
+        CapabilityState::Unavailable
+    } else if root.as_ref().is_some_and(|path| path.is_dir()) {
+        CapabilityState::Ready
+    } else {
+        CapabilityState::Configured
+    };
+    BackendDescriptor {
+        name: "mempalace".into(),
+        kind: "local_first_agent_memory_adapter".into(),
+        configured,
+        output_paths: root
+            .as_ref()
+            .map(|path| vec![path.display().to_string()])
+            .unwrap_or_default(),
+        supported_node_types: vec![
+            "Decision".into(),
+            "OpenQuestion".into(),
+            "ActionItem".into(),
+        ],
+        supported_edge_types: vec!["mentions".into(), "depends_on".into()],
+        required_env: Vec::new(),
+        required_tools: vec!["mempalace-rs".into()],
+        agent_recommendation: recommendation_for_state(&state),
+        state,
+        repair_command: configured.then(|| "make memory-mine".into()),
+    }
+}
+
+fn source_paths(source: &crate::config::SourceConfig) -> Vec<String> {
+    let mut paths = Vec::new();
+    paths.extend(source.include.iter().cloned());
+    paths.extend(
+        source
+            .entrypoints
+            .iter()
+            .map(|path| path.display().to_string()),
+    );
+    if let Some(path) = &source.manifest {
+        paths.push(path.display().to_string());
+    }
+    if let Some(path) = &source.bib {
+        paths.push(path.display().to_string());
+    }
+    if let Some(path) = &source.pdfs {
+        paths.push(path.clone());
+    }
+    if let Some(path) = &source.tex {
+        paths.push(path.clone());
+    }
+    paths.extend(source.urls.iter().cloned());
+    paths.extend(source.context7_libraries.iter().cloned());
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn source_kind(name: &str, source: &crate::config::SourceConfig) -> String {
+    if !source.context7_libraries.is_empty() {
+        "external_docs".into()
+    } else if source.symbols || source.edges.as_deref() == Some("codegraphcontext") {
+        "code".into()
+    } else if source.markitdown || !source.urls.is_empty() {
+        "remote_docs".into()
+    } else if name.contains("agent") || name.contains("skill") {
+        "agent_scaffold".into()
+    } else if name.contains("doc") || name.contains("paper") {
+        "documentation".into()
+    } else {
+        "local_source".into()
+    }
+}
+
+fn source_node_types(name: &str, source: &crate::config::SourceConfig) -> Vec<String> {
+    match source_kind(name, source).as_str() {
+        "agent_scaffold" => vec![
+            "AgentInstructionFile".into(),
+            "AgentSkill".into(),
+            "AgentBacklogIssue".into(),
+            "AgentBacklogTodo".into(),
+        ],
+        "code" => vec![
+            "CodeFile".into(),
+            "CodeSymbol".into(),
+            "SymbolSummary".into(),
+        ],
+        "external_docs" | "remote_docs" => vec!["ExternalDocLeaf".into(), "DocSection".into()],
+        _ => vec!["Document".into(), "DocSection".into(), "Concept".into()],
+    }
+}
+
+fn source_edge_types(name: &str, source: &crate::config::SourceConfig) -> Vec<String> {
+    match source_kind(name, source).as_str() {
+        "agent_scaffold" => vec!["routes_to".into(), "handles".into(), "has_todo".into()],
+        "code" => vec!["imports".into(), "calls".into(), "defines".into()],
+        "external_docs" | "remote_docs" => vec!["requires_external_provider".into()],
+        _ => vec!["mentions".into(), "cites".into()],
+    }
+}
+
+fn source_freshness_inputs(source: &crate::config::SourceConfig) -> Vec<String> {
+    source_paths(source)
+        .into_iter()
+        .filter(|path| !path.starts_with("http://") && !path.starts_with("https://"))
+        .collect()
+}
+
+fn is_exact_path(raw: &str) -> bool {
+    !raw.starts_with("http://")
+        && !raw.starts_with("https://")
+        && !raw.starts_with('/')
+        && !raw.contains('*')
+        && !raw.contains('{')
+        && !raw.contains('}')
+}
+
+fn stale_against_inputs(outputs: &[&Path], config: &RepoConfig) -> bool {
+    let registry_path = config.registry_path();
+    let parsed_root = config.parsed_root();
+    let inputs = [
+        config.manifest_path.as_path(),
+        config.bib_path.as_path(),
+        registry_path.as_path(),
+        parsed_root.as_path(),
+    ];
+    let newest_input = inputs
+        .into_iter()
+        .filter_map(|path| {
+            path.metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        })
+        .max();
+    let Some(newest_input) = newest_input else {
+        return false;
+    };
+    outputs.iter().any(|output| {
+        output
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .map(|modified| modified < newest_input)
+            .unwrap_or(false)
+    })
+}
+
+fn recommendation_for_state(state: &CapabilityState) -> AgentRecommendation {
+    match state {
+        CapabilityState::Ready | CapabilityState::Generated | CapabilityState::Implemented => {
+            AgentRecommendation::UseNow
+        }
+        CapabilityState::Stale | CapabilityState::Configured | CapabilityState::NotChecked => {
+            AgentRecommendation::RefreshFirst
+        }
+        CapabilityState::Missing => AgentRecommendation::MissingLeaf,
+        CapabilityState::Unavailable => AgentRecommendation::DoNotUse,
+    }
 }
 
 pub fn compute_corpus_stats(
@@ -1217,7 +1860,7 @@ fn next_actions(
     let mut actions = Vec::new();
     if !registry.registry_generated && registry.manifest_present && registry.bib_present {
         actions.push(format!(
-            "cargo run -p litkg-cli -- sync-registry --config {config}"
+            "cargo run -p litkg-cli -- ingest --config {config}"
         ));
     }
     if registry.records_total > 0
@@ -1225,18 +1868,20 @@ fn next_actions(
         && downloads.arxiv_records > 0
     {
         actions.push(format!(
-            "cargo run -p litkg-cli -- download --config {config}"
+            "cargo run -p litkg-cli -- lit download --config {config}"
         ));
     }
     if parsing.parsed_papers < registry.records_total && downloads.records_with_local_tex > 0 {
-        actions.push(format!("cargo run -p litkg-cli -- parse --config {config}"));
+        actions.push(format!(
+            "cargo run -p litkg-cli -- lit parse --config {config}"
+        ));
     }
     if graph_outputs.graphify_configured
         && !(graph_outputs.graphify_index_generated && graph_outputs.graphify_manifest_generated)
         && parsing.parsed_papers > 0
     {
         actions.push(format!(
-            "cargo run -p litkg-cli -- materialize --config {config}"
+            "cargo run -p litkg-cli -- kg build --config {config}"
         ));
     }
     if semantic_scholar.configured
@@ -1244,7 +1889,7 @@ fn next_actions(
         && semantic_scholar.enriched_records < registry.records_total
     {
         actions.push(format!(
-            "cargo run -p litkg-cli -- enrich-semantic-scholar --config {config}"
+            "cargo run -p litkg-cli -- s2 enrich --config {config}"
         ));
     }
     if graph_outputs.neo4j_configured
@@ -1252,12 +1897,12 @@ fn next_actions(
         && parsing.parsed_papers > 0
     {
         actions.push(format!(
-            "cargo run -p litkg-cli -- export-neo4j --config {config}"
+            "cargo run -p litkg-cli -- kg export --config {config}"
         ));
     }
     if graph_outputs.neo4j_nodes_generated && graph_outputs.neo4j_edges_generated {
         actions.push(format!(
-            "cargo run -p litkg-cli -- inspect-graph --config {config}"
+            "cargo run -p litkg-cli -- kg visualize --config {config}"
         ));
     }
     actions

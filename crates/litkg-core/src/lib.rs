@@ -1,6 +1,7 @@
 pub mod benchmark;
 pub mod benchmark_runner;
 pub mod bibtex;
+pub mod code_graph;
 pub mod config;
 pub mod context_pack;
 pub mod download;
@@ -35,10 +36,13 @@ pub use benchmark_runner::{
     BenchmarkSupportStatus,
 };
 pub use bibtex::{parse_bibtex, BibEntry};
+pub use code_graph::{
+    build_python_code_graph, CodeCall, CodeFile, CodeGraph, CodeImport, CodeModule, CodeSymbol,
+};
 pub use config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarConfig, SinkMode};
 pub use context_pack::{
     build_context_pack, ContextBacklogItem, ContextEvidenceSpan, ContextPack, ContextPackRequest,
-    ContextPaper, MissingContextLeaf,
+    ContextPaper, ContextSymbol, MissingContextLeaf,
 };
 pub use download::{download_registry_sources, DownloadOptions};
 pub use enrich::{infer_enriched_edges, EnrichedEdge, EnrichedEdgeType, EnrichmentStrategy};
@@ -47,11 +51,13 @@ pub use identity::{
     ResolutionCandidate,
 };
 pub use inspect::{
-    compute_corpus_stats, compute_repo_capabilities, inspect_paper, search_papers,
-    BenchmarkCapability, CapabilityOptions, CapabilityState, CorpusStats, DownloadCapability,
-    GraphOutputCapability, LiteratureRegistryCapability, PaperInspection, PaperReference,
-    ParsingCapability, ProjectMemoryCapability, RepoCapabilitySnapshot, RuntimeCapability,
-    RuntimeCheck, SearchHit, SearchResults, SectionHeading, SemanticScholarCapability,
+    compute_agent_conformance_report, compute_corpus_stats, compute_repo_capabilities,
+    inspect_paper, search_papers, AgentRecommendation, BackendDescriptor, BenchmarkCapability,
+    CapabilityOptions, CapabilityProbe, CapabilityState, ConformanceReport, CorpusStats,
+    DownloadCapability, GraphOutputCapability, LiteratureRegistryCapability, PaperInspection,
+    PaperReference, ParsingCapability, ProjectMemoryCapability, RepoCapabilitySnapshot,
+    RuntimeCapability, RuntimeCheck, SearchHit, SearchResults, SectionHeading,
+    SemanticScholarCapability, SourceDescriptor,
 };
 pub use manifest::{load_manifest, ManifestEntry};
 pub use markdown::parse_markdown_document;
