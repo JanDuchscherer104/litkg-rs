@@ -151,7 +151,7 @@ pub struct GraphEntryQuery {
     pub limit: usize,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GraphSearchHit {
     pub node_id: String,
     pub title: String,
@@ -163,6 +163,8 @@ pub struct GraphSearchHit {
     pub line_start: Option<usize>,
     pub line_end: Option<usize>,
     pub snippet: Option<String>,
+    #[serde(flatten)]
+    pub rank: Option<litkg_core::WeightedScore>,
 }
 
 #[derive(Clone, Debug)]
@@ -464,6 +466,7 @@ fn metadata_search(records: &[GraphNodeRecord], query: &GraphEntryQuery) -> Vec<
                 line_start: record.line_start,
                 line_end: record.line_end,
                 snippet: (!record.description.is_empty()).then(|| record.description.clone()),
+                rank: None,
             });
         }
     }
@@ -606,9 +609,10 @@ fn rg_search(
                     .repo_path
                     .clone()
                     .or_else(|| Some(normalized_path.clone())),
-                line_start: line_number.or(record.line_start),
-                line_end: line_number.or(record.line_end),
-                snippet,
+                line_start: line_number,
+                line_end: line_number,
+                snippet: snippet.clone(),
+                rank: None,
             });
         }
     }

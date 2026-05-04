@@ -424,6 +424,7 @@ mod tests {
             download_pdfs: true,
             relevance_tags: vec!["ViSTA-SLAM".into(), "ADVIO".into()],
             semantic_scholar: None,
+            authority_tiers: None,
         }
     }
 

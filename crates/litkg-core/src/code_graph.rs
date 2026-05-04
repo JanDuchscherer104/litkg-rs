@@ -1321,6 +1321,7 @@ mod tests {
             download_pdfs: false,
             relevance_tags: vec![],
             semantic_scholar: None,
+            authority_tiers: None,
             project: Some(crate::config::ProjectConfig {
                 id: "fixture".into(),
                 name: "Fixture".into(),

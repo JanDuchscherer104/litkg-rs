@@ -406,3 +406,27 @@ summary = "Build litkg context-pack as a CLI-first evidence-bundle workflow with
 priority = "critical"
 status = "closed"
 labels = ["area:retrieval", "area:agents", "type:feature", "priority:P0", "milestone:M1-backbone-vertical-slice"]
+
+[[issues]]
+id = "ISSUE-0049"
+title = "Implement Search Authority and Freshness Ranking"
+summary = "Implement a multi-factor scoring model in litkg-core that prioritizes canonical sources and recent evidence over stale or low-authority notes, including configurable authority tiers and temporal decay."
+priority = "high"
+status = "closed"
+labels = ["area:kg", "area:retrieval", "area:ranking", "milestone:M3-dynamic-agent-memory"]
+
+[[issues]]
+id = "ISSUE-0050"
+title = "Implement Memory Consolidation Proposal Engine"
+summary = "Create a consolidation pass that synthesizes episodic debriefs and git changes into proposed updates for canonical project state (PROJECT_STATE.md, DECISIONS.md, etc.) using LLM-backed synthesis."
+priority = "medium"
+status = "open"
+labels = ["area:kg", "area:memory", "area:consolidation", "milestone:M3-dynamic-agent-memory"]
+
+[[issues]]
+id = "ISSUE-0051"
+title = "Implement Contradiction and Stale-Doc Detection"
+summary = "Add heuristics and LLM-backed checks to identify conflicting statements across sources (e.g., debrief vs. paper) and flag documentation that contradicts canonical memory state."
+priority = "medium"
+status = "open"
+labels = ["area:kg", "area:hygiene", "area:claim-check", "milestone:M3-dynamic-agent-memory"]

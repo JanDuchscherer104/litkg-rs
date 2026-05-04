@@ -459,3 +459,43 @@ status = "done"
 loc_min = 160
 loc_expected = 340
 loc_max = 680
+
+[[todos]]
+id = "TODO-0047"
+title = "Implement WeightedScorer with Authority and Freshness support"
+issue_ids = ["ISSUE-0049"]
+priority = "high"
+status = "done"
+loc_min = 120
+loc_expected = 260
+loc_max = 520
+
+[[todos]]
+id = "TODO-0048"
+title = "Implement consolidate-memory CLI command and proposal output"
+issue_ids = ["ISSUE-0050"]
+priority = "medium"
+status = "pending"
+loc_min = 180
+loc_expected = 360
+loc_max = 720
+
+[[todos]]
+id = "TODO-0049"
+title = "Add authority-tier configuration to litkg.toml"
+issue_ids = ["ISSUE-0049"]
+priority = "medium"
+status = "done"
+loc_min = 60
+loc_expected = 120
+loc_max = 240
+
+[[todos]]
+id = "TODO-0050"
+title = "Implement kg-stale and kg-contradictions checks"
+issue_ids = ["ISSUE-0051"]
+priority = "medium"
+status = "pending"
+loc_min = 140
+loc_expected = 280
+loc_max = 560

@@ -19,6 +19,7 @@ pub mod schema;
 pub mod semantic_scholar;
 pub mod tabular;
 pub mod tex;
+pub mod ranking;
 
 pub use benchmark::{
     load_benchmark_catalog, load_benchmark_results, promote_benchmark_results,
@@ -79,6 +80,7 @@ pub use model::{
 pub use notebook::{
     ingest_notebooks_for_research_papers, load_notebook_documents, NotebookIngestStats,
 };
+pub use ranking::{calculate_weighted_score, WeightedScore};
 pub use registry::{build_registry_snapshot, load_registry, sync_registry, write_registry};
 pub use schema::{
     Alias, CanonicalEdge, CanonicalNode, Conflict, ConflictKind, EdgeKind, MergeDecision,

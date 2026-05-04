@@ -33,6 +33,9 @@ pub struct RepoConfig {
     #[serde(default)]
     pub semantic_scholar: Option<SemanticScholarConfig>,
 
+    #[serde(default)]
+    pub authority_tiers: Option<BTreeMap<String, f32>>,
+
     // New sections from expanded toml
     #[serde(default)]
     pub project: Option<ProjectConfig>,

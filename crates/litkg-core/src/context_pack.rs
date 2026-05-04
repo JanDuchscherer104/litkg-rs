@@ -19,7 +19,7 @@ pub struct ContextPackRequest {
     pub profile: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ContextPack {
     pub task: String,
     pub profile: String,
@@ -52,13 +52,15 @@ pub struct ContextBacklogItem {
     pub references: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ContextEvidenceSpan {
     pub source_path: String,
     pub line_start: usize,
     pub line_end: usize,
     pub kind: String,
     pub text: String,
+    #[serde(flatten)]
+    pub score: crate::ranking::WeightedScore,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -155,7 +157,7 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
     let active_issues = load_active_issues(&repo_root)?;
     let active_todos = load_active_todos(&repo_root)?;
     let active_backlog = active_backlog(&active_issues, &active_todos);
-    let mut evidence_spans = collect_evidence_spans(&repo_root, &request.profile, &task_terms)?;
+    let mut evidence_spans = collect_evidence_spans(&repo_root, &request.profile, &task_terms, config)?;
     let relevant_symbols = collect_relevant_symbols(&repo_root, &request.profile, &task_terms)?;
     let relevant_papers = collect_relevant_papers(config, &task_terms)?;
     let fallback_config_path = PathBuf::from("<config>");
@@ -308,6 +310,7 @@ fn collect_evidence_spans(
     repo_root: &Path,
     profile: &str,
     terms: &BTreeSet<String>,
+    config: &RepoConfig,
 ) -> Result<Vec<ContextEvidenceSpan>> {
     let mut paths = profile_paths(repo_root, profile);
     let skills_root = repo_root.join(".agents/skills");
@@ -326,11 +329,20 @@ fn collect_evidence_spans(
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
         let source_path = relative_path(repo_root, &path);
-        spans.extend(select_spans(&source_path, &raw, terms));
+        
+        let score = crate::ranking::calculate_weighted_score(
+            &path,
+            1.0, // base lexical score placeholder
+            config.authority_tiers.as_ref(),
+        );
+
+        spans.extend(select_spans(&source_path, &raw, terms, score));
     }
     spans.sort_by(|left, right| {
-        left.source_path
-            .cmp(&right.source_path)
+        // sort by final score descending, then source path
+        right.score.score_final.partial_cmp(&left.score.score_final)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(left.source_path.cmp(&right.source_path))
             .then(left.line_start.cmp(&right.line_start))
     });
     Ok(spans)
@@ -400,6 +412,7 @@ fn select_spans(
     source_path: &str,
     raw: &str,
     terms: &BTreeSet<String>,
+    score: crate::ranking::WeightedScore,
 ) -> Vec<ContextEvidenceSpan> {
     let lines = raw.lines().collect::<Vec<_>>();
     let mut spans = Vec::new();
@@ -415,6 +428,7 @@ fn select_spans(
                 line_end: end,
                 kind: "matched_text".into(),
                 text,
+                score: score.clone(),
             });
             if spans.len() >= 4 {
                 return spans;
@@ -429,6 +443,7 @@ fn select_spans(
             line_end: end,
             kind: "fallback_intro".into(),
             text: lines[..end].join("\n"),
+            score,
         });
     }
     spans

@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 eframe.workspace = true
+litkg-core = { path = "../litkg-core" }
 litkg-neo4j = { path = "../litkg-neo4j" }
 petgraph.workspace = true
 serde.workspace = true

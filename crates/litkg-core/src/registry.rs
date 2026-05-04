@@ -324,6 +324,7 @@ mod tests {
             download_pdfs: true,
             relevance_tags: vec![],
             semantic_scholar: None,
+            authority_tiers: None,
         }
     }
 

@@ -28,7 +28,7 @@ pub struct CorpusStats {
     pub parse_status_counts: BTreeMap<String, usize>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SearchHit {
     pub paper_id: String,
     pub citation_key: Option<String>,
@@ -41,9 +41,11 @@ pub struct SearchHit {
     pub matched_fields: Vec<String>,
     pub snippet: Option<String>,
     pub relevance_tags: Vec<String>,
+    #[serde(flatten)]
+    pub rank: crate::ranking::WeightedScore,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SearchResults {
     pub query: String,
     pub limit: usize,
@@ -1290,6 +1292,14 @@ pub fn search_papers(
             relevance_tags: parsed
                 .map(|paper| matched_relevance_tags(paper, relevance_tags))
                 .unwrap_or_default(),
+            rank: crate::ranking::WeightedScore {
+                score_lexical: score as f32,
+                score_authority: 1.0,
+                score_freshness: 1.0,
+                score_final: score as f32,
+                authority: "literature".into(),
+                why: vec!["paper search result".into()],
+            },
         });
     }
 
@@ -1936,6 +1946,7 @@ mod tests {
             download_pdfs: true,
             relevance_tags: vec!["loop closure".into(), "ADVIO".into()],
             semantic_scholar: None,
+            authority_tiers: None,
         }
     }
 
