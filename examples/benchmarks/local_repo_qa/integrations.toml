@@ -1,4 +1,28 @@
 [[integrations]]
+benchmark_id = "aria-nbv-local-repo-qa"
+upstream_status = "custom_local_harness"
+runner_kind = "external_command"
+summary = "Local exact-match repo-QA harness over the ARIA-NBV checkout using curated agent-retrieval questions and a local Ollama answerer."
+required_binaries = ["python3", "rg"]
+bootstrap_steps = [
+  "Ensure the ARIA-NBV checkout exists at the configured local path.",
+  "Use the direct answerer for deterministic path/target smoke checks, or ensure an Ollama-compatible chat-completions endpoint is reachable for LLM runs.",
+  "Refresh examples/benchmarks/local_repo_qa/aria-nbv.jsonl when ARIA-NBV routing, memory, or make-target contracts change materially.",
+]
+example_commands = [
+  "python3 scripts/benchmarks/run_repo_qa.py --dataset examples/benchmarks/local_repo_qa/aria-nbv.jsonl --repo-root /home/jd/repos/ARIA-NBV --answerer direct",
+]
+notes = [
+  "The dataset covers RRI, VIN, rollout, cache/offline-store, LRZ, docs, and KG workflow routing.",
+  "The benchmark expects concise exact answers, not free-form explanations.",
+  "The default LLM answerer targets a local Ollama endpoint at http://localhost:11434/v1/chat/completions.",
+]
+
+  [[integrations.official_sources]]
+  label = "github"
+  url = "https://github.com/JanDuchscherer104/ARIA-NBV"
+
+[[integrations]]
 benchmark_id = "nbv-local-repo-qa"
 upstream_status = "custom_local_harness"
 runner_kind = "external_command"
@@ -43,4 +67,3 @@ notes = [
   [[integrations.official_sources]]
   label = "github"
   url = "https://github.com/JanDuchscherer104/prml-vslam"
-

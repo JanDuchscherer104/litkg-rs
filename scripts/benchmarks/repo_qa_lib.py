@@ -248,6 +248,11 @@ def build_question(fact: dict[str, Any]) -> str:
             f"What command is shown for: \"{fact['description']}\"? "
             "Reply with only the command line."
         )
+    if fact["question_type"] == "file_contains":
+        return (
+            f"Which file contains the project fact: \"{fact['description']}\"? "
+            "Reply with only the repo-relative path."
+        )
     raise ValueError(f"Unsupported question type {fact['question_type']}")
 
 
@@ -354,7 +359,7 @@ def is_correct(prediction: str, acceptable_answers: list[str], answer_kind: str)
 
 
 def run_rg(repo_root: Path, pattern: str, glob: str | None = None, max_count: int = 8) -> list[str]:
-    command = ["rg", "-n", "-S", "--max-count", str(max_count)]
+    command = ["rg", "-n", "-S", "--hidden", "--max-count", str(max_count)]
     if glob:
         command.extend(["-g", glob])
     command.extend([pattern, repo_root.as_posix()])
@@ -418,6 +423,12 @@ def build_context(question: dict[str, Any], repo_root: Path) -> list[str]:
         return makefile_context(repo_root, question["retrieval_query"])
     if question_type == "readme_command":
         return readme_command_context(repo_root, question["retrieval_query"])
+    if question_type == "file_contains":
+        return run_rg(
+            repo_root,
+            question["retrieval_query"],
+            glob=question.get("source_glob"),
+        )
     return []
 
 
@@ -444,6 +455,14 @@ def direct_answer(question: dict[str, Any], repo_root: Path) -> tuple[str, list[
         lines = [line for line in best.splitlines() if line and not line.lstrip().startswith("#")]
         if lines:
             return lines[0].strip(), context
+
+    if question["question_type"] == "file_contains":
+        for line in context:
+            match = re.match(rf"{re.escape(repo_root.as_posix())}/(.+?):\d+:", line)
+            if match:
+                return match.group(1), context
+        if ":" in context[0]:
+            return context[0].split(":", 1)[0], context
 
     return "", context
 

@@ -1,4 +1,39 @@
 [[benchmarks]]
+id = "aria-nbv-local-repo-qa"
+name = "ARIA-NBV Local Repo QA"
+best_use = "Exact-match local benchmark for ARIA-NBV agent retrieval over thesis-critical code, memory, docs, LRZ, and KG workflow surfaces."
+task_scale = "14 deterministic trials covering RRI, VIN, rollouts, cache/offline stores, LRZ, docs, and KG workflows."
+summary = "Local ARIA-NBV retrieval QA benchmark that asks for repo-relative file paths and exact Make targets from surfaces agents must route to correctly."
+dataset_notes = [
+  "Questions are hand-curated from the current ARIA-NBV checkout to cover agent-critical retrieval surfaces.",
+  "The benchmark is intended as a local trust regression for litkg-rs, not a public cross-repo leaderboard.",
+]
+tags = ["repo-qa", "local-benchmark", "exact-match", "aria-nbv", "agent-retrieval"]
+
+  [[benchmarks.metrics]]
+  id    = "exact_match"
+  label = "Exact Match"
+  notes = "Fraction of trials whose normalized answer matches one acceptable answer exactly."
+
+  [[benchmarks.metrics]]
+  id    = "answered_rate"
+  label = "Answered Rate"
+  notes = "Fraction of trials that returned a non-empty prediction."
+
+  [[benchmarks.metrics]]
+  id    = "average_latency_s"
+  label = "Average Latency"
+  notes = "Mean wall-clock latency per answered question."
+
+  [[benchmarks.sources]]
+  label = "github"
+  url   = "https://github.com/JanDuchscherer104/ARIA-NBV"
+
+  [[benchmarks.sources]]
+  label = "dataset"
+  url   = "examples/benchmarks/local_repo_qa/aria-nbv.jsonl"
+
+[[benchmarks]]
 id = "nbv-local-repo-qa"
 name = "NBV Local Repo QA"
 best_use = "Exact-match local benchmark for answering deterministic questions about the NBV repository."

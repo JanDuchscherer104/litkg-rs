@@ -1,4 +1,53 @@
 [[runs]]
+benchmark_id = "aria-nbv-local-repo-qa"
+run_id = "aria-nbv-local-repo-qa-direct"
+status = "completed"
+summary = "Answered 14 local repo-QA trials for aria-nbv with exact_match=1.000 and answered_rate=1.000 using direct."
+diagnostics = [
+    "dataset=/home/jd/repos/ARIA-NBV/.agents/external/litkg-rs/examples/benchmarks/local_repo_qa/aria-nbv.jsonl",
+    "repo_root=/home/jd/repos/ARIA-NBV",
+    "model=qwen3-coder:30b",
+    "answerer=direct",
+    "question_count=14",
+    "failure_count=0",
+]
+
+[[runs.scores]]
+metric_id = "exact_match"
+value = 1.0
+unit = "rate"
+
+[[runs.scores]]
+metric_id = "answered_rate"
+value = 1.0
+unit = "rate"
+
+[[runs.scores]]
+metric_id = "average_latency_s"
+value = 0.0
+unit = "seconds"
+
+[[runs.artifacts]]
+label = "answers"
+kind = "jsonl"
+location = "examples/benchmarks/local_repo_qa/artifacts/aria-nbv/answers.jsonl"
+
+[[runs.artifacts]]
+label = "summary"
+kind = "json"
+location = "examples/benchmarks/local_repo_qa/artifacts/aria-nbv/summary.json"
+
+[[runs.artifacts]]
+label = "summary_markdown"
+kind = "md"
+location = "examples/benchmarks/local_repo_qa/artifacts/aria-nbv/summary.md"
+
+[runs.execution]
+runner_kind = "external_command"
+command = "python3 scripts/benchmarks/run_repo_qa.py --dataset examples/benchmarks/local_repo_qa/aria-nbv.jsonl --repo-root \"$ARIA_NBV_REPO_ROOT\" --model \"$LITKG_REPO_QA_MODEL\" --answerer direct --persist-artifact-dir examples/benchmarks/local_repo_qa/artifacts/aria-nbv"
+workdir = "/home/jd/repos/ARIA-NBV/.agents/external/litkg-rs"
+
+[[runs]]
 benchmark_id = "nbv-local-repo-qa"
 run_id = "nbv-local-repo-qa-qwen3-coder-30b"
 status = "completed"
