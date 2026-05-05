@@ -157,7 +157,8 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
     let active_issues = load_active_issues(&repo_root)?;
     let active_todos = load_active_todos(&repo_root)?;
     let active_backlog = active_backlog(&active_issues, &active_todos);
-    let mut evidence_spans = collect_evidence_spans(&repo_root, &request.profile, &task_terms, config)?;
+    let mut evidence_spans =
+        collect_evidence_spans(&repo_root, &request.profile, &task_terms, config)?;
     let relevant_symbols = collect_relevant_symbols(&repo_root, &request.profile, &task_terms)?;
     let relevant_papers = collect_relevant_papers(config, &task_terms)?;
     let fallback_config_path = PathBuf::from("<config>");
@@ -169,7 +170,7 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         compute_agent_conformance_report(config, config_path, Some(&repo_root), false);
     let backend_status = conformance.backends;
     let missing_leaves = missing_leaves(config, &backend_status);
-    let risk_flags = risk_flags(config, &repo_root, &backend_status);
+    let risk_flags = risk_flags(config, &repo_root, &request.task, &backend_status);
     let action_plan = action_plan(
         &request.task,
         &request.profile,
@@ -329,7 +330,7 @@ fn collect_evidence_spans(
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
         let source_path = relative_path(repo_root, &path);
-        
+
         let score = crate::ranking::calculate_weighted_score(
             &path,
             1.0, // base lexical score placeholder
@@ -340,7 +341,10 @@ fn collect_evidence_spans(
     }
     spans.sort_by(|left, right| {
         // sort by final score descending, then source path
-        right.score.score_final.partial_cmp(&left.score.score_final)
+        right
+            .score
+            .score_final
+            .partial_cmp(&left.score.score_final)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(left.source_path.cmp(&right.source_path))
             .then(left.line_start.cmp(&right.line_start))
@@ -659,6 +663,7 @@ fn missing_leaves(
 fn risk_flags(
     config: &RepoConfig,
     repo_root: &Path,
+    task: &str,
     backend_status: &[BackendDescriptor],
 ) -> Vec<String> {
     let mut flags = Vec::new();
@@ -687,6 +692,7 @@ fn risk_flags(
             "dirty_agent_backlog: .agents has uncommitted changes; validate before treating backlog as final".into(),
         );
     }
+    flags.extend(claim_check_flags(task));
     for backend in backend_status {
         match backend.agent_recommendation {
             AgentRecommendation::UseNow | AgentRecommendation::DoNotUse => {}
@@ -710,6 +716,25 @@ fn risk_flags(
     }
     flags.sort();
     flags.dedup();
+    flags
+}
+
+fn claim_check_flags(task: &str) -> Vec<String> {
+    let task = task.to_ascii_lowercase();
+    if !task.contains("claim-check") {
+        return Vec::new();
+    }
+    let mut flags = Vec::new();
+    if task.contains("finished")
+        || task.contains("end-to-end")
+        || task.contains("real-device")
+        || task.contains("online rl")
+        || task.contains("deployed")
+    {
+        flags.push(
+            "unsupported_overclaim: canonical memory frames ARIA-NBV as ASE/EFM one-step scoring plus rollout/Q_H groundwork, not a finished end-to-end or deployed RL policy".into(),
+        );
+    }
     flags
 }
 

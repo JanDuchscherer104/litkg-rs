@@ -11,6 +11,7 @@ clap.workspace = true
 colored = "3.1.1"
 comfy-table = "7.2.2"
 indicatif = "0.18.4"
+glob = "0.3"
 litkg-core = { path = "../litkg-core" }
 litkg-graphify = { path = "../litkg-graphify" }
 litkg-neo4j = { path = "../litkg-neo4j" }

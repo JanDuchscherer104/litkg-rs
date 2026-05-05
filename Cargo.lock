@@ -2198,6 +2198,7 @@ dependencies = [
  "clap",
  "colored",
  "comfy-table",
+ "glob",
  "indicatif",
  "litkg-core",
  "litkg-graphify",
@@ -2273,6 +2274,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "eframe",
+ "litkg-core",
  "litkg-neo4j",
  "petgraph",
  "serde",

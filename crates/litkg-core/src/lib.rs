@@ -1,3 +1,4 @@
+pub mod backlog;
 pub mod benchmark;
 pub mod benchmark_runner;
 pub mod bibtex;
@@ -14,13 +15,14 @@ pub mod materialize;
 pub mod memory;
 pub mod model;
 pub mod notebook;
+pub mod ranking;
 pub mod registry;
 pub mod schema;
 pub mod semantic_scholar;
 pub mod tabular;
 pub mod tex;
-pub mod ranking;
 
+pub use backlog::{load_agent_backlog, AgentBacklogKind, AgentBacklogRecord};
 pub use benchmark::{
     load_benchmark_catalog, load_benchmark_results, promote_benchmark_results,
     render_autoresearch_target, render_promoted_targets, validate_benchmark_catalog,
@@ -40,7 +42,9 @@ pub use bibtex::{parse_bibtex, BibEntry};
 pub use code_graph::{
     build_python_code_graph, CodeCall, CodeFile, CodeGraph, CodeImport, CodeModule, CodeSymbol,
 };
-pub use config::{default_semantic_scholar_fields, RepoConfig, SemanticScholarConfig, SinkMode};
+pub use config::{
+    default_semantic_scholar_fields, ProjectConfig, RepoConfig, SemanticScholarConfig, SinkMode,
+};
 pub use context_pack::{
     build_context_pack, ContextBacklogItem, ContextEvidenceSpan, ContextPack, ContextPackRequest,
     ContextPaper, ContextSymbol, MissingContextLeaf,

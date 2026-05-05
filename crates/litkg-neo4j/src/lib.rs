@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use litkg_core::{
-    build_python_code_graph, infer_enriched_edges, load_project_memory, CodeCall, CodeImport,
-    MemoryChunkKind, MemoryNode, MemoryNodeKind, MemorySurface, MemorySurfaceKind, ParsedPaper,
-    RepoConfig,
+    build_python_code_graph, infer_enriched_edges, load_agent_backlog, load_project_memory,
+    AgentBacklogRecord, CodeCall, CodeImport, DocumentKind, MemoryChunkKind, MemoryNode,
+    MemoryNodeKind, MemorySurface, MemorySurfaceKind, ParsedPaper, RepoConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,7 +48,7 @@ impl Neo4jSink {
                 paper_id.clone(),
                 Neo4jNode {
                     id: paper_id.clone(),
-                    labels: vec!["Paper".into()],
+                    labels: document_labels(paper.kind, false),
                     properties: serde_json::json!({
                         "paper_id": paper.metadata.paper_id,
                         "citation_key": paper.metadata.citation_key,
@@ -58,6 +58,7 @@ impl Neo4jSink {
                         "doi": paper.metadata.doi,
                         "url": paper.metadata.url,
                         "parse_status": format!("{:?}", paper.metadata.parse_status),
+                        "document_kind": document_kind_name(paper.kind),
                         "semantic_scholar_paper_id": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.paper_id.clone()),
                         "semantic_scholar_corpus_id": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.corpus_id),
                         "citation_count": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.citation_count),
@@ -145,12 +146,13 @@ impl Neo4jSink {
                     section_id.clone(),
                     Neo4jNode {
                         id: section_id.clone(),
-                        labels: vec!["PaperSection".into()],
+                        labels: document_labels(paper.kind, true),
                         properties: serde_json::json!({
                             "paper_id": paper.metadata.paper_id,
                             "title": section.title,
                             "level": section.level,
                             "content": section.content,
+                            "document_kind": document_kind_name(paper.kind),
                         }),
                     },
                 );
@@ -215,6 +217,7 @@ impl Neo4jSink {
             });
         }
 
+        add_backlog_nodes(config, &mut nodes, &mut edges)?;
         add_generated_context_nodes(config, &mut nodes)?;
 
         let code_graph = build_python_code_graph(config)?;
@@ -333,6 +336,28 @@ impl Neo4jSink {
     }
 }
 
+fn document_labels(kind: DocumentKind, section: bool) -> Vec<String> {
+    match (kind, section) {
+        (DocumentKind::Literature, false) => vec!["Paper".into()],
+        (DocumentKind::Literature, true) => vec!["PaperSection".into()],
+        (DocumentKind::Documentation, false) => vec!["Document".into()],
+        (DocumentKind::Documentation, true) => vec!["DocSection".into()],
+        (DocumentKind::Transcript, false) => vec!["Transcript".into()],
+        (DocumentKind::Transcript, true) => vec!["TranscriptSection".into()],
+        (DocumentKind::ResearchNote, false) => vec!["ResearchNote".into()],
+        (DocumentKind::ResearchNote, true) => vec!["ResearchNoteSection".into()],
+    }
+}
+
+fn document_kind_name(kind: DocumentKind) -> &'static str {
+    match kind {
+        DocumentKind::Literature => "literature",
+        DocumentKind::Documentation => "documentation",
+        DocumentKind::Transcript => "transcript",
+        DocumentKind::ResearchNote => "research_note",
+    }
+}
+
 fn code_import_target(import: &CodeImport, nodes: &mut BTreeMap<String, Neo4jNode>) -> String {
     import
         .target_id
@@ -360,6 +385,94 @@ fn insert_code_reference(
         }),
     });
     id
+}
+
+fn add_backlog_nodes(
+    config: &RepoConfig,
+    nodes: &mut BTreeMap<String, Neo4jNode>,
+    edges: &mut Vec<Neo4jEdge>,
+) -> Result<()> {
+    let repo_root = config_repo_root(config);
+    let records = load_agent_backlog(&repo_root)?;
+    let known_ids = records
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<BTreeSet<_>>();
+    for record in records {
+        let node_id = backlog_node_id(&record);
+        nodes.insert(node_id.clone(), neo4j_backlog_node(&record));
+        for issue_id in &record.issue_ids {
+            if known_ids.contains(issue_id) {
+                edges.push(Neo4jEdge {
+                    source: node_id.clone(),
+                    target: format!("backlog:issue:{issue_id}"),
+                    rel_type: "TRACKS_ISSUE".into(),
+                    properties: serde_json::json!({"source": "agents_db"}),
+                });
+            }
+        }
+        for reference in &record.references {
+            let reference_id = format!("backlog_ref:{}", slugify(reference));
+            nodes
+                .entry(reference_id.clone())
+                .or_insert_with(|| Neo4jNode {
+                    id: reference_id.clone(),
+                    labels: vec!["BacklogReference".into()],
+                    properties: serde_json::json!({
+                        "reference": reference,
+                        "reference_kind": reference_kind(reference),
+                        "source": "agents_db",
+                    }),
+                });
+            edges.push(Neo4jEdge {
+                source: node_id.clone(),
+                target: reference_id,
+                rel_type: "REFERENCES".into(),
+                properties: serde_json::json!({"source": "agents_db"}),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn backlog_node_id(record: &AgentBacklogRecord) -> String {
+    format!("backlog:{}:{}", record.kind.as_str(), record.id)
+}
+
+fn neo4j_backlog_node(record: &AgentBacklogRecord) -> Neo4jNode {
+    Neo4jNode {
+        id: backlog_node_id(record),
+        labels: vec![record.kind.node_label().into()],
+        properties: serde_json::json!({
+            "backlog_kind": record.kind.as_str(),
+            "title": record.title,
+            "summary": record.summary,
+            "text": backlog_search_text(record),
+            "priority": record.priority,
+            "status": record.status,
+            "issue_ids": record.issue_ids,
+            "context": record.context,
+            "references": record.references,
+            "source_path": record.source_path,
+            "line_start": record.line_start,
+            "line_end": record.line_end,
+            "source": "agents_db",
+        }),
+    }
+}
+
+fn backlog_search_text(record: &AgentBacklogRecord) -> String {
+    let mut parts = vec![record.title.clone(), record.summary.clone()];
+    parts.extend(record.context.clone());
+    parts.extend(record.references.clone());
+    parts.join("\n")
+}
+
+fn reference_kind(reference: &str) -> &str {
+    reference
+        .split_once(':')
+        .map(|(kind, _)| kind)
+        .unwrap_or("raw")
 }
 
 fn add_generated_context_nodes(
@@ -666,7 +779,8 @@ where
 mod tests {
     use super::*;
     use litkg_core::{
-        DocumentKind, DownloadMode, PaperSourceRecord, ParseStatus, SinkMode, SourceKind,
+        DocumentKind, DownloadMode, PaperSourceRecord, ParseStatus, ProjectConfig, SinkMode,
+        SourceKind,
     };
     use std::path::Path;
 
@@ -686,6 +800,7 @@ mod tests {
             download_pdfs: false,
             relevance_tags: vec![],
             semantic_scholar: None,
+            authority_tiers: None,
             project: None,
             sources: std::collections::BTreeMap::new(),
             representation: None,
@@ -961,6 +1076,58 @@ tags: [frames]
 
         assert!(nodes.contains("\"labels\":[\"ProjectMemory\",\"ProjectState\"]"));
         assert!(edges.contains("\"rel_type\":\"DOCUMENTS_CODE\""));
+    }
+
+    #[test]
+    fn exports_active_backlog_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".agents")).unwrap();
+        fs::write(
+            dir.path().join(".agents/issues.toml"),
+            r#"
+[[issue]]
+id = "issue-023"
+title = "litkg routing drift"
+description = "litkg should route agent memory."
+priority = "medium"
+status = "open"
+context = ["Agents need source-backed retrieval."]
+references = ["repo:AGENTS.md"]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".agents/todos.toml"),
+            r#"
+[[todo]]
+id = "todo-039"
+title = "Add litkg-backed edges"
+description = "Resolve agents-db references into graph entities."
+issue_ids = ["issue-023"]
+priority = "medium"
+status = "todo"
+context = ["Backlog records should be searchable."]
+references = ["repo:.agents/issues.toml"]
+"#,
+        )
+        .unwrap();
+        let mut config = config(dir.path());
+        config.project = Some(ProjectConfig {
+            id: "test".into(),
+            name: "Test".into(),
+            root: dir.path().to_path_buf(),
+        });
+
+        Neo4jSink::export(&config, &[]).unwrap();
+        let nodes = fs::read_to_string(config.neo4j_export_root().join("nodes.jsonl")).unwrap();
+        let edges = fs::read_to_string(config.neo4j_export_root().join("edges.jsonl")).unwrap();
+
+        assert!(nodes.contains("\"labels\":[\"AgentBacklogIssue\"]"));
+        assert!(nodes.contains("\"labels\":[\"AgentBacklogTodo\"]"));
+        assert!(nodes.contains("\"id\":\"backlog:issue:issue-023\""));
+        assert!(nodes.contains("\"id\":\"backlog:todo:todo-039\""));
+        assert!(edges.contains("\"rel_type\":\"TRACKS_ISSUE\""));
+        assert!(edges.contains("\"rel_type\":\"REFERENCES\""));
     }
 
     #[test]

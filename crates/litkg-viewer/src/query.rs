@@ -2,7 +2,6 @@ use anyhow::Result;
 use litkg_neo4j::{load_export_bundle, Neo4jExportBundle, Neo4jNode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -149,6 +148,8 @@ pub struct GraphEntryQuery {
     pub use_rg: bool,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub authority_tiers: BTreeMap<String, f32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -281,7 +282,7 @@ pub fn classify_modality(
     if has("ProjectMemory") {
         return GraphModality::Memory;
     }
-    if has("AgentBacklogIssue") || has("AgentBacklogTodo") {
+    if has("AgentBacklogIssue") || has("AgentBacklogTodo") || has("BacklogReference") {
         return GraphModality::Backlog;
     }
     if has("Paper")
@@ -303,6 +304,12 @@ pub fn classify_modality(
         return GraphModality::ExternalDocs;
     }
     if has("DocSurface")
+        || has("Document")
+        || has("DocSection")
+        || has("ResearchNote")
+        || has("ResearchNoteSection")
+        || has("Transcript")
+        || has("TranscriptSection")
         || path_property(properties).is_some_and(|path| {
             path.ends_with(".qmd") || path.ends_with(".md") || path.ends_with(".typ")
         })
@@ -466,7 +473,7 @@ fn metadata_search(records: &[GraphNodeRecord], query: &GraphEntryQuery) -> Vec<
                 line_start: record.line_start,
                 line_end: record.line_end,
                 snippet: (!record.description.is_empty()).then(|| record.description.clone()),
-                rank: None,
+                rank: Some(rank_record(record, score, &query.authority_tiers)),
             });
         }
     }
@@ -612,7 +619,11 @@ fn rg_search(
                 line_start: line_number,
                 line_end: line_number,
                 snippet: snippet.clone(),
-                rank: None,
+                rank: Some(rank_record(
+                    record,
+                    if title_or_id_match { 1050 } else { 700 },
+                    &query.authority_tiers,
+                )),
             });
         }
     }
@@ -668,9 +679,58 @@ fn dedup_and_rank(hits: Vec<GraphSearchHit>, limit: usize) -> Vec<GraphSearchHit
             .or_insert(hit);
     }
     let mut hits = best.into_values().collect::<Vec<_>>();
-    hits.sort_by_key(|hit| (Reverse(hit.score), hit.title.clone(), hit.node_id.clone()));
+    hits.sort_by(|left, right| {
+        let left_score = left
+            .rank
+            .as_ref()
+            .map(|rank| rank.score_final)
+            .unwrap_or(left.score as f32);
+        let right_score = right
+            .rank
+            .as_ref()
+            .map(|rank| rank.score_final)
+            .unwrap_or(right.score as f32);
+        right_score
+            .partial_cmp(&left_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.title.cmp(&right.title))
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
     hits.truncate(limit);
     hits
+}
+
+fn rank_record(
+    record: &GraphNodeRecord,
+    lexical_score: i64,
+    authority_tiers: &BTreeMap<String, f32>,
+) -> litkg_core::WeightedScore {
+    let source_path = record
+        .repo_path
+        .as_deref()
+        .or_else(|| record.properties.get("source_path").map(String::as_str))
+        .unwrap_or_else(|| record.id.as_str());
+    let mut rank = litkg_core::calculate_weighted_score(
+        Path::new(source_path),
+        lexical_score as f32,
+        (!authority_tiers.is_empty()).then_some(authority_tiers),
+    );
+    rank.source_type = source_type_for_record(record);
+    rank
+}
+
+fn source_type_for_record(record: &GraphNodeRecord) -> String {
+    match record.modality {
+        GraphModality::Code => "code",
+        GraphModality::Docs => "docs",
+        GraphModality::GeneratedContext => "generated_context",
+        GraphModality::Literature => "literature",
+        GraphModality::Memory => "canonical_memory",
+        GraphModality::Backlog => "active_backlog",
+        GraphModality::ExternalDocs => "external_docs",
+        GraphModality::All => "default",
+    }
+    .into()
 }
 
 fn query_terms(query: &str) -> Vec<String> {
@@ -827,6 +887,7 @@ mod tests {
                 repo_root: None,
                 use_rg: false,
                 limit: 10,
+                authority_tiers: BTreeMap::new(),
             },
         );
         assert_eq!(hits.len(), 1);
@@ -851,6 +912,7 @@ mod tests {
                 repo_root: None,
                 use_rg: false,
                 limit: 10,
+                authority_tiers: BTreeMap::new(),
             },
         );
         assert_eq!(hits[0].node_id, "symbol");
@@ -891,6 +953,7 @@ mod tests {
                 repo_root: Some(dir.path().to_path_buf()),
                 use_rg: true,
                 limit: 10,
+                authority_tiers: BTreeMap::new(),
             },
         );
         assert!(hits.iter().any(|hit| {

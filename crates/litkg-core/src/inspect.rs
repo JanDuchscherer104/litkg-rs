@@ -1293,6 +1293,7 @@ pub fn search_papers(
                 .map(|paper| matched_relevance_tags(paper, relevance_tags))
                 .unwrap_or_default(),
             rank: crate::ranking::WeightedScore {
+                source_type: "literature".into(),
                 score_lexical: score as f32,
                 score_authority: 1.0,
                 score_freshness: 1.0,

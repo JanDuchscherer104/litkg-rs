@@ -282,6 +282,7 @@ impl LitkgViewerApp {
             repo_root: self.repo_root.clone(),
             use_rg: false,
             limit: 1,
+            authority_tiers: BTreeMap::new(),
         });
         if let Some(index) = hits.first().and_then(|hit| self.model.hit_index(hit)) {
             self.selected = Some(index);
@@ -353,6 +354,7 @@ impl LitkgViewerApp {
             repo_root: Some(repo_root),
             use_rg: true,
             limit: 24,
+            authority_tiers: BTreeMap::new(),
         });
         self.rg_status = format!("{} result(s)", self.rg_hits.len());
     }
@@ -587,6 +589,7 @@ impl LitkgViewerApp {
                 repo_root: self.repo_root.clone(),
                 use_rg: false,
                 limit: 24,
+                authority_tiers: BTreeMap::new(),
             })
             .into_iter()
             .filter_map(|hit| self.model.hit_index(&hit))

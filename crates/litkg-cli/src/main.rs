@@ -6,7 +6,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use litkg_core::{
     build_context_pack, build_registry_snapshot, compute_corpus_stats, compute_repo_capabilities,
     download_registry_sources, enrich_registry_with_semantic_scholar, inspect_benchmark_support,
-    inspect_paper, load_parsed_papers, load_registry, parse_registry_papers,
+    inspect_paper, load_agent_backlog, load_parsed_papers, load_registry, parse_registry_papers,
     promote_benchmark_results, render_promoted_targets, run_benchmarks, search_papers,
     sync_registry, validate_benchmark_catalog, validate_benchmark_results, write_benchmark_results,
     write_parsed_papers, AgentRecommendation, AutoResearchRenderFormat, BenchmarkPromotionRequest,
@@ -24,9 +24,10 @@ use litkg_viewer::{
     GraphEntryQuery, GraphFilter, GraphModality, GraphSearchHit, ViewerOptions,
 };
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[derive(Parser)]
 #[command(name = "litkg")]
@@ -77,6 +78,7 @@ struct IngestCommand {
 enum KgCommand {
     Visualize(VisualizeCommand),
     Find(KgFindCommand),
+    Consolidate(KgConsolidateCommand),
     Build(WriteCommand),
     Export(WriteCommand),
 }
@@ -180,6 +182,16 @@ struct KgFindCommand {
     limit: usize,
     #[arg(long = "no-rg", default_value_t = false)]
     no_rg: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Args, Clone)]
+struct KgConsolidateCommand {
+    #[command(flatten)]
+    config: ConfigArg,
+    #[arg(long = "repo-root")]
+    repo_root: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
 }
@@ -476,6 +488,21 @@ struct SinkWriteSummary {
     written_paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct ConsolidationProposal {
+    summary: String,
+    suggestions: Vec<ConsolidationSuggestion>,
+    source_refs: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ConsolidationSuggestion {
+    target: String,
+    action: String,
+    rationale: String,
+    evidence: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -528,6 +555,9 @@ fn main() -> Result<()> {
             }
             KgCommand::Find(args) => {
                 run_kg_find(args)?;
+            }
+            KgCommand::Consolidate(args) => {
+                run_kg_consolidate(args)?;
             }
             KgCommand::Build(args) => {
                 let config = RepoConfig::load(&args.config.config)?;
@@ -1138,7 +1168,9 @@ fn run_kg_find(args: KgFindCommand) -> Result<()> {
     let bundle_root = config.neo4j_export_root();
     let nodes_path = bundle_root.join("nodes.jsonl");
     let edges_path = bundle_root.join("edges.jsonl");
-    if !(nodes_path.exists() && edges_path.exists()) {
+    if !(nodes_path.exists() && edges_path.exists())
+        || export_is_stale(&config, &[nodes_path.as_path(), edges_path.as_path()])?
+    {
         let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
         Neo4jSink::export(&config, &papers)?;
     }
@@ -1148,9 +1180,206 @@ fn run_kg_find(args: KgFindCommand) -> Result<()> {
         repo_root: Some(repo_root),
         use_rg: !args.no_rg,
         limit: args.limit,
+        authority_tiers: config.authority_tiers.clone().unwrap_or_default(),
     };
     let hits = load_and_search_bundle(&bundle_root, query)?;
     print_structured_output(&hits, args.format, |hits| render_graph_search_hits(hits))
+}
+
+fn run_kg_consolidate(args: KgConsolidateCommand) -> Result<()> {
+    let config = RepoConfig::load(&args.config.config)?;
+    let repo_root = resolve_repo_root(
+        &config,
+        args.config.config.as_str(),
+        args.repo_root.as_deref(),
+    )?;
+    let proposal = build_consolidation_proposal(&repo_root)?;
+    print_structured_output(&proposal, args.format, render_consolidation_proposal)
+}
+
+fn build_consolidation_proposal(repo_root: &Path) -> Result<ConsolidationProposal> {
+    let mut suggestions = Vec::new();
+    let mut source_refs = Vec::new();
+    let history_root = repo_root.join(".agents/memory/history");
+    let mut history_files = files_under(&history_root)
+        .into_iter()
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect::<Vec<_>>();
+    history_files.sort();
+    history_files.reverse();
+    for path in history_files.into_iter().take(8) {
+        let rel = relative_display(repo_root, &path);
+        let raw = fs::read_to_string(&path).unwrap_or_default();
+        if raw.contains("canonical_updates_needed") || raw.contains("canonical updates") {
+            suggestions.push(ConsolidationSuggestion {
+                target: ".agents/memory/state/".into(),
+                action: "review_canonical_update_candidates".into(),
+                rationale:
+                    "Recent debrief advertises canonical-update information; promote only cited current truth."
+                        .into(),
+                evidence: vec![format!("repo:{rel}")],
+            });
+            source_refs.push(format!("repo:{rel}"));
+        }
+    }
+
+    let backlog = load_agent_backlog(repo_root)?;
+    for record in backlog
+        .iter()
+        .filter(|record| record.title.to_lowercase().contains("litkg"))
+        .take(8)
+    {
+        let target = match record.kind {
+            litkg_core::AgentBacklogKind::Issue => ".agents/issues.toml",
+            litkg_core::AgentBacklogKind::Todo => ".agents/todos.toml",
+        };
+        suggestions.push(ConsolidationSuggestion {
+            target: target.into(),
+            action: "keep_or_update_backlog_record".into(),
+            rationale: format!(
+                "Active litkg backlog item `{}` should remain visible until its acceptance criteria are satisfied.",
+                record.id
+            ),
+            evidence: vec![format!("repo:{}:{}", record.source_path, record.line_start)],
+        });
+        source_refs.push(format!("repo:{}:{}", record.source_path, record.line_start));
+    }
+
+    suggestions.push(ConsolidationSuggestion {
+        target: ".agents/memory/state/PROJECT_STATE.md".into(),
+        action: "proposal_only".into(),
+        rationale:
+            "Do not overwrite canonical memory automatically; apply only after reviewing the evidence above."
+                .into(),
+        evidence: source_refs.clone(),
+    });
+    source_refs.sort();
+    source_refs.dedup();
+    Ok(ConsolidationProposal {
+        summary: format!(
+            "{} proposal(s); review and apply manually, no files were changed.",
+            suggestions.len()
+        ),
+        suggestions,
+        source_refs,
+    })
+}
+
+fn render_consolidation_proposal(proposal: &ConsolidationProposal) -> String {
+    let mut lines = vec![
+        "litkg consolidation proposal".to_string(),
+        proposal.summary.clone(),
+        String::new(),
+    ];
+    for suggestion in &proposal.suggestions {
+        lines.push(format!("- {} -> {}", suggestion.target, suggestion.action));
+        lines.push(format!("  {}", suggestion.rationale));
+        if !suggestion.evidence.is_empty() {
+            lines.push(format!("  evidence: {}", suggestion.evidence.join(", ")));
+        }
+    }
+    lines.join("\n")
+}
+
+fn export_is_stale(config: &RepoConfig, outputs: &[&Path]) -> Result<bool> {
+    let Some(oldest_output) = oldest_mtime(outputs)? else {
+        return Ok(true);
+    };
+    Ok(freshness_input_paths(config)
+        .into_iter()
+        .filter_map(|path| fs::metadata(path).ok()?.modified().ok())
+        .any(|mtime| mtime > oldest_output))
+}
+
+fn relative_display(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn oldest_mtime(paths: &[&Path]) -> Result<Option<SystemTime>> {
+    let mut mtimes = Vec::new();
+    for path in paths {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        mtimes.push(
+            fs::metadata(path)
+                .with_context(|| format!("Failed to stat {}", path.display()))?
+                .modified()
+                .with_context(|| format!("Failed to read mtime for {}", path.display()))?,
+        );
+    }
+    Ok(mtimes.into_iter().min())
+}
+
+fn freshness_input_paths(config: &RepoConfig) -> Vec<PathBuf> {
+    let mut paths = vec![
+        config.registry_path(),
+        config.manifest_path.clone(),
+        config.bib_path.clone(),
+    ];
+    paths.extend(files_under(config.parsed_root()));
+    if let Some(root) = config.memory_state_root() {
+        paths.extend(files_under(root));
+    }
+    for source in config.sources.values() {
+        for pattern in &source.include {
+            paths.extend(expand_glob(pattern));
+        }
+        for entrypoint in &source.entrypoints {
+            paths.push(entrypoint.clone());
+        }
+        if let Some(manifest) = &source.manifest {
+            paths.push(manifest.clone());
+        }
+        if let Some(bib) = &source.bib {
+            paths.push(bib.clone());
+        }
+        if let Some(tex) = &source.tex {
+            paths.extend(expand_glob(tex));
+        }
+        if let Some(pdfs) = &source.pdfs {
+            paths.extend(expand_glob(pdfs));
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn files_under(root: impl AsRef<Path>) -> Vec<PathBuf> {
+    let root = root.as_ref();
+    if root.is_file() {
+        return vec![root.to_path_buf()];
+    }
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.is_file() {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn expand_glob(pattern: &str) -> Vec<PathBuf> {
+    match glob::glob(pattern) {
+        Ok(paths) => paths.flatten().filter(|path| path.is_file()).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 fn graph_filter(
@@ -1272,13 +1501,24 @@ fn render_graph_search_hits(hits: &[GraphSearchHit]) -> String {
                 .as_ref()
                 .map(|snippet| format!("\n  {}", snippet.replace('\n', "\n  ")))
                 .unwrap_or_default();
+            let rank = hit
+                .rank
+                .as_ref()
+                .map(|rank| {
+                    format!(
+                        " source_type={} authority={} final={:.1}",
+                        rank.source_type, rank.authority, rank.score_final
+                    )
+                })
+                .unwrap_or_default();
             format!(
-                "- {} [{}] score={} via={} at {}{}",
+                "- {} [{}] score={} via={} at {}{}{}",
                 hit.title,
                 hit.modality.as_str(),
                 hit.score,
                 hit.matched_field,
                 location,
+                rank,
                 snippet
             )
         })
