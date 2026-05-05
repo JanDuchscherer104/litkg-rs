@@ -50,47 +50,30 @@ require_cmd() {
   fi
 }
 
-pick_gemma_model() {
-  local installed_model
-  if [[ -n "${GRAPHITI_LLM_MODEL:-}" ]] && ollama list | awk 'NR > 1 {print $1}' | grep -qx "${GRAPHITI_LLM_MODEL}"; then
-    printf '%s\n' "${GRAPHITI_LLM_MODEL}"
-    return
-  fi
-
-  installed_model="$(ollama list | awk 'NR > 1 && $1 ~ /^gemma/ {print $1; exit}')"
-  if [[ -n "${installed_model}" ]]; then
-    printf '%s\n' "${installed_model}"
-    return
-  fi
-
-  ollama pull gemma3:27b
-  printf '%s\n' "gemma3:27b"
-}
-
-ensure_embedding_model() {
-  local model_name="$1"
-  if ! ollama list | awk 'NR > 1 {print $1}' | grep -qx "${model_name}"; then
-    ollama pull "${model_name}"
-  fi
-}
-
 load_env
 
 require_cmd git
-require_cmd ollama
+require_cmd python3
 require_cmd uv
 
+OLLAMA_CONFIG_ARGS=()
+if [[ -n "${KG_OLLAMA_CONFIG:-${LITKG_CONFIG:-}}" ]]; then
+  OLLAMA_CONFIG_ARGS=(--config "${KG_OLLAMA_CONFIG:-${LITKG_CONFIG:-}}")
+fi
+eval "$(python3 "${SCRIPT_DIR}/ollama_http.py" env "${OLLAMA_CONFIG_ARGS[@]}")"
+
+python3 "${SCRIPT_DIR}/ollama_http.py" check \
+  "${OLLAMA_CONFIG_ARGS[@]}"
+python3 "${SCRIPT_DIR}/neo4j_ready.py" --repo-root "${REPO_ROOT}"
+
 GRAPHITI_REPO_ABS="$(resolve_repo_path "${GRAPHITI_REPO_DIR:-.cache/kg/graphiti}")"
+DOC_REPO_ROOT_ABS="$(resolve_repo_path "${KG_DOC_REPO_ROOT:-.}")"
 ensure_graphiti_checkout "${GRAPHITI_REPO_ABS}"
 cd "${GRAPHITI_REPO_ABS}"
 uv sync
 
-export GRAPHITI_LLM_MODEL="$(pick_gemma_model)"
-export EMBEDDING_MODEL="${EMBEDDING_MODEL:-qwen3-embedding:4b}"
-ensure_embedding_model "${EMBEDDING_MODEL}"
-
 cd "${REPO_ROOT}"
-uv run --directory "${GRAPHITI_REPO_ABS}" --project . python - "${REPO_ROOT}" "$@" <<'PY'
+uv run --directory "${GRAPHITI_REPO_ABS}" --project . python - "${DOC_REPO_ROOT_ABS}" "$@" <<'PY'
 import asyncio
 import json
 import os
@@ -103,7 +86,7 @@ from typing import get_origin
 repo_root = Path(sys.argv[1]).resolve()
 cli_paths = [Path(arg) for arg in sys.argv[2:]]
 
-os.environ.setdefault("EMBEDDING_DIM", os.environ.get("EMBEDDING_DIM", "1024"))
+os.environ.setdefault("EMBEDDING_DIM", os.environ.get("EMBEDDING_DIM", "2560"))
 
 from graphiti_core import Graphiti
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
@@ -419,7 +402,7 @@ async def main() -> None:
         config=OpenAIEmbedderConfig(
             api_key="ollama",
             embedding_model=os.environ.get("EMBEDDING_MODEL", "qwen3-embedding:4b"),
-            embedding_dim=int(os.environ.get("EMBEDDING_DIM", "1024")),
+            embedding_dim=int(os.environ.get("EMBEDDING_DIM", "2560")),
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
         )
     )
@@ -439,7 +422,7 @@ async def main() -> None:
         for path in doc_paths:
             episode_body, reference_time = build_episode_body(path)
             rel_path = path.relative_to(repo_root).as_posix()
-            source_description = f"litkg-rs repo {path.suffix.lstrip('.') or 'markdown'} documentation"
+            source_description = f"repo {path.suffix.lstrip('.') or 'markdown'} documentation"
             await graphiti.add_episode(
                 name=rel_path,
                 episode_body=episode_body,

@@ -28,7 +28,7 @@ LOC_ARGS ?=
 
 .PHONY: help fmt test lint lint-check cargo-check clippy ci clean agents-db agents-db-check skills-check scaffold-check
 .PHONY: loc loc-rs loc-py loc-sh loc-docs
-.PHONY: kg-up kg-down kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
+.PHONY: kg-up kg-down kg-ollama-check kg-index kg-index-check kg-index-bootstrap kg-ingest-docs kg-enrich kg-update kg-graphiti kg-smoke
 .PHONY: capabilities litkg-sync litkg-download litkg-parse litkg-materialize litkg-rebuild-graph litkg-pipeline litkg-export-neo4j litkg-semantic-enrich litkg-semantic-search
 .PHONY: benchmark-validate benchmark-support benchmark-run autoresearch-target inspect-graph autoresearch-issue
 
@@ -96,6 +96,9 @@ kg-up: ## Start the local Neo4j KG stack
 kg-down: ## Stop the local Neo4j KG stack
 	./scripts/kg/down.sh
 
+kg-ollama-check: ## Validate the configured Ollama chat and embedding endpoint
+	$(PYTHON) scripts/kg/ollama_http.py check --config "$(LITKG_CONFIG)"
+
 kg-index: ## Reindex code graph for a repo path (set KG_SRC_DIR=<path>, default .)
 	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh "$(if $(strip $(KG_SRC_DIR)),$(KG_SRC_DIR),.)"
 
@@ -106,10 +109,10 @@ kg-index-bootstrap: ## Prepare/reuse the CodeGraphContext runtime without indexi
 	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh --bootstrap
 
 kg-ingest-docs: ## Ingest repo docs into Graphiti (optional KG_DOC_PATHS="path1 path2")
-	./scripts/kg/ingest_docs.sh $(KG_DOC_PATHS)
+	KG_OLLAMA_CONFIG="$(LITKG_CONFIG)" ./scripts/kg/ingest_docs.sh $(KG_DOC_PATHS)
 
 kg-enrich: ## Refresh embeddings and code↔doc links (optional KG_SRC_DIR=<path> scopes code refresh)
-	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
+	KG_OLLAMA_CONFIG="$(LITKG_CONFIG)" KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
 
 kg-update: ## Reindex KG code for a repo path and refresh scoped code↔doc links (set KG_SRC_DIR=<path>, optional KG_CODE_REPO_ROOT=<repo>)
 	@if [ -z "$(strip $(KG_SRC_DIR))" ]; then \
@@ -117,7 +120,7 @@ kg-update: ## Reindex KG code for a repo path and refresh scoped code↔doc link
 		exit 2; \
 	fi
 	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" ./scripts/kg/index_code.sh "$(KG_SRC_DIR)"
-	KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
+	KG_OLLAMA_CONFIG="$(LITKG_CONFIG)" KG_CODE_REPO_ROOT="$(KG_CODE_REPO_ROOT)" KG_CODE_PATH_PREFIX="$(KG_SRC_DIR)" python3 scripts/kg/enrich_embeddings.py
 
 kg-graphiti: ## Start the upstream Graphiti MCP server (set GRAPHITI_MODE=http|stdio)
 	./scripts/kg/start_graphiti.sh "$(GRAPHITI_MODE)"
@@ -129,7 +132,8 @@ kg-smoke: ## Run static checks for the local KG helper surface
 	bash -n scripts/kg/index_code.sh
 	bash -n scripts/kg/start_graphiti.sh
 	bash -n scripts/kg/ingest_docs.sh
-	$(PYTHON) -m py_compile scripts/kg/enrich_embeddings.py scripts/loc_stats.py
+	$(PYTHON) -m py_compile scripts/kg/ollama_http.py scripts/kg/neo4j_ready.py scripts/kg/enrich_embeddings.py scripts/loc_stats.py
+	$(PYTHON) scripts/kg/ollama_http.py self-test
 
 capabilities: ## Show the read-only litkg capability snapshot for a config
 	$(CARGO) run -p litkg-cli -- capabilities --config "$(LITKG_CONFIG)"

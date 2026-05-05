@@ -8,8 +8,6 @@ import json
 import math
 import os
 import re
-import shutil
-import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -19,7 +17,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-EMBEDDING_DIM = 1024
+from ollama_http import (
+    chat_url as build_ollama_chat_url,
+    embed_url as build_ollama_embed_url,
+    require_models as require_ollama_models,
+    resolve_settings as resolve_ollama_settings,
+)
+from neo4j_ready import check_neo4j
+
+DEFAULT_EMBEDDING_DIM = 2560
 CODE_LABELS = ("File", "Module", "Class", "Function")
 GRAPHITI_LABELS = ("Episodic", "Entity", "Community")
 TOKEN_KEEP_SHORT = {"kg", "tex", "bib"}
@@ -56,49 +62,10 @@ def code_repo_root(host_root: Path) -> Path:
     return resolved
 
 
-def list_ollama_models() -> list[str]:
-    if shutil.which("ollama") is None:
-        raise RuntimeError(
-            "Missing required command: ollama. Install Ollama and ensure `ollama` is on PATH."
-        )
-    try:
-        listing = subprocess.run(
-            ["ollama", "list"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        detail = f": {stderr}" if stderr else ""
-        raise RuntimeError(f"`ollama list` failed{detail}") from exc
-    return [line.split()[0] for line in listing[1:] if line.strip()]
-
-
-def ensure_embedding_model(model_name: str) -> None:
-    installed_models = set(list_ollama_models())
-    if model_name not in installed_models:
-        subprocess.run(["ollama", "pull", model_name], check=True)
-
-
 def derive_neo4j_http_url(neo4j_uri: str) -> str:
     parsed = urlparse(neo4j_uri)
     host = parsed.hostname or "localhost"
     return f"http://{host}:7474"
-
-
-def ollama_embed_url(base_url: str) -> str:
-    trimmed = base_url.rstrip("/")
-    if trimmed.endswith("/v1"):
-        trimmed = trimmed[:-3]
-    return f"{trimmed}/api/embed"
-
-
-def ollama_chat_url(base_url: str) -> str:
-    trimmed = base_url.rstrip("/")
-    if trimmed.endswith("/v1"):
-        trimmed = trimmed[:-3]
-    return f"{trimmed}/api/chat"
 
 
 class Neo4jHTTP:
@@ -168,15 +135,17 @@ class NodeRecord:
 def pick_token_filter_model(installed_models: list[str]) -> str | None:
     preferred_models = [
         os.environ.get("KG_TOKEN_FILTER_MODEL"),
-        os.environ.get("GRAPHITI_LLM_MODEL"),
+        os.environ.get("GRAPHITI_LLM_MODEL", "gemma4:26b"),
     ]
     installed_set = set(installed_models)
     for model_name in preferred_models:
-        if model_name and model_name in installed_set:
-            return model_name
-    for model_name in installed_models:
-        if "embedding" not in model_name.lower():
-            return model_name
+        if not model_name:
+            continue
+        if model_name not in installed_set:
+            raise RuntimeError(
+                f"Configured token-filter model is missing from Ollama: {model_name}"
+            )
+        return model_name
     return None
 
 
@@ -460,7 +429,9 @@ def fetch_records(
     return records
 
 
-def embed_texts(embed_url: str, model_name: str, texts: list[str]) -> list[list[float]]:
+def embed_texts(
+    embed_url: str, model_name: str, texts: list[str], embedding_dim: int
+) -> list[list[float]]:
     payload = {"model": model_name, "input": texts}
     request = Request(
         embed_url,
@@ -470,7 +441,14 @@ def embed_texts(embed_url: str, model_name: str, texts: list[str]) -> list[list[
     )
     with urlopen(request) as response:
         data = json.loads(response.read().decode("utf-8"))
-    return [embedding[:EMBEDDING_DIM] for embedding in data["embeddings"]]
+    embeddings = data["embeddings"]
+    for embedding in embeddings:
+        if len(embedding) != embedding_dim:
+            raise RuntimeError(
+                f"Embedding model {model_name} returned dimension {len(embedding)}, "
+                f"expected {embedding_dim}."
+            )
+    return embeddings
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -489,7 +467,7 @@ def batch(rows: list[dict[str, Any]], size: int = 32) -> list[list[dict[str, Any
 
 
 def update_embeddings(
-    client: Neo4jHTTP, records: list[NodeRecord], model_name: str
+    client: Neo4jHTTP, records: list[NodeRecord], model_name: str, embedding_dim: int
 ) -> None:
     update_rows = []
     for record in records:
@@ -501,6 +479,7 @@ def update_embeddings(
                 "embedding": record.embedding,
                 "kind": record.kind,
                 "model": model_name,
+                "dim": embedding_dim,
             }
         )
     for chunk in batch(update_rows):
@@ -512,27 +491,39 @@ def update_embeddings(
             SET n:KGEmbeddingNode,
                 n.kg_embedding = row.embedding,
                 n.kg_kind = row.kind,
-                n.kg_embedding_model = row.model
+                n.kg_embedding_model = row.model,
+                n.kg_embedding_dim = row.dim
             RETURN count(n)
             """,
             {"rows": chunk},
         )
 
 
-def create_vector_index(client: Neo4jHTTP) -> None:
+def create_vector_index(client: Neo4jHTTP, embedding_dim: int) -> None:
+    index_name = f"kg_embedding_index_{embedding_dim}"
     client.query(
-        """
-        CREATE VECTOR INDEX kg_embedding_index IF NOT EXISTS
+        f"""
+        CREATE VECTOR INDEX {index_name} IF NOT EXISTS
         FOR (n:KGEmbeddingNode)
         ON (n.kg_embedding)
-        OPTIONS {
-          indexConfig: {
-            `vector.dimensions`: 1024,
+        OPTIONS {{
+          indexConfig: {{
+            `vector.dimensions`: {embedding_dim},
             `vector.similarity_function`: 'cosine'
-          }
-        }
+          }}
+        }}
         """
     )
+
+
+def embedding_is_current(record: NodeRecord, model_name: str, embedding_dim: int) -> bool:
+    if not isinstance(record.embedding, list) or len(record.embedding) != embedding_dim:
+        return False
+    if record.props.get("kg_embedding_model") != model_name:
+        return False
+    if record.props.get("kg_embedding_dim") not in (None, embedding_dim):
+        return False
+    return True
 
 
 def fetch_mentions(client: Neo4jHTTP, group_id: str) -> dict[int, set[int]]:
@@ -594,9 +585,19 @@ def main() -> int:
     load_dotenv(host_root / ".env")
     code_root = code_repo_root(host_root)
 
-    embedding_model = os.environ.get("EMBEDDING_MODEL", "qwen3-embedding:4b")
-    ensure_embedding_model(embedding_model)
-    installed_models = list_ollama_models()
+    ollama_settings = resolve_ollama_settings(
+        config_path=os.environ.get("KG_OLLAMA_CONFIG") or os.environ.get("LITKG_CONFIG")
+    )
+    embedding_model = ollama_settings.embedding_model
+    embedding_dim = ollama_settings.embedding_dim
+    token_filter_model = os.environ.get("KG_TOKEN_FILTER_MODEL") or os.environ.get(
+        "GRAPHITI_LLM_MODEL", ollama_settings.chat_model
+    )
+    ollama_base_url = ollama_settings.base_url
+    installed_models = require_ollama_models(
+        ollama_base_url,
+        [embedding_model, token_filter_model],
+    )
 
     neo4j_uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
     neo4j_http_url = os.environ.get("NEO4J_HTTP_URL", derive_neo4j_http_url(neo4j_uri))
@@ -607,6 +608,14 @@ def main() -> int:
     neo4j_password = os.environ.get("NEO4J_PASSWORD")
     if not neo4j_password:
         raise RuntimeError("NEO4J_PASSWORD must be set.")
+    try:
+        check_neo4j(neo4j_http_url, neo4j_database, neo4j_username, neo4j_password)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Neo4j is not reachable at {neo4j_http_url} for database "
+            f"{neo4j_database}: {exc}. Start it with `make kg-up` before "
+            "running embedding enrichment."
+        ) from exc
 
     graphiti_group_id = os.environ.get("GRAPHITI_GROUP_ID", "litkg-docs")
     enable_doc_links = os.environ.get(
@@ -615,9 +624,8 @@ def main() -> int:
     code_path_prefixes = scoped_path_prefixes(
         os.environ.get("KG_CODE_PATH_PREFIX"), code_root
     )
-    ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    embed_url = ollama_embed_url(ollama_base_url)
-    chat_url = ollama_chat_url(ollama_base_url)
+    embed_url = build_ollama_embed_url(ollama_base_url)
+    chat_url = build_ollama_chat_url(ollama_base_url)
     client = Neo4jHTTP(neo4j_http_url, neo4j_database, neo4j_username, neo4j_password)
 
     code_records = fetch_records(client, CODE_LABELS, path_prefixes=code_path_prefixes)
@@ -652,7 +660,11 @@ def main() -> int:
     if embed_limit > 0:
         all_records = all_records[:embed_limit]
     record_by_id = {record.node_id: record for record in all_records}
-    records_to_embed = [record for record in all_records if record.embedding is None]
+    records_to_embed = [
+        record
+        for record in all_records
+        if not embedding_is_current(record, embedding_model, embedding_dim)
+    ]
     for record_batch in batch(
         [
             {"node_id": record.node_id, "text": record.text}
@@ -664,12 +676,13 @@ def main() -> int:
             embed_url,
             embedding_model,
             [row["text"] for row in record_batch],
+            embedding_dim,
         )
         for row, embedding in zip(record_batch, embeddings, strict=True):
             record_by_id[row["node_id"]].embedding = embedding
 
-    update_embeddings(client, records_to_embed, embedding_model)
-    create_vector_index(client)
+    update_embeddings(client, records_to_embed, embedding_model, embedding_dim)
+    create_vector_index(client, embedding_dim)
 
     if not enable_doc_links:
         link_rows: list[dict[str, Any]] = []

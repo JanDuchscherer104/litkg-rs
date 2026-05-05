@@ -43,4 +43,4 @@ mkdir -p \
   "${KG_DATA_ROOT_ABS}/neo4j/data" \
   "${KG_DATA_ROOT_ABS}/neo4j/plugins"
 
-docker compose -f "${REPO_ROOT}/infra/neo4j/docker-compose.yml" up -d
+docker compose -f "${REPO_ROOT}/infra/neo4j/docker-compose.yml" up -d --force-recreate

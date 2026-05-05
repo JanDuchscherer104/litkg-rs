@@ -34,6 +34,21 @@ Runtime-only assets are written under ignored local paths:
 make kg-up
 ```
 
+If Ollama runs on another machine, expose it to this host and verify the
+required models before doc ingestion or embedding enrichment:
+
+```bash
+ssh -R 11434:127.0.0.1:11434 <ubuntu-host>
+export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+export EMBEDDING_MODEL=qwen3-embedding:4b
+export EMBEDDING_DIM=2560
+export GRAPHITI_LLM_MODEL=gemma4:26b
+make kg-ollama-check
+```
+
+Client repos can store those defaults under `[runtime.ollama]` in their litkg
+TOML config and invoke `make kg-ollama-check LITKG_CONFIG=/path/to/litkg.toml`.
+
 2. Index code under the whole repo or one subtree:
 
 ```bash
@@ -66,6 +81,10 @@ make kg-down
 ## Notes
 
 - `kg-update` is the main incremental refresh entrypoint for code-path changes.
+- `kg-ollama-check` verifies the configured Ollama HTTP endpoint, required chat
+  and embedding models, the configured embedding dimension, and a chat
+  response. It supports SSH-tunneled model hosts and does not require a local
+  `ollama` CLI on this machine.
 - `kg-index-check` is the non-mutating readiness gate; it reports missing prerequisites and whether Neo4j is running.
 - `kg-index-bootstrap` prepares the local CodeGraphContext runtime once and avoids repeated dependency setup churn on later indexing runs.
 - `KG_CODE_REPO_ROOT` lets the toolkit index code in another repo while still using the local Neo4j and embedding runtime. This is the path to CGC-based Python package indexing outside `litkg-rs`.
