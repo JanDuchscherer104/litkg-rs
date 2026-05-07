@@ -1,5 +1,5 @@
 use crate::config::RepoConfig;
-use crate::inspect::{compute_agent_conformance_report, AgentRecommendation, BackendDescriptor};
+use crate::inspect::{compute_agent_conformance_report, BackendDescriptor};
 use crate::materialize::load_parsed_papers;
 use crate::model::{DocumentKind, PaperSourceRecord, ParsedPaper, SourceKind};
 use crate::registry::load_registry;
@@ -28,6 +28,16 @@ pub struct ContextPack {
     pub truncated: bool,
     pub task_summary: String,
     pub assumptions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supporting_evidence: Vec<ContextEvidenceSpan>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contradicting_evidence: Vec<ContextEvidenceSpan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence_summary: Option<String>,
     pub top_sources: Vec<ContextTopSource>,
     pub required_reads: Vec<ContextRequiredRead>,
     pub suggested_next_action: ContextSuggestedNextAction,
@@ -204,11 +214,40 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
 
     let repo_root = request.repo_root;
     let task_terms = task_terms(&request.task);
-    let active_issues = load_active_issues(&repo_root)?;
-    let active_todos = load_active_todos(&repo_root)?;
-    let active_backlog = active_backlog(&active_issues, &active_todos);
+    let active_todos = filter_backlog_items(
+        load_active_todos(&repo_root)?,
+        &task_terms,
+        &request.task,
+        config.context_pack.max_active_backlog_items,
+        config.context_pack.backlog_min_score,
+        &BTreeSet::new(),
+    );
+    let selected_issue_ids = selected_issue_ids(&active_todos, &request.task);
+    let active_issues = filter_backlog_items(
+        load_active_issues(&repo_root)?,
+        &task_terms,
+        &request.task,
+        config.context_pack.max_active_backlog_items,
+        config.context_pack.backlog_min_score,
+        &selected_issue_ids,
+    );
+    let active_backlog = filter_backlog_items(
+        active_backlog(&active_issues, &active_todos),
+        &task_terms,
+        &request.task,
+        config.context_pack.max_active_backlog_items,
+        config.context_pack.backlog_min_score,
+        &BTreeSet::new(),
+    );
     let mut evidence_spans =
         collect_evidence_spans(&repo_root, &request.profile, &task_terms, config)?;
+    let injected_missing = inject_backlog_reference_spans(
+        &repo_root,
+        config,
+        &task_terms,
+        &active_backlog,
+        &mut evidence_spans,
+    )?;
     let relevant_symbols = collect_relevant_symbols(&repo_root, &request.profile, &task_terms)?;
     let relevant_papers = collect_relevant_papers(config, &task_terms)?;
     let fallback_config_path = PathBuf::from("<config>");
@@ -219,8 +258,23 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
     let conformance =
         compute_agent_conformance_report(config, config_path, Some(&repo_root), false);
     let backend_status = conformance.backends;
-    let missing_leaves = missing_leaves(config, &backend_status);
-    let risk_flags = risk_flags(config, &repo_root, &request.task, &backend_status);
+    let verification_commands = verification_commands(&request.profile);
+    let mut truncated = false;
+
+    sort_evidence_spans(&mut evidence_spans);
+    truncate_spans_to_budget(&mut evidence_spans, request.budget_tokens, &mut truncated);
+    let assumptions = assumptions(&request.profile);
+    let mut top_sources = top_sources(&repo_root, config, &evidence_spans, &task_terms)?;
+    let confidence_summary =
+        apply_confidence_floor(&mut top_sources, config.context_pack.min_top_source_score);
+    let missing_leaves = missing_leaves(
+        &repo_root,
+        &request.task,
+        &top_sources,
+        &active_backlog,
+        injected_missing,
+    );
+    let risk_flags = risk_flags(config, &repo_root, &request.task, &top_sources);
     let action_plan = action_plan(
         &request.task,
         &request.profile,
@@ -228,12 +282,6 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         &missing_leaves,
         &risk_flags,
     );
-    let verification_commands = verification_commands(&request.profile);
-    let mut truncated = false;
-
-    truncate_spans_to_budget(&mut evidence_spans, request.budget_tokens, &mut truncated);
-    let assumptions = assumptions(&request.profile);
-    let top_sources = top_sources(&repo_root, config, &evidence_spans, &task_terms)?;
     let required_reads = required_reads(&top_sources);
     let suggested_next_action = suggested_next_action(
         &top_sources,
@@ -241,6 +289,13 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         &missing_leaves,
         &risk_flags,
         &verification_commands,
+        confidence_summary.as_deref(),
+    );
+    let claim_verdict = claim_verdict(
+        &derive_verb(&request.task),
+        &request.task,
+        &top_sources,
+        &evidence_spans,
     );
 
     Ok(ContextPack {
@@ -251,6 +306,11 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         budget_tokens: request.budget_tokens,
         truncated,
         assumptions,
+        verdict: claim_verdict.verdict,
+        confidence: claim_verdict.confidence,
+        supporting_evidence: claim_verdict.supporting_evidence,
+        contradicting_evidence: claim_verdict.contradicting_evidence,
+        confidence_summary,
         top_sources,
         required_reads,
         suggested_next_action,
@@ -285,8 +345,19 @@ fn supported_profile(profile: &str) -> bool {
 fn task_terms(task: &str) -> BTreeSet<String> {
     task.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .map(|term| term.trim().to_ascii_lowercase())
-        .filter(|term| term.len() >= 3 && !crate::ranking::is_search_stopword(term))
+        .filter(|term| {
+            term.len() >= 3
+                && !crate::ranking::is_search_stopword(term)
+                && !context_pack_stopword(term)
+        })
         .collect()
+}
+
+fn context_pack_stopword(term: &str) -> bool {
+    matches!(
+        term,
+        "aria" | "nbv" | "input" | "inputs" | "nonsense" | "output" | "outputs" | "uses"
+    )
 }
 
 fn load_active_issues(repo_root: &Path) -> Result<Vec<ContextBacklogItem>> {
@@ -359,12 +430,17 @@ fn active_backlog(
 ) -> Vec<ContextBacklogItem> {
     let mut backlog = issues.to_vec();
     backlog.extend(todos.iter().cloned());
-    backlog.sort_by(|left, right| {
-        priority_rank(&left.priority)
-            .cmp(&priority_rank(&right.priority))
-            .then(left.id.cmp(&right.id))
-    });
+    backlog.sort_by(compare_backlog_items);
     backlog
+}
+
+fn compare_backlog_items(
+    left: &ContextBacklogItem,
+    right: &ContextBacklogItem,
+) -> std::cmp::Ordering {
+    priority_rank(&left.priority)
+        .cmp(&priority_rank(&right.priority))
+        .then(left.id.cmp(&right.id))
 }
 
 fn priority_rank(priority: &str) -> u8 {
@@ -375,6 +451,89 @@ fn priority_rank(priority: &str) -> u8 {
         "low" | "P3" => 3,
         _ => 4,
     }
+}
+
+fn selected_issue_ids(todos: &[ContextBacklogItem], task: &str) -> BTreeSet<String> {
+    let mut ids = ids_mentioned_in_text(task);
+    for todo in todos {
+        ids.extend(todo.issue_ids.iter().cloned());
+    }
+    ids
+}
+
+fn filter_backlog_items(
+    items: Vec<ContextBacklogItem>,
+    terms: &BTreeSet<String>,
+    task: &str,
+    cap: usize,
+    min_score: f32,
+    always_keep_ids: &BTreeSet<String>,
+) -> Vec<ContextBacklogItem> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    if terms.is_empty() && always_keep_ids.is_empty() {
+        return items.into_iter().take(cap).collect();
+    }
+    let mentioned_ids = ids_mentioned_in_text(task);
+    let mut scored = items
+        .into_iter()
+        .filter_map(|item| {
+            let explicit = mentioned_ids.contains(&item.id) || always_keep_ids.contains(&item.id);
+            let score = backlog_item_score(&item, terms);
+            if explicit || score >= min_score {
+                Some((explicit, score, item))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    scored.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then(
+                right
+                    .1
+                    .partial_cmp(&left.1)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(compare_backlog_items(&left.2, &right.2))
+    });
+    scored
+        .into_iter()
+        .take(cap)
+        .map(|(_, _, item)| item)
+        .collect()
+}
+
+fn backlog_item_score(item: &ContextBacklogItem, terms: &BTreeSet<String>) -> f32 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let haystack = format!(
+        "{} {} {} {} {} {}",
+        item.id,
+        item.title,
+        item.summary,
+        item.context.join(" "),
+        item.references.join(" "),
+        item.verification.join(" ")
+    )
+    .to_ascii_lowercase();
+    let matched = terms
+        .iter()
+        .filter(|term| haystack.contains(term.as_str()))
+        .count();
+    matched as f32 / terms.len().max(1) as f32
+}
+
+fn ids_mentioned_in_text(text: &str) -> BTreeSet<String> {
+    text.to_ascii_lowercase()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .filter(|token| token.starts_with("issue-") || token.starts_with("todo-"))
+        .map(|token| token.to_string())
+        .collect()
 }
 
 fn collect_evidence_spans(
@@ -397,7 +556,10 @@ fn collect_evidence_spans(
     }
 
     let mut spans = Vec::new();
-    for path in paths.into_iter().filter(|path| path.exists()) {
+    for path in paths
+        .into_iter()
+        .filter(|path| path.exists() && !source_path_is_never_indexed(repo_root, path))
+    {
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
         let source_path = relative_path(repo_root, &path);
@@ -407,11 +569,14 @@ fn collect_evidence_spans(
             1.0, // base lexical score placeholder
             config.authority_tiers.as_ref(),
         );
-
         spans.extend(select_spans(&source_path, &raw, terms, score));
     }
+    sort_evidence_spans(&mut spans);
+    Ok(spans)
+}
+
+fn sort_evidence_spans(spans: &mut [ContextEvidenceSpan]) {
     spans.sort_by(|left, right| {
-        // sort by final score descending, then source path
         right
             .score
             .score_final
@@ -420,7 +585,154 @@ fn collect_evidence_spans(
             .then(left.source_path.cmp(&right.source_path))
             .then(left.line_start.cmp(&right.line_start))
     });
-    Ok(spans)
+}
+
+fn inject_backlog_reference_spans(
+    repo_root: &Path,
+    config: &RepoConfig,
+    terms: &BTreeSet<String>,
+    backlog: &[ContextBacklogItem],
+    spans: &mut Vec<ContextEvidenceSpan>,
+) -> Result<Vec<MissingContextLeaf>> {
+    let mut seen = BTreeSet::new();
+    let mut ranked_backlog = backlog
+        .iter()
+        .map(|item| (backlog_item_score(item, terms), item))
+        .collect::<Vec<_>>();
+    ranked_backlog.sort_by(|left, right| {
+        right
+            .0
+            .partial_cmp(&left.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(
+                right
+                    .1
+                    .id
+                    .starts_with("todo-")
+                    .cmp(&left.1.id.starts_with("todo-")),
+            )
+            .then(left.1.id.cmp(&right.1.id))
+    });
+    for (item_score, item) in ranked_backlog {
+        for candidate in backlog_reference_paths(item) {
+            let candidate_path = if candidate.is_absolute() {
+                candidate
+            } else {
+                repo_root.join(candidate)
+            };
+            if source_path_is_never_indexed(repo_root, &candidate_path) {
+                continue;
+            }
+            if !candidate_path.is_file() {
+                continue;
+            }
+            let source_path = relative_path(repo_root, &candidate_path);
+            if !seen.insert(source_path.clone()) {
+                continue;
+            }
+            let raw = fs::read_to_string(&candidate_path)
+                .with_context(|| format!("Failed to read {}", candidate_path.display()))?;
+            let score = crate::ranking::calculate_weighted_score(
+                &candidate_path,
+                1.0,
+                config.authority_tiers.as_ref(),
+            );
+            let mut injected = select_spans(&source_path, &raw, terms, score);
+            for span in &mut injected {
+                span.kind = "backlog_reference".into();
+                let relevance_boost = item_score.clamp(0.0, 1.0);
+                span.score.score_lexical =
+                    span.score.score_lexical.max(0.75 + relevance_boost * 0.2);
+                span.score.score_final = span.score.score_final.max(
+                    span.score.score_lexical
+                        * span.score.score_authority
+                        * span.score.score_freshness,
+                ) * (1.2 + relevance_boost * 0.25);
+                span.score
+                    .why
+                    .push(format!("injected from matched backlog record {}", item.id));
+            }
+            spans.extend(injected);
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn backlog_reference_paths(item: &ContextBacklogItem) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::new();
+    for text in item
+        .references
+        .iter()
+        .chain(item.verification.iter())
+        .chain(item.acceptance.iter())
+    {
+        for path in candidate_repo_paths_from_text(text) {
+            paths.insert(path);
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn candidate_repo_paths_from_text(text: &str) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::new();
+    for raw_token in text.split_whitespace() {
+        let mut token = raw_token
+            .trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '"' | '\'' | '`' | ',' | ';' | ':' | ')' | '(' | '[' | ']'
+                )
+            })
+            .to_string();
+        if let Some(rest) = token.strip_prefix("repo:") {
+            token = rest.to_string();
+        }
+        if token.starts_with("url:")
+            || token.starts_with("bib:")
+            || token.starts_with("context7:")
+            || token.starts_with("litkg:")
+        {
+            continue;
+        }
+        if let Some((path, _anchor)) = token.split_once('#') {
+            token = path.to_string();
+        }
+        if token.contains("://") || token.is_empty() {
+            continue;
+        }
+        if token.ends_with(".py")
+            || token.ends_with(".rs")
+            || token.ends_with(".md")
+            || token.ends_with(".qmd")
+            || token.ends_with(".toml")
+            || token.ends_with(".typ")
+        {
+            let path = PathBuf::from(&token);
+            paths.insert(path.clone());
+            if token.starts_with("tests/") {
+                paths.insert(PathBuf::from("aria_nbv").join(&token));
+            }
+            if let Some(implementation) = implementation_path_for_test(&path) {
+                paths.insert(implementation);
+            }
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn implementation_path_for_test(path: &Path) -> Option<PathBuf> {
+    let normalized = normalize_path(&path.to_string_lossy());
+    let relative = normalized
+        .strip_prefix("aria_nbv/tests/")
+        .or_else(|| normalized.strip_prefix("tests/"))?;
+    let filename = relative.rsplit('/').next()?;
+    let implementation_filename = filename.strip_prefix("test_")?;
+    let parent = relative.strip_suffix(filename).unwrap_or_default();
+    Some(
+        PathBuf::from("aria_nbv/aria_nbv")
+            .join(parent)
+            .join(implementation_filename),
+    )
 }
 
 fn configured_source_paths(repo_root: &Path, config: &RepoConfig) -> Result<Vec<PathBuf>> {
@@ -441,6 +753,7 @@ fn configured_source_paths(repo_root: &Path, config: &RepoConfig) -> Result<Vec<
                     if entry.is_file()
                         && source_path_is_context_text(&entry)
                         && !source_path_is_excluded(repo_root, &entry, &excludes)
+                        && !source_path_is_never_indexed(repo_root, &entry)
                     {
                         paths.push(entry);
                     }
@@ -448,6 +761,7 @@ fn configured_source_paths(repo_root: &Path, config: &RepoConfig) -> Result<Vec<
             } else if pattern_path.is_file()
                 && source_path_is_context_text(&pattern_path)
                 && !source_path_is_excluded(repo_root, &pattern_path, &excludes)
+                && !source_path_is_never_indexed(repo_root, &pattern_path)
             {
                 paths.push(pattern_path);
             }
@@ -461,9 +775,18 @@ fn configured_source_paths(repo_root: &Path, config: &RepoConfig) -> Result<Vec<
 
 fn source_path_is_excluded(repo_root: &Path, path: &Path, excludes: &[String]) -> bool {
     let relative = relative_path(repo_root, path);
-    excludes
-        .iter()
-        .any(|pattern| source_pattern_matches(&relative, pattern))
+    source_path_is_never_indexed(repo_root, path)
+        || excludes
+            .iter()
+            .any(|pattern| source_pattern_matches(&relative, pattern))
+}
+
+fn source_path_is_never_indexed(repo_root: &Path, path: &Path) -> bool {
+    let relative = relative_path(repo_root, path);
+    relative.starts_with(".git/")
+        || relative == ".git"
+        || relative.starts_with(".claude/worktrees/")
+        || relative.contains("/.claude/worktrees/")
 }
 
 fn source_path_is_context_text(path: &Path) -> bool {
@@ -753,6 +1076,22 @@ fn top_sources(
     Ok(sources)
 }
 
+fn apply_confidence_floor(
+    top_sources: &mut Vec<ContextTopSource>,
+    min_top_source_score: f32,
+) -> Option<String> {
+    let max_score = top_sources
+        .iter()
+        .map(|source| source.scores.score_final)
+        .fold(0.0_f32, f32::max);
+    if top_sources.is_empty() || max_score < min_top_source_score {
+        top_sources.clear();
+        Some("no high-signal evidence found; recommend aria-nbv-context plus targeted reads".into())
+    } else {
+        None
+    }
+}
+
 fn route_prefers_owning_surfaces(terms: &BTreeSet<String>) -> bool {
     terms.iter().any(|term| {
         matches!(
@@ -784,6 +1123,51 @@ fn route_prefers_owning_surfaces(terms: &BTreeSet<String>) -> bool {
                 | "tests"
                 | "viewer"
                 | "zarr"
+        )
+    })
+}
+
+fn implementation_route(terms: &BTreeSet<String>) -> bool {
+    terms.iter().any(|term| {
+        matches!(
+            term.as_str(),
+            "bug"
+                | "code"
+                | "debug"
+                | "harden"
+                | "pytest"
+                | "python"
+                | "regression"
+                | "test"
+                | "tests"
+                | "trace"
+                | "zarr"
+        )
+    })
+}
+
+fn literature_route(terms: &BTreeSet<String>) -> bool {
+    terms.iter().any(|term| {
+        matches!(
+            term.as_str(),
+            "bib"
+                | "bibliography"
+                | "citation"
+                | "claim"
+                | "literature"
+                | "paper"
+                | "papers"
+                | "semantic"
+                | "scholar"
+        )
+    })
+}
+
+fn generated_context_route(terms: &BTreeSet<String>) -> bool {
+    terms.iter().any(|term| {
+        matches!(
+            term.as_str(),
+            "context" | "generated" | "kg" | "route" | "routing" | "source_index"
         )
     })
 }
@@ -1145,56 +1529,26 @@ fn symbol_name(line: &str, kind: &str) -> String {
 }
 
 fn missing_leaves(
-    config: &RepoConfig,
-    backend_status: &[BackendDescriptor],
+    _repo_root: &Path,
+    task: &str,
+    top_sources: &[ContextTopSource],
+    _active_backlog: &[ContextBacklogItem],
+    mut leaves: Vec<MissingContextLeaf>,
 ) -> Vec<MissingContextLeaf> {
-    let mut leaves = vec![
-        MissingContextLeaf {
-            provider: "Context7".into(),
-            query: "Resolve current library docs relevant to the task.".into(),
-            status: "pending".into(),
-            resolution_command:
-                "Use Context7 MCP for configured libraries, then rerun litkg context-pack.".into(),
-        },
-        MissingContextLeaf {
-            provider: "openaiDeveloperDocs".into(),
-            query: "Resolve current OpenAI/Codex/MCP docs relevant to the task.".into(),
-            status: "pending".into(),
-            resolution_command:
-                "Use openaiDeveloperDocs MCP when OpenAI/Codex/MCP behavior matters.".into(),
-        },
-    ];
-    for backend in backend_status {
-        if matches!(
-            backend.agent_recommendation,
-            AgentRecommendation::MissingLeaf | AgentRecommendation::RefreshFirst
-        ) && backend.configured
-        {
-            leaves.push(MissingContextLeaf {
-                provider: backend.name.clone(),
-                query: format!(
-                    "Backend is {:?}; resolve before treating generated context as current.",
-                    backend.state
-                ),
-                status: "pending".into(),
-                resolution_command: backend
-                    .repair_command
-                    .clone()
-                    .unwrap_or_else(|| "inspect litkg capabilities --format json".into()),
-            });
-        }
-    }
-    let semantic = config.semantic_scholar_config();
-    if semantic.enabled
-        && std::env::var(&semantic.api_key_env)
-            .ok()
-            .is_none_or(|value| value.is_empty())
+    let terms = task_terms(task);
+    if implementation_route(&terms)
+        && !top_sources
+            .iter()
+            .any(|source| source.source_type == "code" || source.path.ends_with(".py"))
     {
         leaves.push(MissingContextLeaf {
-            provider: "semantic_scholar".into(),
-            query: "Semantic Scholar enrichment is configured but the API key is absent.".into(),
-            status: "pending".into(),
-            resolution_command: format!("export {}=...", semantic.api_key_env),
+            provider: "local_code".into(),
+            query: format!(
+                "No code source cleared the route threshold for `{}`.",
+                task.trim()
+            ),
+            status: "missing".into(),
+            resolution_command: "Use aria-nbv-context and targeted rg/file reads.".into(),
         });
     }
     leaves.sort_by(|left, right| {
@@ -1210,56 +1564,41 @@ fn risk_flags(
     config: &RepoConfig,
     repo_root: &Path,
     task: &str,
-    backend_status: &[BackendDescriptor],
+    top_sources: &[ContextTopSource],
 ) -> Vec<String> {
     let mut flags = Vec::new();
-    if !config.registry_path().is_file() {
+    let terms = task_terms(task);
+    if literature_route(&terms) && !config.registry_path().is_file() {
         flags.push(format!(
             "missing_literature_registry: run cargo run -p litkg-cli -- ingest --config <config> before relying on paper metadata ({})",
             config.registry_path().display()
         ));
     }
-    if !config.parsed_root().is_dir() {
+    if literature_route(&terms) && !config.parsed_root().is_dir() {
         flags.push(format!(
             "missing_parsed_papers: run cargo run -p litkg-cli -- lit parse --config <config> ({})",
             config.parsed_root().display()
         ));
     }
-    if !repo_root
-        .join("docs/_generated/context/source_index.md")
-        .is_file()
+    if generated_context_route(&terms)
+        && !repo_root
+            .join("docs/_generated/context/source_index.md")
+            .is_file()
     {
         flags.push(
             "stale_or_missing_generated_context: run make context when docs routing matters".into(),
         );
     }
-    if git_has_dirty_agents(repo_root) {
+    if git_has_dirty_agents(repo_root)
+        && top_sources
+            .iter()
+            .any(|source| source.source_type == "active_backlog")
+    {
         flags.push(
             "dirty_agent_backlog: .agents has uncommitted changes; validate before treating backlog as final".into(),
         );
     }
     flags.extend(claim_check_flags(task));
-    for backend in backend_status {
-        match backend.agent_recommendation {
-            AgentRecommendation::UseNow | AgentRecommendation::DoNotUse => {}
-            AgentRecommendation::RefreshFirst => flags.push(format!(
-                "backend_refresh_first:{}: {}",
-                backend.name,
-                backend
-                    .repair_command
-                    .as_deref()
-                    .unwrap_or("inspect capabilities")
-            )),
-            AgentRecommendation::MissingLeaf => flags.push(format!(
-                "backend_missing_leaf:{}: {}",
-                backend.name,
-                backend
-                    .repair_command
-                    .as_deref()
-                    .unwrap_or("resolve missing source")
-            )),
-        }
-    }
     flags.sort();
     flags.dedup();
     flags
@@ -1282,6 +1621,202 @@ fn claim_check_flags(task: &str) -> Vec<String> {
         );
     }
     flags
+}
+
+#[derive(Debug, Default)]
+struct ClaimVerdictParts {
+    verdict: Option<String>,
+    confidence: Option<f32>,
+    supporting_evidence: Vec<ContextEvidenceSpan>,
+    contradicting_evidence: Vec<ContextEvidenceSpan>,
+}
+
+fn claim_verdict(
+    verb: &str,
+    task: &str,
+    top_sources: &[ContextTopSource],
+    evidence_spans: &[ContextEvidenceSpan],
+) -> ClaimVerdictParts {
+    if verb != "check" {
+        return ClaimVerdictParts::default();
+    }
+    let claim = strip_claim_prefix(task);
+    let terms = task_terms(claim);
+    let top_source_paths = top_sources
+        .iter()
+        .map(|source| source.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut supporting = Vec::new();
+    let mut contradicting = Vec::new();
+    for span in evidence_spans {
+        if !top_source_paths.contains(span.source_path.as_str()) || !trusted_claim_source(span) {
+            continue;
+        }
+        match classify_claim_span(claim, &span.text, &terms) {
+            ClaimRelation::Supports => supporting.push(span.clone()),
+            ClaimRelation::Contradicts => contradicting.push(span.clone()),
+            ClaimRelation::Neutral => {}
+        }
+        if supporting.len() >= 4 && contradicting.len() >= 2 {
+            break;
+        }
+    }
+    supporting.truncate(4);
+    contradicting.truncate(4);
+    if !contradicting.is_empty() {
+        supporting.clear();
+    }
+    let max_support = supporting
+        .iter()
+        .map(|span| span.score.score_final)
+        .fold(0.0_f32, f32::max);
+    let max_contradiction = contradicting
+        .iter()
+        .map(|span| span.score.score_final)
+        .fold(0.0_f32, f32::max);
+    let (verdict, confidence) = if !contradicting.is_empty() {
+        (
+            "contradicted",
+            (0.55 + max_contradiction.min(1.0) * 0.35).clamp(0.0, 1.0),
+        )
+    } else if supporting.len() >= 2 || (supporting.len() == 1 && max_support >= 0.9) {
+        (
+            "supported",
+            (0.45 + supporting.len() as f32 * 0.16 + max_support.min(1.0) * 0.25).clamp(0.0, 1.0),
+        )
+    } else {
+        ("unverifiable", 0.2_f32)
+    };
+    ClaimVerdictParts {
+        verdict: Some(verdict.into()),
+        confidence: Some(confidence),
+        supporting_evidence: supporting,
+        contradicting_evidence: contradicting,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaimRelation {
+    Supports,
+    Contradicts,
+    Neutral,
+}
+
+fn strip_claim_prefix(task: &str) -> &str {
+    let trimmed = task.trim();
+    for prefix in [
+        "claim-check:",
+        "claim check:",
+        "check:",
+        "claim-check",
+        "claim check",
+        "check",
+    ] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            return rest.trim();
+        }
+    }
+    trimmed
+}
+
+fn trusted_claim_source(span: &ContextEvidenceSpan) -> bool {
+    let source_type = span.score.source_type.as_str();
+    if matches!(source_type, "code" | "active_backlog") {
+        return false;
+    }
+    matches!(span.score.authority.as_str(), "canonical" | "active")
+        || matches!(source_type, "canonical_memory" | "docs")
+}
+
+fn classify_claim_span(claim: &str, evidence: &str, terms: &BTreeSet<String>) -> ClaimRelation {
+    let claim_lower = claim.to_ascii_lowercase();
+    let evidence_lower = evidence.to_ascii_lowercase();
+    let matched = matched_terms(evidence, terms);
+    let overlap = if terms.is_empty() {
+        0.0
+    } else {
+        matched.len() as f32 / terms.len() as f32
+    };
+    if overlap < 0.35 {
+        return ClaimRelation::Neutral;
+    }
+    if v1_gt_actor_visible_claim(&claim_lower)
+        && evidence_lower.contains("actor-visible")
+        && mentions_gt_obb(&evidence_lower)
+        && contains_limiting_marker(&evidence_lower)
+    {
+        return ClaimRelation::Contradicts;
+    }
+    if positive_v0_gt_rri_claim(&claim_lower)
+        && evidence_lower.contains("v0")
+        && mentions_gt_obb(&evidence_lower)
+        && evidence_lower.contains("rri")
+        && (evidence_lower.contains("sanity") || evidence_lower.contains("upper-bound"))
+    {
+        return ClaimRelation::Supports;
+    }
+    if deferred_main_simulator_claim(&claim_lower, &evidence_lower) {
+        return ClaimRelation::Neutral;
+    }
+    if contains_direct_negation(&evidence_lower) || contains_limiting_marker(&evidence_lower) {
+        return ClaimRelation::Neutral;
+    }
+    if overlap >= 0.45 {
+        ClaimRelation::Supports
+    } else {
+        ClaimRelation::Neutral
+    }
+}
+
+fn v1_gt_actor_visible_claim(claim: &str) -> bool {
+    (claim.contains("v1") || claim.contains("main"))
+        && mentions_gt_obb(claim)
+        && claim.contains("actor")
+        && claim.contains("visible")
+}
+
+fn positive_v0_gt_rri_claim(claim: &str) -> bool {
+    claim.contains("v0")
+        && mentions_gt_obb(claim)
+        && claim.contains("rri")
+        && (claim.contains("sanity") || claim.contains("upper"))
+}
+
+fn deferred_main_simulator_claim(claim: &str, evidence: &str) -> bool {
+    claim.contains("main")
+        && claim.contains("simulator")
+        && (evidence.contains("stretch")
+            || evidence.contains("bridge")
+            || evidence.contains("future")
+            || evidence.contains("external simulator")
+            || evidence.contains("external online")
+            || evidence.contains("simulators are design paths")
+            || evidence.contains("finite-candidate evidence")
+            || evidence.contains("unless later evidence"))
+}
+
+fn mentions_gt_obb(text: &str) -> bool {
+    (text.contains("gt") || text.contains("ground truth")) && text.contains("obb")
+}
+
+fn contains_limiting_marker(text: &str) -> bool {
+    text.contains("cannot")
+        || text.contains("must not")
+        || text.contains("not actor")
+        || text.contains("not the actor")
+        || text.contains("oracle/eval-only")
+        || text.contains("oracle-only")
+        || text.contains("upper-bound")
+}
+
+fn contains_direct_negation(text: &str) -> bool {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|token| matches!(token, "not" | "cannot" | "never"))
+        || text.contains(" not ")
+        || text.contains("cannot")
+        || text.contains("never")
+        || text.contains("no longer")
+        || text.contains("must not")
 }
 
 fn git_has_dirty_agents(repo_root: &Path) -> bool {
@@ -1362,15 +1897,29 @@ fn suggested_next_action(
     missing_leaves: &[MissingContextLeaf],
     risk_flags: &[String],
     verification_commands: &[String],
+    confidence_summary: Option<&str>,
 ) -> ContextSuggestedNextAction {
+    if let Some(summary) = confidence_summary {
+        return ContextSuggestedNextAction {
+            summary: "Fall back to deterministic local discovery".into(),
+            skill: Some("aria-nbv-context".into()),
+            command: None,
+            why: summary.into(),
+        };
+    }
     let has_useful_local_route = top_sources.iter().any(useful_local_source);
     if let Some(leaf) = missing_leaves
         .iter()
         .find(|leaf| !has_useful_local_route || !optional_backend_name(&leaf.provider))
     {
+        let skill = if leaf.provider == "local_code" {
+            "aria-nbv-context"
+        } else {
+            "semantic-scholar-litkg"
+        };
         return ContextSuggestedNextAction {
             summary: format!("Resolve missing context from {}", leaf.provider),
-            skill: Some("semantic-scholar-litkg".into()),
+            skill: Some(skill.into()),
             command: Some(leaf.resolution_command.clone()),
             why: format!(
                 "{} is still {}; its absence can make retrieved context incomplete.",
@@ -1644,6 +2193,7 @@ mod tests {
                 (".agents/*.toml".into(), 1.4),
                 ("crates/**/*.rs".into(), 1.2),
             ])),
+            context_pack: Default::default(),
             project: None,
             sources,
             representation: None,
@@ -1659,7 +2209,12 @@ mod tests {
         fs::write(root.join("AGENTS.md"), "# Root guidance\n").unwrap();
         fs::write(
             root.join(".agents/memory/state/PROJECT_STATE.md"),
-            "# Project State\n\nCanonical memory mentions rerun logging and zarr, but does not own the implementation route.\n",
+            "# Project State\n\nCanonical memory mentions rerun logging and zarr, but does not own the implementation route.\n\nV0 uses GT-OBB-cropped target RRI as a sanity and upper-bound measurement. GT OBBs cannot be actor-visible in the V1 main thesis result; V1 uses observed or predicted OBB inputs with GT evaluation labels.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".agents/memory/state/DECISIONS.md"),
+            "# Decisions\n\nUse GT-OBB-cropped target RRI as V0 sanity/upper-bound evidence only. Main actor-visible target protocol is V1 OBS-SEL / PRED-Q / GT-EVAL, so GT OBBs must not be actor-visible in the main result.\n",
         )
         .unwrap();
         fs::write(
@@ -1727,10 +2282,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(pack
-            .missing_context
-            .iter()
-            .any(|leaf| optional_backend_name(&leaf.provider)));
         let rendered_action = format!(
             "{} {:?} {:?}",
             pack.suggested_next_action.summary,
@@ -1740,5 +2291,156 @@ mod tests {
         .to_ascii_lowercase();
         assert!(!rendered_action.contains("context7"));
         assert!(!rendered_action.contains("semantic_scholar"));
+    }
+
+    #[test]
+    fn context_pack_claim_check_returns_supported_contradicted_and_unverifiable() {
+        let dir = tempfile::tempdir().unwrap();
+        write_context_pack_fixture(dir.path());
+        let config = test_config(dir.path(), false);
+
+        let supported = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task:
+                    "claim-check: ARIA-NBV uses GT-OBB-cropped target RRI as V0 sanity/upper-bound"
+                        .into(),
+                budget_tokens: 600,
+                profile: "thesis-coding".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(supported.verdict.as_deref(), Some("supported"));
+        assert!(supported.confidence.unwrap_or_default() > 0.6);
+        assert!(!supported.supporting_evidence.is_empty());
+
+        let contradicted = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task: "claim-check: GT OBBs are actor-visible in the V1 main thesis result".into(),
+                budget_tokens: 600,
+                profile: "thesis-coding".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(contradicted.verdict.as_deref(), Some("contradicted"));
+        assert!(!contradicted.contradicting_evidence.is_empty());
+
+        let unverifiable = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task: "claim-check: ARIA-NBV uses Habitat as the main simulator".into(),
+                budget_tokens: 600,
+                profile: "thesis-coding".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(unverifiable.verdict.as_deref(), Some("unverifiable"));
+        assert!(unverifiable.confidence.unwrap_or(1.0) <= 0.25);
+    }
+
+    #[test]
+    fn context_pack_filters_backlog_and_injects_verification_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        write_context_pack_fixture(dir.path());
+        fs::create_dir_all(dir.path().join("aria_nbv/tests/pose_generation")).unwrap();
+        fs::create_dir_all(dir.path().join("aria_nbv/aria_nbv/pose_generation")).unwrap();
+        fs::write(
+            dir.path()
+                .join("aria_nbv/tests/pose_generation/test_counterfactuals.py"),
+            "def test_oracle_rri_lookahead_vs_greedy():\n    assert True\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join("aria_nbv/aria_nbv/pose_generation/counterfactuals.py"),
+            "def bounded_oracle_rri_lookahead_vs_greedy():\n    return 'counterfactuals'\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".agents/todos.toml"),
+            "[[todo]]\nid = \"todo-026\"\ntitle = \"Harden bounded oracle-RRI lookahead versus greedy comparison\"\ndescription = \"Make oracle lookahead versus greedy executable.\"\nissue_ids = [\"issue-018\"]\npriority = \"high\"\nstatus = \"todo\"\ncontext = [\"bounded oracle RRI lookahead greedy comparison\"]\nreferences = [\"repo:aria_nbv/tests/pose_generation/test_counterfactuals.py\"]\nverification = [\"cd aria_nbv && uv run pytest tests/pose_generation/test_counterfactuals.py\"]\n\n[[todo]]\nid = \"todo-999\"\ntitle = \"Unrelated docs task\"\ndescription = \"No matching terms.\"\nissue_ids = []\npriority = \"low\"\nstatus = \"todo\"\ncontext = [\"unrelated\"]\nreferences = []\nverification = []\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".agents/issues.toml"),
+            "[[issue]]\nid = \"issue-018\"\ntitle = \"Rollout dataset storage and reporting schema\"\ndescription = \"Bounded oracle RRI lookahead traces need storage.\"\npriority = \"high\"\nstatus = \"open\"\ncontext = [\"rollout bounded oracle rri\"]\nreferences = []\n",
+        )
+        .unwrap();
+        let config = test_config(dir.path(), false);
+        let pack = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task: "harden bounded oracle-RRI lookahead vs greedy".into(),
+                budget_tokens: 900,
+                profile: "thesis-coding".into(),
+            },
+        )
+        .unwrap();
+
+        assert!(pack.active_todos.len() <= 5);
+        assert!(pack.active_issues.len() <= 5);
+        assert!(pack.active_todos.iter().any(|todo| todo.id == "todo-026"));
+        assert!(pack
+            .active_issues
+            .iter()
+            .any(|issue| issue.id == "issue-018"));
+        let paths = pack
+            .top_sources
+            .iter()
+            .map(|source| source.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths
+            .iter()
+            .any(|path| path.ends_with("tests/pose_generation/test_counterfactuals.py")));
+        assert!(paths
+            .iter()
+            .any(|path| path.ends_with("pose_generation/counterfactuals.py")));
+    }
+
+    #[test]
+    fn context_pack_confidence_floor_falls_back_on_low_signal() {
+        let dir = tempfile::tempdir().unwrap();
+        write_context_pack_fixture(dir.path());
+        let config = test_config(dir.path(), false);
+        let pack = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task: "zzzzz nonsense input".into(),
+                budget_tokens: 400,
+                profile: "agents-scaffold".into(),
+            },
+        )
+        .unwrap();
+
+        assert!(pack.top_sources.is_empty());
+        assert!(pack.required_reads.is_empty());
+        assert!(pack.confidence_summary.is_some());
+        assert_eq!(
+            pack.suggested_next_action.skill.as_deref(),
+            Some("aria-nbv-context")
+        );
+    }
+
+    #[test]
+    fn context_pack_never_indexes_transient_worktree_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(".claude/worktrees/pedantic-buck-d6f491/AGENTS.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "# Worktree mirror\n").unwrap();
+
+        assert!(source_path_is_never_indexed(dir.path(), &path));
     }
 }

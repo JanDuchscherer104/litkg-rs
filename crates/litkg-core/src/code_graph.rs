@@ -1322,6 +1322,7 @@ mod tests {
             relevance_tags: vec![],
             semantic_scholar: None,
             authority_tiers: None,
+            context_pack: Default::default(),
             project: Some(crate::config::ProjectConfig {
                 id: "fixture".into(),
                 name: "Fixture".into(),

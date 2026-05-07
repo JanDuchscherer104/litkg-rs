@@ -693,16 +693,11 @@ fn context_pack_command_reports_stable_json_contract() {
     assert!(!suggested.contains("context7"));
     assert!(!suggested.contains("semantic_scholar"));
     assert_eq!(json["relevant_papers"][0]["paper_id"], "demo2025paper");
-    assert!(json["missing_context"]
+    assert!(!json["risk_flags"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|leaf| leaf["provider"] == "Context7"));
-    assert!(json["missing_context_leaves"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|leaf| leaf["provider"] == "Context7"));
+        .any(|flag| flag.as_str().unwrap_or_default().contains("backend_")));
     assert!(json["verification_commands"]
         .as_array()
         .unwrap()
@@ -810,6 +805,69 @@ fn context_pack_command_reports_text_sections() {
     assert!(text.contains("risk flags:"));
     assert!(text.contains("backend status:"));
     assert!(text.contains("verification commands:"));
+}
+
+#[test]
+fn claim_check_context_pack_reports_verdict_in_json_and_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    write_agents_scaffold(dir.path());
+    fs::create_dir_all(dir.path().join(".agents/memory/state")).unwrap();
+    fs::write(
+        dir.path().join(".agents/memory/state/DECISIONS.md"),
+        "# Decisions\n\nV0 uses GT-OBB-cropped target RRI as sanity and upper-bound evidence only. GT OBBs must not be actor-visible in the V1 main thesis result.\n",
+    )
+    .unwrap();
+
+    let json_output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--task",
+            "claim-check: GT OBBs are actor-visible in the V1 main thesis result",
+            "--profile",
+            "thesis-coding",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&json_output).unwrap();
+    assert_eq!(json["verb"], "check");
+    assert_eq!(json["verdict"], "contradicted");
+    assert!(json["confidence"].as_f64().unwrap() > 0.5);
+    assert!(!json["contradicting_evidence"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let text_output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--task",
+            "claim-check: GT OBBs are actor-visible in the V1 main thesis result",
+            "--profile",
+            "thesis-coding",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(text_output).unwrap();
+    assert!(text.contains("verdict: contradicted"));
 }
 
 #[test]

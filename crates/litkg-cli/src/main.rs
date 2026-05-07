@@ -1925,6 +1925,33 @@ fn render_context_pack(pack: &ContextPack) -> String {
     for assumption in &pack.assumptions {
         lines.push(format!("  - {assumption}"));
     }
+    if let Some(verdict) = &pack.verdict {
+        let confidence = pack.confidence.unwrap_or_default();
+        lines.push(String::new());
+        lines.push(format!("verdict: {verdict} (confidence={confidence:.2})"));
+        if !pack.supporting_evidence.is_empty() {
+            lines.push("supporting evidence:".to_string());
+            for span in &pack.supporting_evidence {
+                lines.push(format!(
+                    "  - {}:{}-{}",
+                    span.source_path, span.line_start, span.line_end
+                ));
+            }
+        }
+        if !pack.contradicting_evidence.is_empty() {
+            lines.push("contradicting evidence:".to_string());
+            for span in &pack.contradicting_evidence {
+                lines.push(format!(
+                    "  - {}:{}-{}",
+                    span.source_path, span.line_start, span.line_end
+                ));
+            }
+        }
+    }
+    if let Some(summary) = &pack.confidence_summary {
+        lines.push(String::new());
+        lines.push(format!("confidence: {summary}"));
+    }
     lines.push(String::new());
     lines.push("top sources:".to_string());
     for source in &pack.top_sources {

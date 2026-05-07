@@ -35,6 +35,8 @@ pub struct RepoConfig {
 
     #[serde(default)]
     pub authority_tiers: Option<BTreeMap<String, f32>>,
+    #[serde(default)]
+    pub context_pack: ContextPackConfig,
 
     // New sections from expanded toml
     #[serde(default)]
@@ -49,6 +51,38 @@ pub struct RepoConfig {
     pub storage: Option<StorageConfig>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContextPackConfig {
+    #[serde(default = "default_max_active_backlog_items")]
+    pub max_active_backlog_items: usize,
+    #[serde(default = "default_min_top_source_score")]
+    pub min_top_source_score: f32,
+    #[serde(default = "default_backlog_min_score")]
+    pub backlog_min_score: f32,
+}
+
+impl Default for ContextPackConfig {
+    fn default() -> Self {
+        Self {
+            max_active_backlog_items: default_max_active_backlog_items(),
+            min_top_source_score: default_min_top_source_score(),
+            backlog_min_score: default_backlog_min_score(),
+        }
+    }
+}
+
+fn default_max_active_backlog_items() -> usize {
+    5
+}
+
+fn default_min_top_source_score() -> f32 {
+    0.4
+}
+
+fn default_backlog_min_score() -> f32 {
+    0.25
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ProjectConfig {
     pub id: String,
@@ -60,6 +94,8 @@ pub struct ProjectConfig {
 pub struct SourceConfig {
     #[serde(default)]
     pub required: bool,
+    #[serde(default)]
+    pub authority: Option<String>,
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]

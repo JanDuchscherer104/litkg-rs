@@ -425,6 +425,7 @@ mod tests {
             relevance_tags: vec!["ViSTA-SLAM".into(), "ADVIO".into()],
             semantic_scholar: None,
             authority_tiers: None,
+            context_pack: Default::default(),
         }
     }
 

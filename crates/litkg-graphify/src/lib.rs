@@ -82,6 +82,8 @@ mod tests {
             download_pdfs: false,
             relevance_tags: vec!["ViSTA-SLAM".into()],
             semantic_scholar: None,
+            authority_tiers: None,
+            context_pack: Default::default(),
             project: None,
             sources: std::collections::BTreeMap::new(),
             representation: None,

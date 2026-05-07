@@ -1948,6 +1948,7 @@ mod tests {
             relevance_tags: vec!["loop closure".into(), "ADVIO".into()],
             semantic_scholar: None,
             authority_tiers: None,
+            context_pack: Default::default(),
         }
     }
 
