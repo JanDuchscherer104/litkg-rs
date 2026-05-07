@@ -1914,12 +1914,51 @@ fn render_context_pack(pack: &ContextPack) -> String {
     let mut lines = vec![
         "litkg context pack".to_string(),
         format!("task: {}", pack.task),
+        format!("verb: {}", pack.verb),
         format!("profile: {}", pack.profile),
         format!("budget_tokens: {}", pack.budget_tokens),
         format!("truncated: {}", yes_no(pack.truncated)),
         String::new(),
-        "action plan:".to_string(),
+        format!("summary: {}", pack.task_summary),
+        "assumptions:".to_string(),
     ];
+    for assumption in &pack.assumptions {
+        lines.push(format!("  - {assumption}"));
+    }
+    lines.push(String::new());
+    lines.push("top sources:".to_string());
+    for source in &pack.top_sources {
+        lines.push(format!(
+            "  - {} ({}, authority={}, freshness={:.2}, lines {}-{})",
+            source.path,
+            source.role,
+            source.authority,
+            source.freshness,
+            source.source_span.line_start,
+            source.source_span.line_end
+        ));
+        lines.push(format!("    title: {}", source.title));
+        lines.push(format!("    why: {}", source.why_relevant.join(" | ")));
+    }
+    lines.push(String::new());
+    lines.push("required reads:".to_string());
+    for read in &pack.required_reads {
+        lines.push(format!(
+            "  - {}: {} ({})",
+            read.path, read.title, read.reason
+        ));
+    }
+    lines.push(String::new());
+    lines.push("suggested next action:".to_string());
+    lines.push(format!("  summary: {}", pack.suggested_next_action.summary));
+    if let Some(skill) = &pack.suggested_next_action.skill {
+        lines.push(format!("  skill: {skill}"));
+    }
+    if let Some(command) = &pack.suggested_next_action.command {
+        lines.push(format!("  command: {command}"));
+    }
+    lines.push(format!("  why: {}", pack.suggested_next_action.why));
+    lines.extend([String::new(), "action plan:".to_string()]);
     for action in &pack.action_plan {
         lines.push(format!("  - {action}"));
     }
@@ -1942,6 +1981,15 @@ fn render_context_pack(pack: &ContextPack) -> String {
         }
         if !item.references.is_empty() {
             lines.push(format!("    refs: {}", item.references.join(", ")));
+        }
+        if !item.acceptance.is_empty() {
+            lines.push(format!("    acceptance: {}", item.acceptance.join(" | ")));
+        }
+        if !item.verification.is_empty() {
+            lines.push(format!(
+                "    verification: {}",
+                item.verification.join(" | ")
+            ));
         }
     }
     lines.extend([String::new(), "active issues:".to_string()]);
@@ -1989,6 +2037,14 @@ fn render_context_pack(pack: &ContextPack) -> String {
             paper.paper_id,
             paper.title,
             paper.year.as_deref().unwrap_or("n/a")
+        ));
+    }
+    lines.push(String::new());
+    lines.push("missing context:".to_string());
+    for leaf in &pack.missing_context {
+        lines.push(format!(
+            "  - {} [{}]: {} -> {}",
+            leaf.provider, leaf.status, leaf.query, leaf.resolution_command
         ));
     }
     lines.push(String::new());

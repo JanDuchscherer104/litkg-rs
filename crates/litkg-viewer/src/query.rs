@@ -715,7 +715,12 @@ fn rank_record(
         lexical_score as f32,
         (!authority_tiers.is_empty()).then_some(authority_tiers),
     );
-    rank.source_type = source_type_for_record(record);
+    let source_type = source_type_for_record(record);
+    litkg_core::ranking::apply_source_quality_adjustment(
+        &mut rank,
+        &source_type,
+        Path::new(source_path),
+    );
     rank
 }
 
@@ -737,7 +742,7 @@ fn query_terms(query: &str) -> Vec<String> {
     query
         .split(|ch: char| ch.is_whitespace() || ch == '|')
         .map(str::trim)
-        .filter(|term| !term.is_empty())
+        .filter(|term| term.len() >= 3 && !litkg_core::ranking::is_search_stopword(term))
         .map(str::to_lowercase)
         .collect()
 }
@@ -959,5 +964,43 @@ mod tests {
         assert!(hits.iter().any(|hit| {
             hit.node_id == "symbol" && hit.matched_field == "rg" && hit.line_start == Some(1)
         }));
+    }
+
+    #[test]
+    fn search_penalizes_generated_context_below_code_for_equal_matches() {
+        let records = vec![
+            GraphNodeRecord::from_raw(&node(
+                "generated",
+                &["GeneratedContext"],
+                serde_json::json!({
+                    "title": "rerun_logging",
+                    "repo_path": "docs/_generated/context/source_index.md",
+                    "content": "rerun_logging"
+                }),
+            )),
+            GraphNodeRecord::from_raw(&node(
+                "code",
+                &["CodeSymbol"],
+                serde_json::json!({
+                    "qualified_name": "rerun_logging",
+                    "title": "rerun_logging",
+                    "repo_path": "src/rerun.rs",
+                    "doc_summary": "rerun_logging"
+                }),
+            )),
+        ];
+        let hits = search_records(
+            &records,
+            GraphEntryQuery {
+                query: "rerun_logging".into(),
+                filter: GraphFilter::all(),
+                repo_root: None,
+                use_rg: false,
+                limit: 10,
+                authority_tiers: BTreeMap::new(),
+            },
+        );
+        assert_eq!(hits[0].node_id, "code");
+        assert_eq!(hits[1].node_id, "generated");
     }
 }

@@ -94,7 +94,27 @@ parsed_root = \"{}\"\n\
 neo4j_export_root = \"{}\"\n\
 sink = \"graphify\"\n\
 download_pdfs = true\n\
-relevance_tags = [\"retrieval\"]\n",
+relevance_tags = [\"retrieval\"]\n\
+\n\
+[authority_tiers]\n\
+\".agents/*.toml\" = 1.4\n\
+\"AGENTS.md\" = 1.3\n\
+\".agents/skills/**/*.md\" = 1.2\n\
+\n\
+[sources.agent_guidance]\n\
+required = true\n\
+authority = \"current_guidance\"\n\
+include = [\"AGENTS.md\"]\n\
+\n\
+[sources.agent_backlog]\n\
+required = true\n\
+authority = \"active_backlog\"\n\
+include = [\".agents/*.toml\"]\n\
+\n\
+[sources.agent_skills]\n\
+required = true\n\
+authority = \"workflow\"\n\
+include = [\".agents/skills/**/*.md\"]\n",
             manifest_path.display(),
             bib_path.display(),
             tex_root.display(),
@@ -133,7 +153,9 @@ description = \"Build evidence bundles for agents before MCP wrapping.\"\n\
 priority = \"critical\"\n\
 status = \"open\"\n\
 context = [\"Client repo backlog records use singular TOML tables and description fields.\"]\n\
-references = [\"repo:.agents/issues.toml\", \"litkg:context-pack\"]\n",
+references = [\"repo:.agents/issues.toml\", \"litkg:context-pack\"]\n\
+acceptance = [\"Context-pack JSON carries issue acceptance criteria.\"]\n\
+verification = [\"cargo test -p litkg-core context_pack\"]\n",
     )
     .unwrap();
     fs::write(
@@ -150,7 +172,9 @@ loc_min = 200\n\
 loc_expected = 400\n\
 loc_max = 800\n\
 context = [\"Backlog context should survive agent handoff.\"]\n\
-references = [\"repo:.agents/todos.toml\", \"litkg:context-pack\"]\n",
+references = [\"repo:.agents/todos.toml\", \"litkg:context-pack\"]\n\
+acceptance = [\"Context-pack JSON carries todo acceptance criteria.\"]\n\
+verification = [\"cargo test -p litkg-cli context_pack\"]\n",
     )
     .unwrap();
     fs::write(
@@ -581,12 +605,17 @@ fn context_pack_command_reports_stable_json_contract() {
         .as_str()
         .unwrap()
         .contains("Context pack"));
+    assert_eq!(json["verb"], "route");
     for field in [
+        "assumptions",
+        "top_sources",
+        "required_reads",
         "action_plan",
         "evidence_spans",
         "relevant_symbols",
         "relevant_papers",
         "active_backlog",
+        "missing_context",
         "missing_leaves",
         "risk_flags",
         "verification_commands",
@@ -607,6 +636,14 @@ fn context_pack_command_reports_stable_json_contract() {
         json["active_issues"][0]["references"][0],
         "repo:.agents/issues.toml"
     );
+    assert_eq!(
+        json["active_issues"][0]["acceptance"][0],
+        "Context-pack JSON carries issue acceptance criteria."
+    );
+    assert_eq!(
+        json["active_issues"][0]["verification"][0],
+        "cargo test -p litkg-core context_pack"
+    );
     assert_eq!(json["active_todos"][0]["id"], "TODO-0030");
     assert_eq!(
         json["active_todos"][0]["summary"],
@@ -620,8 +657,47 @@ fn context_pack_command_reports_stable_json_contract() {
         json["active_todos"][0]["references"][0],
         "repo:.agents/todos.toml"
     );
+    assert_eq!(
+        json["active_todos"][0]["acceptance"][0],
+        "Context-pack JSON carries todo acceptance criteria."
+    );
+    assert_eq!(
+        json["active_todos"][0]["verification"][0],
+        "cargo test -p litkg-cli context_pack"
+    );
     assert!(!json["evidence_spans"].as_array().unwrap().is_empty());
+    assert!(!json["top_sources"].as_array().unwrap().is_empty());
+    assert!(json["top_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|source| source["authority"] == "active_backlog"
+            && source["source_span"]["line_start"].is_number()
+            && source["scores"]["source_type"].is_string()
+            && source["why_relevant"].is_array()));
+    assert!(!json["required_reads"].as_array().unwrap().is_empty());
+    assert!(json["suggested_next_action"]["summary"].is_string());
+    let suggested = format!(
+        "{} {} {}",
+        json["suggested_next_action"]["summary"]
+            .as_str()
+            .unwrap_or_default(),
+        json["suggested_next_action"]["skill"]
+            .as_str()
+            .unwrap_or_default(),
+        json["suggested_next_action"]["command"]
+            .as_str()
+            .unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    assert!(!suggested.contains("context7"));
+    assert!(!suggested.contains("semantic_scholar"));
     assert_eq!(json["relevant_papers"][0]["paper_id"], "demo2025paper");
+    assert!(json["missing_context"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|leaf| leaf["provider"] == "Context7"));
     assert!(json["missing_context_leaves"]
         .as_array()
         .unwrap()
@@ -721,9 +797,15 @@ fn context_pack_command_reports_text_sections() {
 
     let text = String::from_utf8(output).unwrap();
     assert!(text.contains("litkg context pack"));
+    assert!(text.contains("summary:"));
+    assert!(text.contains("assumptions:"));
+    assert!(text.contains("top sources:"));
+    assert!(text.contains("required reads:"));
+    assert!(text.contains("suggested next action:"));
     assert!(text.contains("action plan:"));
     assert!(text.contains("active issues:"));
     assert!(text.contains("evidence spans:"));
+    assert!(text.contains("missing context:"));
     assert!(text.contains("missing leaves:"));
     assert!(text.contains("risk flags:"));
     assert!(text.contains("backend status:"));

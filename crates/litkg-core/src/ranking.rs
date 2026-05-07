@@ -89,6 +89,112 @@ pub fn calculate_weighted_score(
     }
 }
 
+pub fn is_search_stopword(term: &str) -> bool {
+    matches!(
+        term,
+        "a" | "an"
+            | "and"
+            | "are"
+            | "as"
+            | "at"
+            | "be"
+            | "by"
+            | "for"
+            | "from"
+            | "in"
+            | "into"
+            | "is"
+            | "it"
+            | "of"
+            | "on"
+            | "or"
+            | "that"
+            | "the"
+            | "this"
+            | "to"
+            | "with"
+            | "about"
+            | "after"
+            | "before"
+            | "can"
+            | "could"
+            | "make"
+            | "need"
+            | "needs"
+            | "use"
+            | "using"
+            | "work"
+            | "write"
+            | "writing"
+            | "task"
+            | "implement"
+            | "implementation"
+            | "fix"
+            | "update"
+            | "change"
+            | "edit"
+            | "add"
+            | "remove"
+            | "refactor"
+    )
+}
+
+pub fn source_quality_adjustment(source_type: &str, source_path: &Path) -> (f32, Option<String>) {
+    let path = normalize_path(&source_path.to_string_lossy()).to_ascii_lowercase();
+    if source_type == "generated_context" {
+        return (
+            0.55,
+            Some("penalized generated context below authored/current sources".into()),
+        );
+    }
+    if matches!(source_type, "audit_log" | "transcript" | "episodic_memory") {
+        return (
+            0.5,
+            Some("penalized audit/transcript/episodic material below curated sources".into()),
+        );
+    }
+    if path.contains("/audit")
+        || path.contains("audit_")
+        || path.contains("/transcript")
+        || path.contains("transcript_")
+        || path.ends_with(".rrd")
+    {
+        return (
+            0.5,
+            Some("penalized audit/transcript-like material below curated sources".into()),
+        );
+    }
+    if path.ends_with(".agents/resolved.toml") {
+        return (
+            0.35,
+            Some("penalized resolved backlog below active backlog".into()),
+        );
+    }
+    match source_type {
+        "active_backlog" => (1.25, Some("boosted active backlog source".into())),
+        "code" => (1.2, Some("boosted implementation code source".into())),
+        "agent_guidance" | "agent_skill" => {
+            (1.15, Some("boosted owning guidance or skill source".into()))
+        }
+        "docs" => (1.08, Some("boosted authored documentation source".into())),
+        "canonical_memory" => (1.05, Some("boosted canonical memory source".into())),
+        _ => (1.0, None),
+    }
+}
+
+pub fn apply_source_quality_adjustment(
+    score: &mut WeightedScore,
+    source_type: &str,
+    source_path: &Path,
+) {
+    score.source_type = source_type.to_string();
+    let (multiplier, why) = source_quality_adjustment(source_type, source_path);
+    score.score_final *= multiplier;
+    if let Some(why) = why {
+        score.why.push(why);
+    }
+}
+
 fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
 }
@@ -133,11 +239,31 @@ fn infer_source_type(source_path: &Path) -> String {
         || path.starts_with("docs/_generated/context/")
     {
         "generated_context".into()
+    } else if path.contains("/transcript")
+        || path.contains("transcript_")
+        || path.contains("/session")
+        || path.contains("session_")
+    {
+        "transcript".into()
+    } else if path.contains("/audit") || path.contains("audit_") {
+        "audit_log".into()
     } else if path.contains("/.agents/skills/") || path.starts_with(".agents/skills/") {
         "agent_skill".into()
     } else if path.ends_with("AGENTS.md") {
         "agent_guidance".into()
-    } else if path.contains("/aria_nbv/") || path.starts_with("aria_nbv/") {
+    } else if path.contains("/aria_nbv/")
+        || path.starts_with("aria_nbv/")
+        || path.ends_with(".rs")
+        || path.ends_with(".py")
+        || path.ends_with(".ts")
+        || path.ends_with(".tsx")
+        || path.ends_with(".js")
+        || path.ends_with(".jsx")
+        || path.contains("/src/")
+        || path.starts_with("src/")
+        || path.contains("/crates/")
+        || path.starts_with("crates/")
+    {
         "code".into()
     } else if path.contains("/docs/") || path.starts_with("docs/") {
         "docs".into()
