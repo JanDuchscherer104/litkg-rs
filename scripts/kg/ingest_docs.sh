@@ -125,12 +125,14 @@ class SanitizingOpenAIGenericClient(OpenAIGenericClient):
         normalized = dict(item)
         source = (
             normalized.get("source_entity_name")
+            or normalized.get("source_entity")
             or normalized.get("subject")
             or normalized.get("source")
             or normalized.get("from")
         )
         target = (
             normalized.get("target_entity_name")
+            or normalized.get("target_entity")
             or normalized.get("object")
             or normalized.get("target")
             or normalized.get("to")
@@ -139,6 +141,7 @@ class SanitizingOpenAIGenericClient(OpenAIGenericClient):
             normalized.get("relation_type")
             or normalized.get("predicate")
             or normalized.get("relation")
+            or normalized.get("relationship")
             or normalized.get("edge_type")
         )
         fact = normalized.get("fact") or normalized.get("description") or normalized.get("summary")
@@ -208,15 +211,19 @@ class SanitizingOpenAIGenericClient(OpenAIGenericClient):
                     payload = {field_name: payload}
                 if field_name == "edges" and isinstance(payload, dict):
                     edges = payload.get(field_name, [])
+                    flattened_edges: list[object] = []
                     if isinstance(edges, list):
-                        payload[field_name] = [
-                            SanitizingOpenAIGenericClient._normalize_edge_item(edge)
-                            for edge in edges
-                        ]
+                        for edge in edges:
+                            if isinstance(edge, dict) and isinstance(edge.get(field_name), list):
+                                flattened_edges.extend(edge[field_name])
+                            else:
+                                flattened_edges.append(edge)
                     else:
-                        payload[field_name] = [
-                            SanitizingOpenAIGenericClient._normalize_edge_item(edges)
-                        ]
+                        flattened_edges = [edges]
+                    payload[field_name] = [
+                        SanitizingOpenAIGenericClient._normalize_edge_item(edge)
+                        for edge in flattened_edges
+                    ]
                 if field_name == "extracted_entities" and isinstance(payload, dict):
                     entities = payload.get(field_name, [])
                     normalized_entities: list[object] = []

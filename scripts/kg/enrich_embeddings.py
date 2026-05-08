@@ -646,9 +646,21 @@ def main() -> int:
         )
         return 1
 
+    token_filter_enabled = os.environ.get("KG_SKIP_TOKEN_FILTER", "0") not in {
+        "1",
+        "true",
+        "True",
+        "yes",
+        "YES",
+    }
+    token_filter_for_infer = (
+        pick_token_filter_model(installed_models)
+        if token_filter_enabled and enable_doc_links and graphiti_records
+        else None
+    )
     ignored_tokens = infer_common_tokens(
         chat_url,
-        pick_token_filter_model(installed_models),
+        token_filter_for_infer,
         code_records,
         graphiti_records,
     )
@@ -665,12 +677,16 @@ def main() -> int:
         for record in all_records
         if not embedding_is_current(record, embedding_model, embedding_dim)
     ]
+    embed_batch_size = int(os.environ.get("KG_EMBED_BATCH_SIZE", "8"))
+    if embed_batch_size < 1:
+        raise RuntimeError("KG_EMBED_BATCH_SIZE must be >= 1.")
+    embedded_count = 0
     for record_batch in batch(
         [
             {"node_id": record.node_id, "text": record.text}
             for record in records_to_embed
         ],
-        size=32,
+        size=embed_batch_size,
     ):
         embeddings = embed_texts(
             embed_url,
@@ -678,10 +694,18 @@ def main() -> int:
             [row["text"] for row in record_batch],
             embedding_dim,
         )
+        updated_records: list[NodeRecord] = []
         for row, embedding in zip(record_batch, embeddings, strict=True):
-            record_by_id[row["node_id"]].embedding = embedding
+            record = record_by_id[row["node_id"]]
+            record.embedding = embedding
+            updated_records.append(record)
+        update_embeddings(client, updated_records, embedding_model, embedding_dim)
+        embedded_count += len(updated_records)
+        print(
+            f"Embedded {embedded_count}/{len(records_to_embed)} nodes with {embedding_model}.",
+            flush=True,
+        )
 
-    update_embeddings(client, records_to_embed, embedding_model, embedding_dim)
     create_vector_index(client, embedding_dim)
 
     if not enable_doc_links:

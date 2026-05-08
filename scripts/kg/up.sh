@@ -43,4 +43,23 @@ mkdir -p \
   "${KG_DATA_ROOT_ABS}/neo4j/data" \
   "${KG_DATA_ROOT_ABS}/neo4j/plugins"
 
-docker compose -f "${REPO_ROOT}/infra/neo4j/docker-compose.yml" up -d --force-recreate
+run_docker_compose() {
+  if [[ -n "${DOCKER_CONFIG:-}" ]]; then
+    docker compose "$@"
+    return
+  fi
+
+  local docker_config="${HOME}/.docker/config.json"
+  if [[ ! -f "${docker_config}" ]] || ! grep -q '"credsStore"[[:space:]]*:[[:space:]]*"desktop"' "${docker_config}"; then
+    docker compose "$@"
+    return
+  fi
+
+  local tmp_config
+  tmp_config="$(mktemp -d)"
+  trap "rm -rf '${tmp_config}'" EXIT
+  printf '{"auths":{}}\n' > "${tmp_config}/config.json"
+  DOCKER_CONFIG="${tmp_config}" docker compose "$@"
+}
+
+run_docker_compose -f "${REPO_ROOT}/infra/neo4j/docker-compose.yml" up -d --force-recreate
