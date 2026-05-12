@@ -83,12 +83,14 @@ mod tests {
             relevance_tags: vec!["ViSTA-SLAM".into()],
             semantic_scholar: None,
             authority_tiers: None,
+            synonyms: std::collections::BTreeMap::new(),
             context_pack: Default::default(),
             project: None,
             sources: std::collections::BTreeMap::new(),
             representation: None,
             backends: None,
             storage: None,
+            runtime: None,
         };
         let papers = vec![ParsedPaper {
             kind: DocumentKind::Literature,

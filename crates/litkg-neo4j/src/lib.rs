@@ -1,4 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use litkg_core::{
     build_python_code_graph, infer_enriched_edges, load_agent_backlog, load_project_memory,
     AgentBacklogRecord, CodeCall, CodeImport, DocumentKind, MemoryChunkKind, MemoryNode,
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Neo4jNode {
@@ -29,6 +31,147 @@ pub struct Neo4jExportBundle {
     pub root: PathBuf,
     pub nodes: Vec<Neo4jNode>,
     pub edges: Vec<Neo4jEdge>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Neo4jHttpConfig {
+    pub base_url: String,
+    pub database: String,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Neo4jVectorHit {
+    pub node_id: String,
+    pub score: f32,
+    pub title: String,
+    pub kind: String,
+    pub labels: Vec<String>,
+    pub repo_path: Option<String>,
+    pub line_start: Option<usize>,
+    pub line_end: Option<usize>,
+    pub snippet: Option<String>,
+}
+
+impl Neo4jHttpConfig {
+    pub fn from_env() -> Self {
+        let neo4j_uri =
+            std::env::var("NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".into());
+        let base_url = std::env::var("NEO4J_HTTP_URL").unwrap_or_else(|_| {
+            let host = neo4j_uri
+                .trim_start_matches("bolt://")
+                .trim_start_matches("neo4j://")
+                .split(':')
+                .next()
+                .filter(|host| !host.is_empty())
+                .unwrap_or("localhost");
+            format!("http://{host}:7474")
+        });
+        Self {
+            base_url,
+            database: std::env::var("NEO4J_DATABASE").unwrap_or_else(|_| "neo4j".into()),
+            username: std::env::var("NEO4J_USERNAME")
+                .or_else(|_| std::env::var("NEO4J_USER"))
+                .unwrap_or_else(|_| "neo4j".into()),
+            password: std::env::var("NEO4J_PASSWORD").unwrap_or_else(|_| "litkglocal".into()),
+        }
+    }
+
+    fn tx_url(&self) -> String {
+        format!(
+            "{}/db/{}/tx/commit",
+            self.base_url.trim_end_matches('/'),
+            self.database
+        )
+    }
+
+    fn auth_header(&self) -> String {
+        format!(
+            "Basic {}",
+            BASE64.encode(format!("{}:{}", self.username, self.password))
+        )
+    }
+}
+
+pub fn query_vector_index(
+    config: &Neo4jHttpConfig,
+    index_name: &str,
+    limit: usize,
+    embedding: &[f32],
+) -> Result<Vec<Neo4jVectorHit>> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
+        .into();
+    let payload = serde_json::json!({
+        "statements": [{
+            "statement": "\
+CALL db.index.vector.queryNodes($index_name, $limit, $embedding) YIELD node, score
+RETURN {
+  node_id: coalesce(node.id, node.litkg_id, elementId(node)),
+  score: score,
+  title: coalesce(node.title, node.qualified_name, node.name, node.paper_id, node.id, node.litkg_id),
+  kind: head(labels(node)),
+  labels: labels(node),
+  repo_path: coalesce(node.repo_path, node.source_path, node.path, node.relative_path),
+  line_start: coalesce(node.line_start, node.line_number),
+  line_end: node.line_end,
+  snippet: coalesce(node.content, node.text, node.summary, node.doc_summary, node.abstract)
+} AS hit",
+            "parameters": {
+                "index_name": index_name,
+                "limit": limit.max(1),
+                "embedding": embedding,
+            },
+            "resultDataContents": ["row"],
+        }]
+    });
+    let mut response = agent
+        .post(&config.tx_url())
+        .header("Authorization", config.auth_header())
+        .header("Accept", "application/json")
+        .send_json(payload)
+        .with_context(|| format!("Neo4j vector query failed at {}", config.base_url))?;
+    let body = response
+        .body_mut()
+        .read_json::<serde_json::Value>()
+        .context("Failed to parse Neo4j vector query response")?;
+    neo4j_errors(&body)?;
+    let rows = body
+        .get("results")
+        .and_then(|results| results.as_array())
+        .and_then(|results| results.first())
+        .and_then(|result| result.get("data"))
+        .and_then(|data| data.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut hits = Vec::new();
+    for row in rows {
+        let Some(hit) = row
+            .get("row")
+            .and_then(|row| row.as_array())
+            .and_then(|row| row.first())
+        else {
+            continue;
+        };
+        hits.push(serde_json::from_value::<Neo4jVectorHit>(hit.clone())?);
+    }
+    Ok(hits)
+}
+
+fn neo4j_errors(body: &serde_json::Value) -> Result<()> {
+    let errors = body
+        .get("errors")
+        .and_then(|errors| errors.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!("Neo4j error: {}", errors[0]))
+    }
 }
 
 pub struct Neo4jSink;
@@ -801,12 +944,14 @@ mod tests {
             relevance_tags: vec![],
             semantic_scholar: None,
             authority_tiers: None,
+            synonyms: std::collections::BTreeMap::new(),
             context_pack: Default::default(),
             project: None,
             sources: std::collections::BTreeMap::new(),
             representation: None,
             backends: None,
             storage: None,
+            runtime: None,
         }
     }
 

@@ -550,6 +550,7 @@ fn kg_find_returns_stable_json_hits() {
             "--modality",
             "literature",
             "--no-rg",
+            "--lexical-only",
             "--format",
             "json",
         ])
@@ -560,7 +561,8 @@ fn kg_find_returns_stable_json_hits() {
         .clone();
 
     let json: Value = serde_json::from_slice(&output).unwrap();
-    let hits = json.as_array().unwrap();
+    assert_eq!(json["search_mode"], "lexical_only");
+    let hits = json["results"].as_array().unwrap();
     assert!(!hits.is_empty());
     assert!(hits.iter().any(|hit| {
         hit["kind"] == "PaperSection"

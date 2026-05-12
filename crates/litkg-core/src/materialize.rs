@@ -425,7 +425,9 @@ mod tests {
             relevance_tags: vec!["ViSTA-SLAM".into(), "ADVIO".into()],
             semantic_scholar: None,
             authority_tiers: None,
+            synonyms: std::collections::BTreeMap::new(),
             context_pack: Default::default(),
+            runtime: None,
         }
     }
 

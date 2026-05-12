@@ -1,5 +1,6 @@
+use rust_stemmers::{Algorithm, Stemmer};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -12,6 +13,198 @@ pub struct WeightedScore {
     pub score_final: f32,
     pub authority: String,
     pub why: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bm25Params {
+    pub k1: f32,
+    pub b: f32,
+}
+
+impl Default for Bm25Params {
+    fn default() -> Self {
+        Self { k1: 1.5, b: 0.75 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bm25Document {
+    pub terms: BTreeMap<String, usize>,
+    pub length: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bm25Corpus {
+    params: Bm25Params,
+    document_count: usize,
+    average_document_length: f32,
+    document_frequencies: BTreeMap<String, usize>,
+}
+
+pub struct SearchTokenizer {
+    stemmer: Stemmer,
+}
+
+impl Default for SearchTokenizer {
+    fn default() -> Self {
+        Self {
+            stemmer: Stemmer::create(Algorithm::English),
+        }
+    }
+}
+
+impl SearchTokenizer {
+    pub fn raw_tokens(&self, text: &str) -> Vec<String> {
+        raw_search_tokens(text)
+    }
+
+    pub fn stem_token(&self, token: &str) -> String {
+        self.stemmer.stem(token).to_string()
+    }
+
+    pub fn stemmed_tokens(&self, text: &str) -> Vec<String> {
+        self.raw_tokens(text)
+            .into_iter()
+            .map(|token| self.stem_token(&token))
+            .filter(|token| !token.is_empty())
+            .collect()
+    }
+
+    pub fn expanded_query_terms(
+        &self,
+        raw_terms: &[String],
+        synonyms: &BTreeMap<String, Vec<String>>,
+    ) -> Vec<String> {
+        let mut terms = BTreeSet::new();
+        for raw_term in raw_terms {
+            let normalized = normalize_search_token(raw_term);
+            if normalized.is_empty() || is_search_stopword(&normalized) {
+                continue;
+            }
+            terms.insert(self.stem_token(&normalized));
+            if let Some(expansions) = synonyms
+                .get(&normalized)
+                .or_else(|| synonyms.get(&self.stem_token(&normalized)))
+            {
+                for expansion in expansions {
+                    for expansion_term in self.stemmed_tokens(expansion) {
+                        terms.insert(expansion_term);
+                    }
+                }
+            }
+        }
+        terms.into_iter().collect()
+    }
+}
+
+impl Bm25Document {
+    pub fn from_text(tokenizer: &SearchTokenizer, text: &str) -> Self {
+        let mut terms = BTreeMap::new();
+        let mut length = 0;
+        for token in tokenizer.stemmed_tokens(text) {
+            *terms.entry(token).or_insert(0) += 1;
+            length += 1;
+        }
+        Self { terms, length }
+    }
+}
+
+impl Bm25Corpus {
+    pub fn from_documents(documents: &[Bm25Document], params: Bm25Params) -> Self {
+        let document_count = documents.len();
+        let total_length = documents
+            .iter()
+            .map(|document| document.length)
+            .sum::<usize>();
+        let average_document_length = if document_count == 0 {
+            1.0
+        } else {
+            (total_length as f32 / document_count as f32).max(1.0)
+        };
+        let mut document_frequencies = BTreeMap::<String, usize>::new();
+        for document in documents {
+            for term in document.terms.keys() {
+                *document_frequencies.entry(term.clone()).or_insert(0) += 1;
+            }
+        }
+        Self {
+            params,
+            document_count,
+            average_document_length,
+            document_frequencies,
+        }
+    }
+
+    pub fn score(&self, document: &Bm25Document, query_terms: &[String]) -> f32 {
+        if self.document_count == 0 || document.length == 0 || query_terms.is_empty() {
+            return 0.0;
+        }
+        let mut score = 0.0;
+        for term in query_terms.iter().collect::<BTreeSet<_>>() {
+            let Some(&term_frequency) = document.terms.get(term.as_str()) else {
+                continue;
+            };
+            let document_frequency = *self.document_frequencies.get(term.as_str()).unwrap_or(&0);
+            let idf = ((self.document_count as f32 - document_frequency as f32 + 0.5)
+                / (document_frequency as f32 + 0.5)
+                + 1.0)
+                .ln();
+            let tf = term_frequency as f32;
+            let length = document.length as f32;
+            let denominator = tf
+                + self.params.k1
+                    * (1.0 - self.params.b + self.params.b * length / self.average_document_length);
+            if denominator > 0.0 {
+                score += idf * (tf * (self.params.k1 + 1.0)) / denominator;
+            }
+        }
+        score
+    }
+
+    pub fn vocabulary(&self) -> BTreeSet<String> {
+        self.document_frequencies.keys().cloned().collect()
+    }
+}
+
+pub fn raw_search_tokens(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .map(normalize_search_token)
+        .filter(|token| token.len() >= 2 && !is_search_stopword(token))
+        .collect()
+}
+
+pub fn normalize_search_token(token: &str) -> String {
+    token
+        .trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| ch.is_alphanumeric())
+        .collect()
+}
+
+pub fn best_fuzzy_replacement(
+    token: &str,
+    vocabulary: &BTreeSet<String>,
+    max_distance: usize,
+) -> Option<String> {
+    let normalized = normalize_search_token(token);
+    if normalized.len() < 5 || is_search_stopword(&normalized) {
+        return None;
+    }
+    vocabulary
+        .iter()
+        .filter(|candidate| candidate.len() >= 5)
+        .filter_map(|candidate| {
+            let distance = strsim::levenshtein(&normalized, candidate);
+            (distance <= max_distance).then_some((distance, candidate))
+        })
+        .min_by(|(left_distance, left), (right_distance, right)| {
+            left_distance
+                .cmp(right_distance)
+                .then_with(|| left.len().cmp(&right.len()))
+                .then_with(|| left.cmp(right))
+        })
+        .map(|(_, candidate)| candidate.clone())
 }
 
 pub fn calculate_weighted_score(

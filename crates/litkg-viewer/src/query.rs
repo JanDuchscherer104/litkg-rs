@@ -1,4 +1,8 @@
 use anyhow::Result;
+use litkg_core::ranking::{
+    best_fuzzy_replacement, raw_search_tokens, Bm25Corpus, Bm25Document, Bm25Params,
+    SearchTokenizer,
+};
 use litkg_neo4j::{load_export_bundle, Neo4jExportBundle, Neo4jNode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -168,6 +172,35 @@ pub struct GraphSearchHit {
     pub rank: Option<litkg_core::WeightedScore>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GraphSearchResponse {
+    pub results: Vec<GraphSearchHit>,
+    pub search_mode: String,
+    pub mode_reason: String,
+    pub query_fixups: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GraphSearchOptions {
+    pub bm25_k1: f32,
+    pub bm25_b: f32,
+    pub synonyms: BTreeMap<String, Vec<String>>,
+    pub search_mode: String,
+    pub mode_reason: String,
+}
+
+impl Default for GraphSearchOptions {
+    fn default() -> Self {
+        Self {
+            bm25_k1: 1.5,
+            bm25_b: 0.75,
+            synonyms: BTreeMap::new(),
+            search_mode: "lexical_only".into(),
+            mode_reason: String::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GraphNodeRecord {
     pub id: String,
@@ -238,27 +271,59 @@ pub fn load_and_search_bundle(
     bundle_root: impl AsRef<Path>,
     query: GraphEntryQuery,
 ) -> Result<Vec<GraphSearchHit>> {
+    Ok(
+        load_and_search_bundle_with_options(bundle_root, query, GraphSearchOptions::default())?
+            .results,
+    )
+}
+
+pub fn load_and_search_bundle_with_options(
+    bundle_root: impl AsRef<Path>,
+    query: GraphEntryQuery,
+    options: GraphSearchOptions,
+) -> Result<GraphSearchResponse> {
     let bundle = load_export_bundle(bundle_root)?;
-    Ok(search_export_bundle(&bundle, query))
+    Ok(search_export_bundle_with_options(&bundle, query, options))
 }
 
 pub fn search_export_bundle(
     bundle: &Neo4jExportBundle,
     query: GraphEntryQuery,
 ) -> Vec<GraphSearchHit> {
+    search_export_bundle_with_options(bundle, query, GraphSearchOptions::default()).results
+}
+
+pub fn search_export_bundle_with_options(
+    bundle: &Neo4jExportBundle,
+    query: GraphEntryQuery,
+    options: GraphSearchOptions,
+) -> GraphSearchResponse {
     let records = build_node_records(bundle);
-    search_records(&records, query)
+    search_records_with_options(&records, query, options)
 }
 
 pub fn search_records(records: &[GraphNodeRecord], query: GraphEntryQuery) -> Vec<GraphSearchHit> {
+    search_records_with_options(records, query, GraphSearchOptions::default()).results
+}
+
+pub fn search_records_with_options(
+    records: &[GraphNodeRecord],
+    query: GraphEntryQuery,
+    options: GraphSearchOptions,
+) -> GraphSearchResponse {
     let limit = query.limit.max(1);
-    let mut hits = metadata_search(records, &query);
+    let (mut hits, query_fixups) = metadata_search(records, &query, &options);
     if query.use_rg {
         if let Some(repo_root) = query.repo_root.as_ref() {
             hits.extend(rg_search(records, &query, repo_root));
         }
     }
-    dedup_and_rank(hits, limit)
+    GraphSearchResponse {
+        results: dedup_and_rank(hits, limit),
+        search_mode: options.search_mode,
+        mode_reason: options.mode_reason,
+        query_fixups,
+    }
 }
 
 pub fn classify_modality(
@@ -446,22 +511,65 @@ pub fn truncate(value: &str, max_len: usize) -> String {
     format!("{clipped}…")
 }
 
-fn metadata_search(records: &[GraphNodeRecord], query: &GraphEntryQuery) -> Vec<GraphSearchHit> {
+fn metadata_search(
+    records: &[GraphNodeRecord],
+    query: &GraphEntryQuery,
+    options: &GraphSearchOptions,
+) -> (Vec<GraphSearchHit>, Vec<String>) {
     let raw_query = query.query.trim();
-    let query_lower = raw_query.to_lowercase();
-    let terms = query_terms(raw_query);
-    let mut hits = Vec::new();
-
-    for record in records
+    let tokenizer = SearchTokenizer::default();
+    let candidate_records = records
         .iter()
         .filter(|record| query.filter.matches(record.modality))
-    {
-        let (score, matched_field) = if query_lower.is_empty() {
-            (1, "default".to_string())
+        .collect::<Vec<_>>();
+    let document_texts = candidate_records
+        .iter()
+        .map(|record| weighted_record_text(record))
+        .collect::<Vec<_>>();
+    let documents = document_texts
+        .iter()
+        .map(|text| Bm25Document::from_text(&tokenizer, text))
+        .collect::<Vec<_>>();
+    let corpus = Bm25Corpus::from_documents(
+        &documents,
+        Bm25Params {
+            k1: options.bm25_k1,
+            b: options.bm25_b,
+        },
+    );
+    let raw_vocabulary = document_texts
+        .iter()
+        .flat_map(|text| raw_search_tokens(text))
+        .collect::<BTreeSet<_>>();
+    let stem_vocabulary = corpus.vocabulary();
+    let (effective_raw_terms, query_fixups) =
+        corrected_query_terms(raw_query, &tokenizer, &raw_vocabulary, &stem_vocabulary);
+    let query_terms = tokenizer.expanded_query_terms(&effective_raw_terms, &options.synonyms);
+    let effective_query = effective_raw_terms.join(" ");
+    let query_lower = effective_query.to_lowercase();
+    let mut hits = Vec::new();
+
+    for (record, document) in candidate_records.into_iter().zip(documents.iter()) {
+        let bm25_score = if query_lower.is_empty() {
+            1.0
         } else {
-            score_record(record, query_lower.as_str(), &terms)
+            corpus.score(document, &query_terms)
         };
-        if score > 0 {
+        let substring_score =
+            substring_match_score(record, query_lower.as_str(), &effective_raw_terms);
+        let lexical_score = if bm25_score > 0.0 {
+            bm25_score
+        } else {
+            substring_score as f32 / 1000.0
+        };
+        if lexical_score > 0.0 {
+            let score = if bm25_score > 0.0 {
+                (bm25_score * 1000.0).round().max(1.0) as i64
+            } else {
+                substring_score.max(1)
+            };
+            let matched_field =
+                matched_field_for_record(record, query_lower.as_str(), &query_terms);
             hits.push(GraphSearchHit {
                 node_id: record.id.clone(),
                 title: record.title.clone(),
@@ -473,60 +581,146 @@ fn metadata_search(records: &[GraphNodeRecord], query: &GraphEntryQuery) -> Vec<
                 line_start: record.line_start,
                 line_end: record.line_end,
                 snippet: (!record.description.is_empty()).then(|| record.description.clone()),
-                rank: Some(rank_record(record, score, &query.authority_tiers)),
+                rank: Some(rank_record(record, lexical_score, &query.authority_tiers)),
             });
         }
     }
-    hits
+    (hits, query_fixups)
 }
 
-fn score_record(record: &GraphNodeRecord, query: &str, terms: &[String]) -> (i64, String) {
-    let mut score = 0;
-    let mut matched = "search_text";
+fn corrected_query_terms(
+    query: &str,
+    tokenizer: &SearchTokenizer,
+    raw_vocabulary: &BTreeSet<String>,
+    stem_vocabulary: &BTreeSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut corrected = Vec::new();
+    let mut fixups = Vec::new();
+    for raw_term in tokenizer.raw_tokens(query) {
+        let stem = tokenizer.stem_token(&raw_term);
+        let mut fuzzy_vocabulary = raw_vocabulary.clone();
+        fuzzy_vocabulary.remove(&raw_term);
+        if let Some(replacement) = best_fuzzy_replacement(&raw_term, &fuzzy_vocabulary, 2) {
+            let replacement_stem = tokenizer.stem_token(&replacement);
+            if stem_vocabulary.contains(&replacement_stem)
+                && (!stem_vocabulary.contains(&stem) || replacement_stem != stem)
+            {
+                fixups.push(format!("{raw_term}->{replacement}"));
+                corrected.push(replacement);
+                continue;
+            }
+        }
+        corrected.push(raw_term);
+    }
+    (corrected, fixups)
+}
+
+fn matched_field_for_record(record: &GraphNodeRecord, query: &str, terms: &[String]) -> String {
     let title = record.title.to_lowercase();
     let id = record.id.to_lowercase();
     let path = record.repo_path.clone().unwrap_or_default().to_lowercase();
     let description = record.description.to_lowercase();
-    if title == query {
-        score += 1000;
-        matched = "title";
-    } else if title.contains(query) {
-        score += 240;
-        matched = "title";
-    }
-    if id.contains(query) {
-        score += 180;
-        matched = "id";
-    }
-    if path.contains(query) {
-        score += 140;
-        matched = "path";
-    }
-    if description.contains(query) {
-        score += 120;
-        matched = "description";
-    }
-    if record.search_text.contains(query) {
-        score += 80;
+    if !query.is_empty() {
+        if title == query || title.contains(query) {
+            return "title".into();
+        }
+        if id.contains(query) {
+            return "id".into();
+        }
+        if path.contains(query) {
+            return "path".into();
+        }
+        if description.contains(query) {
+            return "description".into();
+        }
+        if record.search_text.contains(query) {
+            return "search_text".into();
+        }
     }
     for term in terms {
-        if title.contains(term) {
+        if stemmed_field_contains(&title, term) {
+            return "title".into();
+        }
+        if stemmed_field_contains(&id, term) {
+            return "id".into();
+        }
+        if stemmed_field_contains(&path, term) {
+            return "path".into();
+        }
+        if stemmed_field_contains(&description, term) {
+            return "description".into();
+        }
+        if stemmed_field_contains(&record.search_text, term) {
+            return "search_text".into();
+        }
+    }
+    "bm25".into()
+}
+
+fn substring_match_score(record: &GraphNodeRecord, query: &str, terms: &[String]) -> i64 {
+    let mut score = 0;
+    let title = record.title.to_lowercase();
+    let id = record.id.to_lowercase();
+    let path = record.repo_path.clone().unwrap_or_default().to_lowercase();
+    let description = record.description.to_lowercase();
+    if !query.is_empty() {
+        if title == query {
+            score += 1000;
+        } else if title.contains(query) {
+            score += 240;
+        }
+        if id.contains(query) {
+            score += 180;
+        }
+        if path.contains(query) {
+            score += 140;
+        }
+        if description.contains(query) {
+            score += 120;
+        }
+        if record.search_text.contains(query) {
+            score += 80;
+        }
+    }
+    for term in terms {
+        let term = term.to_lowercase();
+        if title.contains(&term) {
             score += 60;
         }
-        if id.contains(term) {
+        if id.contains(&term) {
             score += 35;
         }
-        if path.contains(term) {
+        if path.contains(&term) {
             score += 30;
         }
-        if description.contains(term) {
+        if description.contains(&term) {
             score += 25;
         }
-        if record.search_text.contains(term) {
+        if record.search_text.contains(&term) {
             score += 10;
         }
     }
-    (score, matched.to_string())
+    score
+}
+
+fn stemmed_field_contains(field: &str, term: &str) -> bool {
+    let tokenizer = SearchTokenizer::default();
+    tokenizer
+        .stemmed_tokens(field)
+        .iter()
+        .any(|item| item == term)
+}
+
+fn weighted_record_text(record: &GraphNodeRecord) -> String {
+    let mut parts = Vec::new();
+    parts.extend(std::iter::repeat(record.title.as_str()).take(4));
+    parts.extend(std::iter::repeat(record.id.as_str()).take(3));
+    if let Some(path) = &record.repo_path {
+        parts.extend(std::iter::repeat(path.as_str()).take(2));
+    }
+    parts.extend(std::iter::repeat(record.description.as_str()).take(2));
+    parts.push(record.search_text.as_str());
+    parts.join("\n")
 }
 
 fn rg_search(
@@ -621,7 +815,7 @@ fn rg_search(
                 snippet: snippet.clone(),
                 rank: Some(rank_record(
                     record,
-                    if title_or_id_match { 1050 } else { 700 },
+                    if title_or_id_match { 1050.0 } else { 700.0 },
                     &query.authority_tiers,
                 )),
             });
@@ -672,7 +866,9 @@ fn dedup_and_rank(hits: Vec<GraphSearchHit>, limit: usize) -> Vec<GraphSearchHit
     for hit in hits {
         best.entry(hit.node_id.clone())
             .and_modify(|existing| {
-                if hit.score > existing.score {
+                if hit.matched_field == "rg" && existing.matched_field != "rg" {
+                    *existing = hit.clone();
+                } else if hit.score > existing.score {
                     *existing = hit.clone();
                 }
             })
@@ -702,7 +898,7 @@ fn dedup_and_rank(hits: Vec<GraphSearchHit>, limit: usize) -> Vec<GraphSearchHit
 
 fn rank_record(
     record: &GraphNodeRecord,
-    lexical_score: i64,
+    lexical_score: f32,
     authority_tiers: &BTreeMap<String, f32>,
 ) -> litkg_core::WeightedScore {
     let source_path = record
@@ -712,7 +908,7 @@ fn rank_record(
         .unwrap_or_else(|| record.id.as_str());
     let mut rank = litkg_core::calculate_weighted_score(
         Path::new(source_path),
-        lexical_score as f32,
+        lexical_score,
         (!authority_tiers.is_empty()).then_some(authority_tiers),
     );
     let source_type = source_type_for_record(record);
@@ -736,15 +932,6 @@ fn source_type_for_record(record: &GraphNodeRecord) -> String {
         GraphModality::All => "default",
     }
     .into()
-}
-
-fn query_terms(query: &str) -> Vec<String> {
-    query
-        .split(|ch: char| ch.is_whitespace() || ch == '|')
-        .map(str::trim)
-        .filter(|term| term.len() >= 3 && !litkg_core::ranking::is_search_stopword(term))
-        .map(str::to_lowercase)
-        .collect()
 }
 
 fn build_search_text(
@@ -1002,5 +1189,131 @@ mod tests {
         );
         assert_eq!(hits[0].node_id, "code");
         assert_eq!(hits[1].node_id, "generated");
+    }
+
+    #[test]
+    fn stemming_collapses_viewpoint_variants() {
+        let records = vec![GraphNodeRecord::from_raw(&node(
+            "paper:hestia",
+            &["Paper"],
+            serde_json::json!({
+                "title": "Next-Best-View Hierarchical Network",
+                "content": "Viewpoint planning for target proposal and pose realization."
+            }),
+        ))];
+        let base = GraphEntryQuery {
+            query: "viewpoint".into(),
+            filter: GraphFilter::all(),
+            repo_root: None,
+            use_rg: false,
+            limit: 10,
+            authority_tiers: BTreeMap::new(),
+        };
+        let singular = search_records(&records, base.clone());
+        let plural = search_records(
+            &records,
+            GraphEntryQuery {
+                query: "viewpoints".into(),
+                ..base
+            },
+        );
+        assert_eq!(singular[0].node_id, plural[0].node_id);
+    }
+
+    #[test]
+    fn fuzzy_fixups_recover_typo_tokens() {
+        let records = vec![GraphNodeRecord::from_raw(&node(
+            "paper:hestia",
+            &["Paper"],
+            serde_json::json!({
+                "title": "Next-Best-View Hierarchical Network",
+                "content": "Hierarchical viewpoint planning separates target proposal from pose realization."
+            }),
+        ))];
+        let response = search_records_with_options(
+            &records,
+            GraphEntryQuery {
+                query: "hierachical viewpoint".into(),
+                filter: GraphFilter::all(),
+                repo_root: None,
+                use_rg: false,
+                limit: 10,
+                authority_tiers: BTreeMap::new(),
+            },
+            GraphSearchOptions::default(),
+        );
+        assert_eq!(response.results[0].node_id, "paper:hestia");
+        assert!(response
+            .query_fixups
+            .iter()
+            .any(|fixup| fixup == "hierachical->hierarchical"));
+    }
+
+    #[test]
+    fn bm25_rare_terms_outrank_repeated_common_terms() {
+        let records = vec![
+            GraphNodeRecord::from_raw(&node(
+                "paper:common",
+                &["Paper"],
+                serde_json::json!({
+                    "title": "Common Viewpoint Survey",
+                    "content": "viewpoint viewpoint viewpoint viewpoint viewpoint viewpoint"
+                }),
+            )),
+            GraphNodeRecord::from_raw(&node(
+                "paper:rare",
+                &["Paper"],
+                serde_json::json!({
+                    "title": "Hierarchical Viewpoint Planner",
+                    "content": "hierarchical viewpoint decomposition"
+                }),
+            )),
+        ];
+        let hits = search_records(
+            &records,
+            GraphEntryQuery {
+                query: "hierarchical viewpoint".into(),
+                filter: GraphFilter::all(),
+                repo_root: None,
+                use_rg: false,
+                limit: 10,
+                authority_tiers: BTreeMap::new(),
+            },
+        );
+        assert_eq!(hits[0].node_id, "paper:rare");
+    }
+
+    #[test]
+    fn synonym_expansion_finds_next_best_view_papers() {
+        let records = vec![GraphNodeRecord::from_raw(&node(
+            "paper:hestia",
+            &["Paper"],
+            serde_json::json!({
+                "title": "Next-Best-View Hierarchical Network",
+                "content": "A target-aware method for pose realization."
+            }),
+        ))];
+        let mut synonyms = BTreeMap::new();
+        synonyms.insert(
+            "nbv".into(),
+            vec!["next best view".into(), "viewpoint".into()],
+        );
+        synonyms.insert("selection".into(), vec!["view".into(), "viewpoint".into()]);
+        let response = search_records_with_options(
+            &records,
+            GraphEntryQuery {
+                query: "NBV view selection".into(),
+                filter: GraphFilter::all(),
+                repo_root: None,
+                use_rg: false,
+                limit: 10,
+                authority_tiers: BTreeMap::new(),
+            },
+            GraphSearchOptions {
+                synonyms,
+                ..GraphSearchOptions::default()
+            },
+        );
+        assert_eq!(response.results[0].node_id, "paper:hestia");
     }
 }

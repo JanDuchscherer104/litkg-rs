@@ -1322,6 +1322,7 @@ mod tests {
             relevance_tags: vec![],
             semantic_scholar: None,
             authority_tiers: None,
+            synonyms: BTreeMap::new(),
             context_pack: Default::default(),
             project: Some(crate::config::ProjectConfig {
                 id: "fixture".into(),
@@ -1332,6 +1333,7 @@ mod tests {
             representation: None,
             backends: None,
             storage: None,
+            runtime: None,
         }
     }
 

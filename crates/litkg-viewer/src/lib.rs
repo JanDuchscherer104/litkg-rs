@@ -9,8 +9,10 @@ use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use petgraph::Direction;
 mod query;
 pub use query::{
-    build_node_records, classify_modality, load_and_search_bundle, search_export_bundle,
-    search_records, GraphEntryQuery, GraphFilter, GraphModality, GraphNodeRecord, GraphSearchHit,
+    build_node_records, classify_modality, load_and_search_bundle,
+    load_and_search_bundle_with_options, search_export_bundle, search_export_bundle_with_options,
+    search_records, search_records_with_options, GraphEntryQuery, GraphFilter, GraphModality,
+    GraphNodeRecord, GraphSearchHit, GraphSearchOptions, GraphSearchResponse,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::f32::consts::TAU;

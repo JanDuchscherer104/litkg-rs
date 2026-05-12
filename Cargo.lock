@@ -2207,6 +2207,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -2225,12 +2226,14 @@ dependencies = [
  "parquet",
  "pulldown-cmark",
  "regex",
+ "rust-stemmers",
  "rustpython-parser",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2",
  "slug",
+ "strsim",
  "tar",
  "tempfile",
  "toml",
@@ -2253,10 +2256,12 @@ name = "litkg-neo4j"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "litkg-core",
  "serde",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -3218,6 +3223,16 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rust-stemmers"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e46a2036019fdb888131db7a4c847a1063a7493f971ed94ea82c67eada63ca54"
+dependencies = [
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]

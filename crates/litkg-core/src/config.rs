@@ -36,6 +36,8 @@ pub struct RepoConfig {
     #[serde(default)]
     pub authority_tiers: Option<BTreeMap<String, f32>>,
     #[serde(default)]
+    pub synonyms: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     pub context_pack: ContextPackConfig,
 
     // New sections from expanded toml
@@ -49,6 +51,8 @@ pub struct RepoConfig {
     pub backends: Option<BackendsConfig>,
     #[serde(default)]
     pub storage: Option<StorageConfig>,
+    #[serde(default)]
+    pub runtime: Option<RuntimeConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +63,12 @@ pub struct ContextPackConfig {
     pub min_top_source_score: f32,
     #[serde(default = "default_backlog_min_score")]
     pub backlog_min_score: f32,
+    #[serde(default = "default_bm25_k1")]
+    pub bm25_k1: f32,
+    #[serde(default = "default_bm25_b")]
+    pub bm25_b: f32,
+    #[serde(default = "default_lexical_weight")]
+    pub lexical_weight: f32,
 }
 
 impl Default for ContextPackConfig {
@@ -67,6 +77,9 @@ impl Default for ContextPackConfig {
             max_active_backlog_items: default_max_active_backlog_items(),
             min_top_source_score: default_min_top_source_score(),
             backlog_min_score: default_backlog_min_score(),
+            bm25_k1: default_bm25_k1(),
+            bm25_b: default_bm25_b(),
+            lexical_weight: default_lexical_weight(),
         }
     }
 }
@@ -81,6 +94,63 @@ fn default_min_top_source_score() -> f32 {
 
 fn default_backlog_min_score() -> f32 {
     0.25
+}
+
+fn default_bm25_k1() -> f32 {
+    1.5
+}
+
+fn default_bm25_b() -> f32 {
+    0.75
+}
+
+fn default_lexical_weight() -> f32 {
+    0.4
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RuntimeConfig {
+    #[serde(default)]
+    pub ollama: Option<OllamaRuntimeConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OllamaRuntimeConfig {
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_ollama_embedding_model")]
+    pub embedding_model: String,
+    #[serde(default = "default_ollama_embedding_dim")]
+    pub embedding_dim: usize,
+    #[serde(default = "default_ollama_chat_model")]
+    pub chat_model: String,
+}
+
+impl Default for OllamaRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_ollama_base_url(),
+            embedding_model: default_ollama_embedding_model(),
+            embedding_dim: default_ollama_embedding_dim(),
+            chat_model: default_ollama_chat_model(),
+        }
+    }
+}
+
+fn default_ollama_base_url() -> String {
+    "http://127.0.0.1:11434/v1".into()
+}
+
+fn default_ollama_embedding_model() -> String {
+    "qwen3-embedding:4b".into()
+}
+
+fn default_ollama_embedding_dim() -> usize {
+    2560
+}
+
+fn default_ollama_chat_model() -> String {
+    "gemma4:26b".into()
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

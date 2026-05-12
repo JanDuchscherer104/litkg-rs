@@ -28,6 +28,22 @@ from neo4j_ready import check_neo4j
 DEFAULT_EMBEDDING_DIM = 2560
 CODE_LABELS = ("File", "Module", "Class", "Function")
 GRAPHITI_LABELS = ("Episodic", "Entity", "Community")
+LITKG_CONTENT_LABELS = (
+    "Paper",
+    "PaperSection",
+    "Document",
+    "DocSection",
+    "ProjectMemory",
+    "MemorySurface",
+    "GeneratedContext",
+    "DataContract",
+    "AgentBacklogIssue",
+    "AgentBacklogTodo",
+    "ResearchNote",
+    "ResearchNoteSection",
+    "Transcript",
+    "TranscriptSection",
+)
 TOKEN_KEEP_SHORT = {"kg", "tex", "bib"}
 TOKEN_FILTER_CANDIDATE_LIMIT = 96
 TOKEN_FILTER_RETURN_LIMIT = 24
@@ -362,6 +378,51 @@ def build_graphiti_text(props: dict[str, Any], labels: list[str]) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def build_litkg_content_text(props: dict[str, Any], labels: list[str]) -> str:
+    lines = [
+        f"kind: {', '.join(labels)}",
+        f"id: {props.get('id', props.get('litkg_id', ''))}",
+        f"title: {props.get('title', props.get('name', ''))}",
+        f"paper_id: {props.get('paper_id', '')}",
+        f"citation_key: {props.get('citation_key', '')}",
+        f"source_path: {props.get('source_path', props.get('repo_path', ''))}",
+        f"summary: {props.get('summary', props.get('doc_summary', ''))}",
+        f"abstract: {props.get('abstract', '')}",
+    ]
+    content = str(props.get("content", props.get("text", "")))[:3000]
+    if content:
+        lines.append(f"content: {content}")
+    extra = {
+        key: value
+        for key, value in props.items()
+        if key
+        not in {
+            "id",
+            "litkg_id",
+            "title",
+            "name",
+            "paper_id",
+            "citation_key",
+            "source_path",
+            "repo_path",
+            "summary",
+            "doc_summary",
+            "abstract",
+            "content",
+            "text",
+            "kg_embedding",
+            "kg_embedding_model",
+            "kg_embedding_dim",
+        }
+        and value not in (None, "", [], {})
+    }
+    if extra:
+        lines.append(
+            f"attributes: {json.dumps(extra, ensure_ascii=True, sort_keys=True)[:1200]}"
+        )
+    return "\n".join(line for line in lines if line)
+
+
 def fetch_records(
     client: Neo4jHTTP,
     labels: tuple[str, ...],
@@ -407,11 +468,12 @@ def fetch_records(
             (label for label in labels_for_node if label in labels), labels_for_node[0]
         )
         name = str(props.get("name", ""))
-        text = (
-            build_code_text(props, labels_for_node)
-            if kind in CODE_LABELS
-            else build_graphiti_text(props, labels_for_node)
-        )
+        if kind in CODE_LABELS:
+            text = build_code_text(props, labels_for_node)
+        elif kind in GRAPHITI_LABELS:
+            text = build_graphiti_text(props, labels_for_node)
+        else:
+            text = build_litkg_content_text(props, labels_for_node)
         records.append(
             NodeRecord(
                 node_id=int(row["node_id"]),
@@ -629,6 +691,7 @@ def main() -> int:
     client = Neo4jHTTP(neo4j_http_url, neo4j_database, neo4j_username, neo4j_password)
 
     code_records = fetch_records(client, CODE_LABELS, path_prefixes=code_path_prefixes)
+    content_records = fetch_records(client, LITKG_CONTENT_LABELS)
     graphiti_records = (
         fetch_records(client, GRAPHITI_LABELS, group_id=graphiti_group_id)
         if enable_doc_links
@@ -639,8 +702,9 @@ def main() -> int:
             f"No matching code nodes found for KG_CODE_PATH_PREFIX={os.environ.get('KG_CODE_PATH_PREFIX')}.",
             file=sys.stderr,
         )
-        return 1
-    if not code_records and not graphiti_records:
+        if not content_records and not graphiti_records:
+            return 1
+    if not code_records and not graphiti_records and not content_records:
         print(
             "No matching Neo4j nodes found for embedding enrichment.", file=sys.stderr
         )
@@ -665,7 +729,7 @@ def main() -> int:
         graphiti_records,
     )
 
-    all_records = code_records + graphiti_records
+    all_records = code_records + content_records + graphiti_records
     for record in all_records:
         record.tokens = normalize_tokens(record.text, ignored_tokens)
     embed_limit = int(os.environ.get("KG_EMBED_LIMIT", "0"))

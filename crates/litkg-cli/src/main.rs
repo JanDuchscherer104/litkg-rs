@@ -18,10 +18,11 @@ use litkg_core::{
     SemanticScholarSearchRequest, SinkMode,
 };
 use litkg_graphify::GraphifySink;
-use litkg_neo4j::Neo4jSink;
+use litkg_neo4j::{query_vector_index, Neo4jHttpConfig, Neo4jSink, Neo4jVectorHit};
 use litkg_viewer::{
-    load_and_search_bundle, run_bundle_with_options as run_viewer_bundle_with_options,
-    GraphEntryQuery, GraphFilter, GraphModality, GraphSearchHit, ViewerOptions,
+    classify_modality, load_and_search_bundle_with_options,
+    run_bundle_with_options as run_viewer_bundle_with_options, GraphEntryQuery, GraphFilter,
+    GraphModality, GraphSearchHit, GraphSearchOptions, GraphSearchResponse, ViewerOptions,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -182,6 +183,10 @@ struct KgFindCommand {
     limit: usize,
     #[arg(long = "no-rg", default_value_t = false)]
     no_rg: bool,
+    #[arg(long = "lexical-only", default_value_t = false)]
+    lexical_only: bool,
+    #[arg(long = "alpha")]
+    alpha: Option<f32>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
 }
@@ -1182,8 +1187,22 @@ fn run_kg_find(args: KgFindCommand) -> Result<()> {
         limit: args.limit,
         authority_tiers: config.authority_tiers.clone().unwrap_or_default(),
     };
-    let hits = load_and_search_bundle(&bundle_root, query)?;
-    print_structured_output(&hits, args.format, |hits| render_graph_search_hits(hits))
+    let search_options = GraphSearchOptions {
+        bm25_k1: config.context_pack.bm25_k1,
+        bm25_b: config.context_pack.bm25_b,
+        synonyms: config.synonyms.clone(),
+        search_mode: "lexical_only".into(),
+        mode_reason: if args.lexical_only {
+            "explicit_lexical_only".into()
+        } else {
+            String::new()
+        },
+    };
+    let mut response = load_and_search_bundle_with_options(&bundle_root, query, search_options)?;
+    if !args.lexical_only {
+        apply_hybrid_vector_search(&mut response, &config, &args.query, args.limit, args.alpha)?;
+    }
+    print_structured_output(&response, args.format, render_graph_search_response)
 }
 
 fn run_kg_consolidate(args: KgConsolidateCommand) -> Result<()> {
@@ -1479,6 +1498,293 @@ fn absolutize_config_path(repo_root: &Path, path: &mut PathBuf) {
     if !path.is_absolute() {
         *path = repo_root.join(&path);
     }
+}
+
+fn apply_hybrid_vector_search(
+    response: &mut GraphSearchResponse,
+    config: &RepoConfig,
+    query: &str,
+    limit: usize,
+    alpha: Option<f32>,
+) -> Result<()> {
+    if query.trim().is_empty() {
+        return Ok(());
+    }
+    let settings = ollama_runtime_settings(config);
+    let embedding = match embed_query(&settings, query) {
+        Ok(embedding) => embedding,
+        Err(_) => {
+            response.search_mode = "lexical_only".into();
+            response.mode_reason = "ollama_unreachable".into();
+            return Ok(());
+        }
+    };
+    let vector_hits = match query_vector_index(
+        &Neo4jHttpConfig::from_env(),
+        format!("kg_embedding_index_{}", settings.embedding_dim).as_str(),
+        limit.max(12),
+        &embedding,
+    ) {
+        Ok(hits) => hits,
+        Err(_) => {
+            response.search_mode = "lexical_only".into();
+            response.mode_reason = "neo4j_unreachable".into();
+            return Ok(());
+        }
+    };
+    if !vector_hits.iter().any(vector_hit_has_literature_or_memory) {
+        response.search_mode = "lexical_only".into();
+        response.mode_reason = "paper_coverage_missing".into();
+        return Ok(());
+    }
+    let mut lexical_weight = alpha
+        .unwrap_or(config.context_pack.lexical_weight)
+        .clamp(0.0, 1.0);
+    if !response.query_fixups.is_empty() {
+        lexical_weight = lexical_weight.max(0.75);
+    }
+    response.results = blend_hybrid_hits(
+        std::mem::take(&mut response.results),
+        vector_hits,
+        lexical_weight,
+        limit.max(1),
+    );
+    response.search_mode = "hybrid".into();
+    response.mode_reason = String::new();
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct OllamaRuntimeSettings {
+    base_url: String,
+    embedding_model: String,
+    embedding_dim: usize,
+}
+
+fn ollama_runtime_settings(config: &RepoConfig) -> OllamaRuntimeSettings {
+    let configured = config
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.ollama.as_ref());
+    OllamaRuntimeSettings {
+        base_url: std::env::var("OLLAMA_BASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| configured.map(|settings| settings.base_url.clone()))
+            .unwrap_or_else(|| "http://127.0.0.1:11434/v1".into()),
+        embedding_model: std::env::var("EMBEDDING_MODEL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| configured.map(|settings| settings.embedding_model.clone()))
+            .unwrap_or_else(|| "qwen3-embedding:4b".into()),
+        embedding_dim: std::env::var("EMBEDDING_DIM")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .or_else(|| configured.map(|settings| settings.embedding_dim))
+            .unwrap_or(2560),
+    }
+}
+
+fn embed_query(settings: &OllamaRuntimeSettings, query: &str) -> Result<Vec<f32>> {
+    let url = format!("{}/api/embed", ollama_api_base(&settings.base_url));
+    let payload = serde_json::json!({
+        "model": settings.embedding_model,
+        "input": [query],
+    });
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .into();
+    let mut response = agent
+        .post(&url)
+        .header("Accept", "application/json")
+        .send_json(payload)
+        .with_context(|| format!("Ollama embedding request failed at {url}"))?;
+    let body = response
+        .body_mut()
+        .read_json::<serde_json::Value>()
+        .context("Failed to parse Ollama embedding response")?;
+    let embedding = body
+        .get("embeddings")
+        .and_then(|embeddings| embeddings.as_array())
+        .and_then(|embeddings| embeddings.first())
+        .and_then(|embedding| embedding.as_array())
+        .context("Ollama response did not include embeddings[0]")?
+        .iter()
+        .map(|value| {
+            value
+                .as_f64()
+                .map(|value| value as f32)
+                .context("Ollama embedding contained a non-numeric value")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if embedding.len() != settings.embedding_dim {
+        anyhow::bail!(
+            "Ollama embedding dimension {} did not match expected {}",
+            embedding.len(),
+            settings.embedding_dim
+        );
+    }
+    Ok(embedding)
+}
+
+fn ollama_api_base(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
+}
+
+fn blend_hybrid_hits(
+    lexical_hits: Vec<GraphSearchHit>,
+    vector_hits: Vec<Neo4jVectorHit>,
+    lexical_weight: f32,
+    limit: usize,
+) -> Vec<GraphSearchHit> {
+    let max_lexical = lexical_hits
+        .iter()
+        .filter(|hit| hit.matched_field != "rg")
+        .filter_map(|hit| hit.rank.as_ref().map(|rank| rank.score_lexical))
+        .fold(0.0_f32, f32::max)
+        .max(1.0);
+    let mut merged = BTreeMap::<String, (GraphSearchHit, f32, f32)>::new();
+    for hit in lexical_hits {
+        let raw_lexical = hit
+            .rank
+            .as_ref()
+            .map(|rank| rank.score_lexical)
+            .unwrap_or(0.0);
+        let lexical = if hit.matched_field == "rg" {
+            0.5
+        } else {
+            raw_lexical / max_lexical
+        };
+        merged.insert(hit.node_id.clone(), (hit, lexical, 0.0));
+    }
+    for vector_hit in vector_hits {
+        let cosine = vector_hit.score.clamp(0.0, 1.0);
+        merged
+            .entry(vector_hit.node_id.clone())
+            .and_modify(|(hit, _, existing_cosine)| {
+                *existing_cosine = (*existing_cosine).max(cosine);
+                if hit.matched_field != "embedding" {
+                    hit.matched_field = "hybrid".into();
+                }
+            })
+            .or_insert_with(|| (graph_hit_from_vector(vector_hit), 0.0, cosine));
+    }
+    let semantic_weight = 1.0 - lexical_weight;
+    let mut hits = merged
+        .into_values()
+        .map(|(mut hit, lexical, cosine)| {
+            let combined = lexical_weight * lexical + semantic_weight * cosine;
+            hit.score = (combined * 1000.0).round().max(1.0) as i64;
+            if let Some(rank) = hit.rank.as_mut() {
+                rank.score_lexical = lexical;
+                rank.score_final = combined;
+                rank.why
+                    .push(format!("hybrid lexical={lexical:.3} cosine={cosine:.3}"));
+            }
+            hit
+        })
+        .collect::<Vec<_>>();
+    hits.sort_by(|left, right| {
+        let left_score = left
+            .rank
+            .as_ref()
+            .map(|rank| rank.score_final)
+            .unwrap_or(left.score as f32);
+        let right_score = right
+            .rank
+            .as_ref()
+            .map(|rank| rank.score_final)
+            .unwrap_or(right.score as f32);
+        right_score
+            .partial_cmp(&left_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.title.cmp(&right.title))
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    hits.truncate(limit);
+    hits
+}
+
+fn graph_hit_from_vector(hit: Neo4jVectorHit) -> GraphSearchHit {
+    let mut properties = BTreeMap::new();
+    if let Some(repo_path) = &hit.repo_path {
+        properties.insert("repo_path".to_string(), repo_path.clone());
+    }
+    let modality = classify_modality(&hit.labels, &properties);
+    GraphSearchHit {
+        node_id: hit.node_id,
+        title: hit.title,
+        kind: hit.kind,
+        modality,
+        score: (hit.score.clamp(0.0, 1.0) * 1000.0).round().max(1.0) as i64,
+        matched_field: "embedding".into(),
+        repo_path: hit.repo_path,
+        line_start: hit.line_start,
+        line_end: hit.line_end,
+        snippet: hit
+            .snippet
+            .map(|snippet| truncate_text(snippet.trim(), 700)),
+        rank: Some(litkg_core::WeightedScore {
+            source_type: graph_modality_source_type(modality).into(),
+            score_lexical: 0.0,
+            score_authority: 1.0,
+            score_freshness: 1.0,
+            score_final: hit.score.clamp(0.0, 1.0),
+            authority: "semantic".into(),
+            why: vec!["matched Neo4j vector index".into()],
+        }),
+    }
+}
+
+fn graph_modality_source_type(modality: GraphModality) -> &'static str {
+    match modality {
+        GraphModality::Code => "code",
+        GraphModality::Docs => "docs",
+        GraphModality::GeneratedContext => "generated_context",
+        GraphModality::Literature => "literature",
+        GraphModality::Memory => "canonical_memory",
+        GraphModality::Backlog => "active_backlog",
+        GraphModality::ExternalDocs => "external_docs",
+        GraphModality::All => "default",
+    }
+}
+
+fn vector_hit_has_literature_or_memory(hit: &Neo4jVectorHit) -> bool {
+    hit.labels.iter().any(|label| {
+        matches!(
+            label.as_str(),
+            "Paper" | "PaperSection" | "Document" | "DocSection" | "ProjectMemory"
+        )
+    })
+}
+
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>()
+        + "..."
+}
+
+fn render_graph_search_response(response: &GraphSearchResponse) -> String {
+    let mut rendered = render_graph_search_hits(&response.results);
+    rendered.push_str(&format!("\n# search_mode: {}", response.search_mode));
+    if !response.mode_reason.is_empty() {
+        rendered.push_str(&format!("  (reason: {})", response.mode_reason));
+    }
+    if !response.query_fixups.is_empty() {
+        rendered.push_str(&format!(
+            "\n# query_fixups: {}",
+            response.query_fixups.join(", ")
+        ));
+    }
+    rendered
 }
 
 fn render_graph_search_hits(hits: &[GraphSearchHit]) -> String {
