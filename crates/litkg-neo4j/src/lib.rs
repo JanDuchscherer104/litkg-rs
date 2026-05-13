@@ -187,6 +187,15 @@ impl Neo4jSink {
 
         for paper in papers {
             let paper_id = format!("paper:{}", paper.metadata.paper_id);
+            // Provenance is the originating QMD / LaTeX root path stored at
+            // markdown.rs:145 and tex.rs:111. Metadata-only papers from
+            // references.bib have empty provenance, so fall back to the bib
+            // file itself. Both paths are tiered as canonical in litkg.toml.
+            let source_path = paper
+                .provenance
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "docs/references.bib".into());
             nodes.insert(
                 paper_id.clone(),
                 Neo4jNode {
@@ -202,6 +211,8 @@ impl Neo4jSink {
                         "url": paper.metadata.url,
                         "parse_status": format!("{:?}", paper.metadata.parse_status),
                         "document_kind": document_kind_name(paper.kind),
+                        "source_path": source_path,
+                        "repo_path": source_path,
                         "semantic_scholar_paper_id": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.paper_id.clone()),
                         "semantic_scholar_corpus_id": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.corpus_id),
                         "citation_count": paper.metadata.semantic_scholar.as_ref().and_then(|item| item.citation_count),
@@ -296,6 +307,8 @@ impl Neo4jSink {
                             "level": section.level,
                             "content": section.content,
                             "document_kind": document_kind_name(paper.kind),
+                            "source_path": source_path,
+                            "repo_path": source_path,
                         }),
                     },
                 );
@@ -1086,6 +1099,49 @@ tags: [frames]
         assert_eq!(written.len(), 2);
         assert!(config.neo4j_export_root().join("nodes.jsonl").is_file());
         assert!(config.neo4j_export_root().join("edges.jsonl").is_file());
+    }
+
+    #[test]
+    fn paper_nodes_carry_source_path_from_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config(dir.path());
+
+        let mut qmd_paper = sample_paper("rri-theory", "rri-theory", "RRI Theory");
+        qmd_paper.provenance = vec!["docs/contents/literature/rri_theory.qmd".into()];
+        qmd_paper.sections = vec![litkg_core::PaperSection {
+            level: 1,
+            title: "Definition".into(),
+            content: "Body".into(),
+        }];
+
+        let mut bib_paper = sample_paper("hestia-lu2026", "hestia2026", "Hestia");
+        bib_paper.metadata.source_kind = SourceKind::Bib;
+        bib_paper.metadata.parse_status = ParseStatus::MetadataOnly;
+        bib_paper.provenance = vec![];
+
+        Neo4jSink::export(&config, &vec![qmd_paper, bib_paper]).unwrap();
+        let nodes = fs::read_to_string(config.neo4j_export_root().join("nodes.jsonl")).unwrap();
+        let by_id: BTreeMap<String, serde_json::Value> = nodes
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                (value["id"].as_str().unwrap().to_string(), value)
+            })
+            .collect();
+
+        assert_eq!(
+            by_id["paper:rri-theory"]["properties"]["source_path"],
+            "docs/contents/literature/rri_theory.qmd"
+        );
+        assert_eq!(
+            by_id["paper:rri-theory:section:0"]["properties"]["source_path"],
+            "docs/contents/literature/rri_theory.qmd"
+        );
+        assert_eq!(
+            by_id["paper:hestia-lu2026"]["properties"]["source_path"],
+            "docs/references.bib"
+        );
     }
 
     #[test]
