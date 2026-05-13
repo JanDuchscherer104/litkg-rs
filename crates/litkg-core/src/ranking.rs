@@ -70,11 +70,7 @@ impl SearchTokenizer {
             .collect()
     }
 
-    pub fn expanded_query_terms(
-        &self,
-        raw_terms: &[String],
-        synonyms: &BTreeMap<String, Vec<String>>,
-    ) -> Vec<String> {
+    pub fn query_terms(&self, raw_terms: &[String]) -> Vec<String> {
         let mut terms = BTreeSet::new();
         for raw_term in raw_terms {
             let normalized = normalize_search_token(raw_term);
@@ -82,16 +78,6 @@ impl SearchTokenizer {
                 continue;
             }
             terms.insert(self.stem_token(&normalized));
-            if let Some(expansions) = synonyms
-                .get(&normalized)
-                .or_else(|| synonyms.get(&self.stem_token(&normalized)))
-            {
-                for expansion in expansions {
-                    for expansion_term in self.stemmed_tokens(expansion) {
-                        terms.insert(expansion_term);
-                    }
-                }
-            }
         }
         terms.into_iter().collect()
     }

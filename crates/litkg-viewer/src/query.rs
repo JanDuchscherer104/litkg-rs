@@ -184,7 +184,6 @@ pub struct GraphSearchResponse {
 pub struct GraphSearchOptions {
     pub bm25_k1: f32,
     pub bm25_b: f32,
-    pub synonyms: BTreeMap<String, Vec<String>>,
     pub search_mode: String,
     pub mode_reason: String,
 }
@@ -194,7 +193,6 @@ impl Default for GraphSearchOptions {
         Self {
             bm25_k1: 1.5,
             bm25_b: 0.75,
-            synonyms: BTreeMap::new(),
             search_mode: "lexical_only".into(),
             mode_reason: String::new(),
         }
@@ -544,7 +542,7 @@ fn metadata_search(
     let stem_vocabulary = corpus.vocabulary();
     let (effective_raw_terms, query_fixups) =
         corrected_query_terms(raw_query, &tokenizer, &raw_vocabulary, &stem_vocabulary);
-    let query_terms = tokenizer.expanded_query_terms(&effective_raw_terms, &options.synonyms);
+    let query_terms = tokenizer.query_terms(&effective_raw_terms);
     let effective_query = effective_raw_terms.join(" ");
     let query_lower = effective_query.to_lowercase();
     let mut hits = Vec::new();
@@ -598,16 +596,19 @@ fn corrected_query_terms(
     let mut fixups = Vec::new();
     for raw_term in tokenizer.raw_tokens(query) {
         let stem = tokenizer.stem_token(&raw_term);
-        let mut fuzzy_vocabulary = raw_vocabulary.clone();
-        fuzzy_vocabulary.remove(&raw_term);
-        if let Some(replacement) = best_fuzzy_replacement(&raw_term, &fuzzy_vocabulary, 2) {
-            let replacement_stem = tokenizer.stem_token(&replacement);
-            if stem_vocabulary.contains(&replacement_stem)
-                && (!stem_vocabulary.contains(&stem) || replacement_stem != stem)
-            {
-                fixups.push(format!("{raw_term}->{replacement}"));
-                corrected.push(replacement);
-                continue;
+        // Only fire the fuzzy fallback when the original token is absent from the
+        // corpus (no exact-stem hit); otherwise we'd rewrite valid terms to typos
+        // that happen to appear as Levenshtein neighbours.
+        if !stem_vocabulary.contains(&stem) {
+            let mut fuzzy_vocabulary = raw_vocabulary.clone();
+            fuzzy_vocabulary.remove(&raw_term);
+            if let Some(replacement) = best_fuzzy_replacement(&raw_term, &fuzzy_vocabulary, 2) {
+                let replacement_stem = tokenizer.stem_token(&replacement);
+                if stem_vocabulary.contains(&replacement_stem) {
+                    fixups.push(format!("{raw_term}->{replacement}"));
+                    corrected.push(replacement);
+                    continue;
+                }
             }
         }
         corrected.push(raw_term);
@@ -1283,37 +1284,4 @@ mod tests {
         assert_eq!(hits[0].node_id, "paper:rare");
     }
 
-    #[test]
-    fn synonym_expansion_finds_next_best_view_papers() {
-        let records = vec![GraphNodeRecord::from_raw(&node(
-            "paper:hestia",
-            &["Paper"],
-            serde_json::json!({
-                "title": "Next-Best-View Hierarchical Network",
-                "content": "A target-aware method for pose realization."
-            }),
-        ))];
-        let mut synonyms = BTreeMap::new();
-        synonyms.insert(
-            "nbv".into(),
-            vec!["next best view".into(), "viewpoint".into()],
-        );
-        synonyms.insert("selection".into(), vec!["view".into(), "viewpoint".into()]);
-        let response = search_records_with_options(
-            &records,
-            GraphEntryQuery {
-                query: "NBV view selection".into(),
-                filter: GraphFilter::all(),
-                repo_root: None,
-                use_rg: false,
-                limit: 10,
-                authority_tiers: BTreeMap::new(),
-            },
-            GraphSearchOptions {
-                synonyms,
-                ..GraphSearchOptions::default()
-            },
-        );
-        assert_eq!(response.results[0].node_id, "paper:hestia");
-    }
 }

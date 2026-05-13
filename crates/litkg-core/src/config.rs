@@ -36,8 +36,6 @@ pub struct RepoConfig {
     #[serde(default)]
     pub authority_tiers: Option<BTreeMap<String, f32>>,
     #[serde(default)]
-    pub synonyms: BTreeMap<String, Vec<String>>,
-    #[serde(default)]
     pub context_pack: ContextPackConfig,
 
     // New sections from expanded toml

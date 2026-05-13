@@ -2193,7 +2193,6 @@ mod tests {
                 (".agents/*.toml".into(), 1.4),
                 ("crates/**/*.rs".into(), 1.2),
             ])),
-            synonyms: BTreeMap::new(),
             context_pack: Default::default(),
             project: None,
             sources,

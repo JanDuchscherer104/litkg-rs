@@ -1948,7 +1948,6 @@ mod tests {
             relevance_tags: vec!["loop closure".into(), "ADVIO".into()],
             semantic_scholar: None,
             authority_tiers: None,
-            synonyms: std::collections::BTreeMap::new(),
             context_pack: Default::default(),
             runtime: None,
         }

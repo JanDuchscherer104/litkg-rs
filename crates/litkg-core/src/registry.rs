@@ -325,7 +325,6 @@ mod tests {
             relevance_tags: vec![],
             semantic_scholar: None,
             authority_tiers: None,
-            synonyms: std::collections::BTreeMap::new(),
             context_pack: Default::default(),
             runtime: None,
         }

@@ -1190,7 +1190,6 @@ fn run_kg_find(args: KgFindCommand) -> Result<()> {
     let search_options = GraphSearchOptions {
         bm25_k1: config.context_pack.bm25_k1,
         bm25_b: config.context_pack.bm25_b,
-        synonyms: config.synonyms.clone(),
         search_mode: "lexical_only".into(),
         mode_reason: if args.lexical_only {
             "explicit_lexical_only".into()
