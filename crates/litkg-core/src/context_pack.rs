@@ -17,16 +17,24 @@ pub struct ContextPackRequest {
     pub task: String,
     pub budget_tokens: usize,
     pub profile: String,
+    // When true (the default), build_context_pack skips bulk and legacy
+    // payload fields. Callers that need the legacy shape (debugging,
+    // back-compat consumers) opt out via the CLI `--full` flag.
+    pub lean: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ContextPack {
     pub task: String,
     pub verb: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub profile: String,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub budget_tokens: usize,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub truncated: bool,
     pub task_summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assumptions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
@@ -41,19 +49,33 @@ pub struct ContextPack {
     pub top_sources: Vec<ContextTopSource>,
     pub required_reads: Vec<ContextRequiredRead>,
     pub suggested_next_action: ContextSuggestedNextAction,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub action_plan: Vec<String>,
     pub active_backlog: Vec<ContextBacklogItem>,
     pub active_issues: Vec<ContextBacklogItem>,
     pub active_todos: Vec<ContextBacklogItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_spans: Vec<ContextEvidenceSpan>,
     pub relevant_symbols: Vec<ContextSymbol>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relevant_papers: Vec<ContextPaper>,
     pub missing_context: Vec<MissingContextLeaf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_leaves: Vec<MissingContextLeaf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_context_leaves: Vec<MissingContextLeaf>,
     pub risk_flags: Vec<String>,
     pub verification_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub backend_status: Vec<BackendDescriptor>,
+}
+
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -298,14 +320,15 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         &evidence_spans,
     );
 
+    let lean = request.lean;
     Ok(ContextPack {
         task_summary: format!("Context pack for: {}", request.task.trim()),
         verb: derive_verb(&request.task),
         task: request.task,
-        profile: request.profile,
-        budget_tokens: request.budget_tokens,
-        truncated,
-        assumptions,
+        profile: if lean { String::new() } else { request.profile },
+        budget_tokens: if lean { 0 } else { request.budget_tokens },
+        truncated: if lean { false } else { truncated },
+        assumptions: if lean { Vec::new() } else { assumptions },
         verdict: claim_verdict.verdict,
         confidence: claim_verdict.confidence,
         supporting_evidence: claim_verdict.supporting_evidence,
@@ -314,19 +337,19 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         top_sources,
         required_reads,
         suggested_next_action,
-        action_plan,
+        action_plan: if lean { Vec::new() } else { action_plan },
         active_backlog,
         active_issues,
         active_todos,
-        evidence_spans,
+        evidence_spans: if lean { Vec::new() } else { evidence_spans },
         relevant_symbols,
-        relevant_papers,
+        relevant_papers: if lean { Vec::new() } else { relevant_papers },
         missing_context: missing_leaves.clone(),
-        missing_context_leaves: missing_leaves.clone(),
-        missing_leaves,
+        missing_context_leaves: if lean { Vec::new() } else { missing_leaves.clone() },
+        missing_leaves: if lean { Vec::new() } else { missing_leaves },
         risk_flags,
         verification_commands,
-        backend_status,
+        backend_status: if lean { Vec::new() } else { backend_status },
     })
 }
 
@@ -2250,6 +2273,7 @@ mod tests {
                 task: "fix rerun inspector rollout zarr logging".into(),
                 budget_tokens: 400,
                 profile: "agents-scaffold".into(),
+                lean: false,
             },
         )
         .unwrap();
@@ -2279,6 +2303,7 @@ mod tests {
                 task: "fix rerun inspector rollout zarr logging".into(),
                 budget_tokens: 400,
                 profile: "agents-scaffold".into(),
+                lean: false,
             },
         )
         .unwrap();
@@ -2310,6 +2335,7 @@ mod tests {
                         .into(),
                 budget_tokens: 600,
                 profile: "thesis-coding".into(),
+                lean: false,
             },
         )
         .unwrap();
@@ -2325,6 +2351,7 @@ mod tests {
                 task: "claim-check: GT OBBs are actor-visible in the V1 main thesis result".into(),
                 budget_tokens: 600,
                 profile: "thesis-coding".into(),
+                lean: false,
             },
         )
         .unwrap();
@@ -2339,6 +2366,7 @@ mod tests {
                 task: "claim-check: ARIA-NBV uses Habitat as the main simulator".into(),
                 budget_tokens: 600,
                 profile: "thesis-coding".into(),
+                lean: false,
             },
         )
         .unwrap();
@@ -2383,6 +2411,7 @@ mod tests {
                 task: "harden bounded oracle-RRI lookahead vs greedy".into(),
                 budget_tokens: 900,
                 profile: "thesis-coding".into(),
+                lean: false,
             },
         )
         .unwrap();
@@ -2420,6 +2449,7 @@ mod tests {
                 task: "zzzzz nonsense input".into(),
                 budget_tokens: 400,
                 profile: "agents-scaffold".into(),
+                lean: false,
             },
         )
         .unwrap();

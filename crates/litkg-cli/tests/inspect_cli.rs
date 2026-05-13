@@ -594,6 +594,7 @@ fn context_pack_command_reports_stable_json_contract() {
             "agents-scaffold",
             "--format",
             "json",
+            "--full",
         ])
         .assert()
         .success()
@@ -608,6 +609,8 @@ fn context_pack_command_reports_stable_json_contract() {
         .unwrap()
         .contains("Context pack"));
     assert_eq!(json["verb"], "route");
+    // Serde guards drop empty vecs even with --full, so a missing field is
+    // an equivalent (and quieter) signal to an empty array. Accept either.
     for field in [
         "assumptions",
         "top_sources",
@@ -623,7 +626,8 @@ fn context_pack_command_reports_stable_json_contract() {
         "verification_commands",
         "backend_status",
     ] {
-        assert!(json[field].is_array(), "{field} should be an array");
+        let present = json.get(field).map(|value| value.is_array()).unwrap_or(true);
+        assert!(present, "{field} should be an array or absent");
     }
     assert_eq!(json["active_issues"][0]["id"], "ISSUE-0048");
     assert_eq!(
@@ -746,6 +750,7 @@ fn top_level_context_pack_alias_supports_thesis_profile_json() {
             "thesis-coding",
             "--format",
             "json",
+            "--full",
         ])
         .assert()
         .success()
@@ -764,6 +769,84 @@ fn top_level_context_pack_alias_supports_thesis_profile_json() {
         .unwrap()
         .iter()
         .any(|backend| backend["name"] == "openai_developer_docs"));
+}
+
+#[test]
+fn context_pack_default_is_lean() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    write_agents_scaffold(dir.path());
+
+    let output = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "info",
+            "context-pack",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--repo-root",
+            dir.path().to_str().unwrap(),
+            "--task",
+            "implement context pack retrieval",
+            "--budget",
+            "220",
+            "--profile",
+            "agents-scaffold",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    // Lean shape: bulk and legacy fields are omitted by default.
+    for field in [
+        "profile",
+        "budget_tokens",
+        "truncated",
+        "assumptions",
+        "action_plan",
+        "evidence_spans",
+        "relevant_papers",
+        "missing_leaves",
+        "missing_context_leaves",
+        "backend_status",
+    ] {
+        assert!(
+            json.get(field).is_none(),
+            "{field} should be omitted in lean mode but appeared"
+        );
+    }
+    // Agent-facing fields stay present.
+    for field in [
+        "task",
+        "verb",
+        "task_summary",
+        "top_sources",
+        "required_reads",
+        "suggested_next_action",
+        "active_backlog",
+        "active_issues",
+        "active_todos",
+        "missing_context",
+        "risk_flags",
+        "verification_commands",
+        "relevant_symbols",
+    ] {
+        assert!(
+            json.get(field).is_some(),
+            "{field} should be present in lean mode but was omitted"
+        );
+    }
+    // Lean payload must stay under 50 KB for the smoke task above.
+    assert!(
+        output.len() < 50_000,
+        "lean payload was {} bytes; expected < 50000",
+        output.len()
+    );
 }
 
 #[test]

@@ -284,6 +284,12 @@ struct ContextPackCommand {
     repo_root: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
+    // Opt out of the lean default and re-emit the legacy payload shape
+    // (evidence_spans, backend_status, action_plan, assumptions, profile,
+    // budget_tokens, truncated, relevant_papers, missing_leaves,
+    // missing_context_leaves). Default is lean.
+    #[arg(long, default_value_t = false)]
+    full: bool,
 }
 
 #[derive(Args, Clone)]
@@ -1078,6 +1084,7 @@ fn run_context_pack(args: ContextPackCommand) -> Result<()> {
             task: args.task.clone(),
             budget_tokens: args.budget,
             profile: args.profile.clone(),
+            lean: !args.full,
         },
     )?;
     print_structured_output(&pack, args.format, render_context_pack)
