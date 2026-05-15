@@ -1083,9 +1083,20 @@ fn top_sources(
     terms: &BTreeSet<String>,
 ) -> Result<Vec<ContextTopSource>> {
     const TOP_SOURCE_CAP: usize = 8;
+    const LITERATURE_RESERVED_EXTRA: usize = 2;
     const CANONICAL_RESCUE_EXTRA: usize = 4;
     let mut seen = BTreeSet::new();
     let mut sources = Vec::new();
+
+    // Literature roots that the verdict layer depends on for external
+    // evidence. Mirrors the canonical [authority_tiers] globs in
+    // .configs/litkg.toml (todo-074). If the canonical literature roots
+    // change there, update this list too.
+    fn is_literature_class(source_path: &str) -> bool {
+        source_path.starts_with("docs/contents/literature/")
+            || source_path.starts_with("docs/literature/tex-src/")
+            || source_path == "docs/references.bib"
+    }
 
     let push_span = |span: &ContextEvidenceSpan,
                      seen: &mut BTreeSet<String>,
@@ -1133,13 +1144,34 @@ fn top_sources(
         push_span(span, &mut seen, &mut sources)?;
     }
 
-    // Pass 2 (canonical rescue, todo-073): admit canonical-tier matches with
+    // Pass 2 (literature reservation, todo-074): reserve up to
+    // LITERATURE_RESERVED_EXTRA slots specifically for literature-class
+    // paths. Without this, score-ordered canonical rescue (pass 3) is
+    // dominated by test files and thesis prose whose lexical density
+    // outranks paper-section spans; the verdict gate then never sees the
+    // literature evidence even when it directly supports the claim.
+    let literature_budget = TOP_SOURCE_CAP + LITERATURE_RESERVED_EXTRA;
+    for span in evidence_spans {
+        if sources.len() >= literature_budget {
+            break;
+        }
+        if !is_literature_class(&span.source_path) {
+            continue;
+        }
+        let matched = matched_terms(span.text.as_str(), terms);
+        if matched.is_empty() {
+            continue;
+        }
+        push_span(span, &mut seen, &mut sources)?;
+    }
+
+    // Pass 3 (canonical rescue, todo-073): admit canonical-tier matches with
     // non-empty term overlap that didn't survive the cap. Literature notes
     // are stable, not stale: the freshness half-life would otherwise drop
     // them below the floor in apply_confidence_floor. Cap the rescue at
     // CANONICAL_RESCUE_EXTRA so an out-of-domain claim doesn't drown the
     // primary set.
-    let rescue_budget = TOP_SOURCE_CAP + CANONICAL_RESCUE_EXTRA;
+    let rescue_budget = literature_budget + CANONICAL_RESCUE_EXTRA;
     for span in evidence_spans {
         if sources.len() >= rescue_budget {
             break;
@@ -1842,6 +1874,24 @@ fn classify_claim_span(claim: &str, evidence: &str, terms: &BTreeSet<String>) ->
     {
         return ClaimRelation::Supports;
     }
+    // Research-claim shape ladder (todo-074). Specific shapes short-circuit
+    // before the generic overlap fallback so reworded claims still flip
+    // deterministically.
+    if positive_rri_definition_claim(&claim_lower)
+        && evidence_rri_definition(&evidence_lower)
+    {
+        return ClaimRelation::Supports;
+    }
+    if positive_hierarchical_nbv_claim(&claim_lower)
+        && evidence_hierarchical_nbv(&evidence_lower)
+    {
+        return ClaimRelation::Supports;
+    }
+    if positive_aria_nbv_objective_claim(&claim_lower)
+        && evidence_aria_nbv_objective(&evidence_lower)
+    {
+        return ClaimRelation::Supports;
+    }
     if deferred_main_simulator_claim(&claim_lower, &evidence_lower) {
         return ClaimRelation::Neutral;
     }
@@ -1869,6 +1919,60 @@ fn positive_v0_gt_rri_claim(claim: &str) -> bool {
         && (claim.contains("sanity") || claim.contains("upper"))
 }
 
+// Research-claim shape helpers (todo-074). Each pairs a claim-side detector
+// with an evidence-side predicate so the heuristic short-circuits to
+// Supports only when both sides agree on the topic.
+
+fn positive_rri_definition_claim(claim: &str) -> bool {
+    claim.contains("rri")
+        && (claim.contains("introduces")
+            || claim.contains("defines")
+            || claim.contains("label"))
+        && (claim.contains("reconstruction") || claim.contains("oracle"))
+}
+
+fn evidence_rri_definition(evidence: &str) -> bool {
+    evidence.contains("rri")
+        && evidence.contains("reconstruction")
+        && (evidence.contains("oracle")
+            || evidence.contains("label")
+            || evidence.contains("improvement"))
+}
+
+fn positive_hierarchical_nbv_claim(claim: &str) -> bool {
+    claim.contains("hierarchical")
+        && (claim.contains("nbv")
+            || claim.contains("next best view")
+            || claim.contains("next-best-view"))
+        && (claim.contains("decomposit")
+            || claim.contains("target")
+            || claim.contains("pose")
+            || claim.contains("two-stage")
+            || claim.contains("two stage"))
+}
+
+fn evidence_hierarchical_nbv(evidence: &str) -> bool {
+    evidence.contains("hierarchical")
+        && (evidence.contains("target proposal")
+            || evidence.contains("pose realization")
+            || evidence.contains("look-at"))
+}
+
+fn positive_aria_nbv_objective_claim(claim: &str) -> bool {
+    (claim.contains("aria-nbv") || claim.contains("aria nbv"))
+        && (claim.contains("objective")
+            || claim.contains("ranking")
+            || claim.contains("candidate"))
+        && (claim.contains("rri") || claim.contains("reconstruction"))
+}
+
+fn evidence_aria_nbv_objective(evidence: &str) -> bool {
+    evidence.contains("rri")
+        && (evidence.contains("candidate")
+            || evidence.contains("ranking")
+            || evidence.contains("reconstruction-quality"))
+}
+
 fn deferred_main_simulator_claim(claim: &str, evidence: &str) -> bool {
     claim.contains("main")
         && claim.contains("simulator")
@@ -1879,7 +1983,14 @@ fn deferred_main_simulator_claim(claim: &str, evidence: &str) -> bool {
             || evidence.contains("external online")
             || evidence.contains("simulators are design paths")
             || evidence.contains("finite-candidate evidence")
-            || evidence.contains("unless later evidence"))
+            || evidence.contains("unless later evidence")
+            // todo-074: extended markers — the live `docs/contents/thesis/questions.qmd`
+            // gates simulator-backed RL with phrases like "only if mesh/oracle…"
+            // and "thesis-grade" requirements. Those are deferment markers in
+            // intent even if they don't use the explicit "stretch"/"bridge"
+            // vocabulary the V0 fixture used.
+            || evidence.contains("only if")
+            || evidence.contains("thesis-grade"))
 }
 
 fn mentions_gt_obb(text: &str) -> bool {
@@ -2476,6 +2587,95 @@ mod tests {
         .unwrap();
         assert_eq!(unverifiable.verdict.as_deref(), Some("unverifiable"));
         assert!(unverifiable.confidence.unwrap_or(1.0) <= 0.25);
+    }
+
+    #[test]
+    fn context_pack_claim_check_handles_diverse_research_shapes() {
+        // Verifies todo-074: the three new claim shapes (RRI definition,
+        // hierarchical NBV, ARIA-NBV objective) flip to verdict=supported
+        // when a literature-class fixture carries matching evidence. The
+        // three previously-resolved shapes (V0 GT-OBB, V1 actor-visible,
+        // Habitat-deferred) remain stable.
+        let dir = tempfile::tempdir().unwrap();
+        write_context_pack_fixture(dir.path());
+        fs::create_dir_all(dir.path().join("docs/contents/literature")).unwrap();
+        fs::write(
+            dir.path()
+                .join("docs/contents/literature/rri_theory.qmd"),
+            "---\ntitle: \"RRI Theory\"\n---\n\n# RRI Theory\n\nVIN-NBV introduces Relative Reconstruction Improvement (RRI), an oracle label.\n\nRRI is computed from point-mesh reconstruction-error reduction after adding a query view.\n\nARIA-NBV ranks candidate views by RRI as its primary objective.\n\nThe reconstruction-quality ranking interprets RRI as an ordinal label.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join("docs/contents/literature/hestia.qmd"),
+            "---\ntitle: \"Hestia\"\n---\n\n# Hestia\n\nHestia treats next-best-view selection as a hierarchical decomposition.\n\nThe hierarchical decomposition is target proposal plus pose realization.\n\nThe look-at primitive guides hierarchical target selection at the coarse stage.\n\nHierarchical NBV pose realization follows once the target proposal is chosen.\n",
+        )
+        .unwrap();
+
+        let mut config = test_config(dir.path(), false);
+        config.sources.insert(
+            "literature_qmd".into(),
+            SourceConfig {
+                authority: Some("literature".into()),
+                include: vec!["docs/contents/literature/**/*.qmd".into()],
+                ..SourceConfig::default()
+            },
+        );
+        config
+            .authority_tiers
+            .as_mut()
+            .expect("test_config installs authority_tiers")
+            .insert("docs/contents/literature/**/*.qmd".into(), 1.5);
+
+        let run = |task: &str| {
+            build_context_pack(
+                &config,
+                ContextPackRequest {
+                    config_path: None,
+                    repo_root: dir.path().to_path_buf(),
+                    task: task.into(),
+                    budget_tokens: 800,
+                    profile: "thesis-coding".into(),
+                    lean: false,
+                },
+            )
+            .expect("build_context_pack must not fail in test")
+        };
+
+        // New shape: RRI definition.
+        let rri = run("claim-check: VIN-NBV introduces Relative Reconstruction Improvement (RRI), an oracle label computed from point-mesh reconstruction-error reduction after adding a query view");
+        assert_eq!(rri.verdict.as_deref(), Some("supported"), "RRI definition claim must flip to supported");
+
+        // New shape: hierarchical NBV decomposition.
+        let hierarchical = run("claim-check: Hestia decomposes next-best-view into a hierarchical target proposal and pose realization");
+        assert_eq!(
+            hierarchical.verdict.as_deref(),
+            Some("supported"),
+            "hierarchical NBV claim must flip to supported"
+        );
+
+        // New shape: ARIA-NBV objective.
+        let aria_nbv = run("claim-check: ARIA-NBV ranks candidate views by RRI as its primary objective");
+        assert_eq!(
+            aria_nbv.verdict.as_deref(),
+            Some("supported"),
+            "ARIA-NBV objective claim must flip to supported"
+        );
+
+        // Regression: previously-resolved V0 shape stays supported.
+        let v0 = run(
+            "claim-check: ARIA-NBV uses GT-OBB-cropped target RRI as V0 sanity/upper-bound",
+        );
+        assert_eq!(v0.verdict.as_deref(), Some("supported"));
+
+        // Regression: V1 actor-visible stays contradicted.
+        let v1 =
+            run("claim-check: GT OBBs are actor-visible in the V1 main thesis result");
+        assert_eq!(v1.verdict.as_deref(), Some("contradicted"));
+
+        // Regression: Habitat-as-main-simulator stays unverifiable.
+        let habitat = run("claim-check: ARIA-NBV uses Habitat as the main simulator");
+        assert_eq!(habitat.verdict.as_deref(), Some("unverifiable"));
     }
 
     #[test]
