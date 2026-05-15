@@ -792,7 +792,28 @@ fn configured_source_paths(repo_root: &Path, config: &RepoConfig) -> Result<Vec<
     }
     paths.sort();
     paths.dedup();
-    paths.truncate(512);
+    // Cap configured paths to keep evidence-span generation bounded. Canonical
+    // tier paths (curated literature, thesis, memory) are preserved first so
+    // they survive even when other source classes (e.g. aria_nbv/**/*.py)
+    // would otherwise crowd them out alphabetically (todo-073).
+    const PATH_CAP: usize = 512;
+    if paths.len() > PATH_CAP {
+        let authority_tiers = config.authority_tiers.as_ref();
+        let (mut canonical, mut other): (Vec<PathBuf>, Vec<PathBuf>) =
+            paths.into_iter().partition(|path| {
+                let scored = crate::ranking::calculate_weighted_score(path, 1.0, authority_tiers);
+                scored.authority == "canonical"
+            });
+        canonical.sort();
+        other.sort();
+        let mut combined: Vec<PathBuf> =
+            canonical.into_iter().take(PATH_CAP).collect();
+        let remaining = PATH_CAP.saturating_sub(combined.len());
+        combined.extend(other.into_iter().take(remaining));
+        combined.sort();
+        combined.dedup();
+        paths = combined;
+    }
     Ok(paths)
 }
 
@@ -1061,16 +1082,23 @@ fn top_sources(
     evidence_spans: &[ContextEvidenceSpan],
     terms: &BTreeSet<String>,
 ) -> Result<Vec<ContextTopSource>> {
+    const TOP_SOURCE_CAP: usize = 8;
+    const CANONICAL_RESCUE_EXTRA: usize = 4;
     let mut seen = BTreeSet::new();
     let mut sources = Vec::new();
-    for span in evidence_spans {
+
+    let push_span = |span: &ContextEvidenceSpan,
+                     seen: &mut BTreeSet<String>,
+                     sources: &mut Vec<ContextTopSource>|
+     -> Result<()> {
         if !seen.insert(span.source_path.clone()) {
-            continue;
+            return Ok(());
         }
         let metadata = source_metadata_for_path(config, &span.source_path);
         let matched = matched_terms(span.text.as_str(), terms);
         if matched.is_empty() && !source_is_explicit_route(&metadata, span, terms) {
-            continue;
+            seen.remove(&span.source_path);
+            return Ok(());
         }
         let authority = metadata
             .authority
@@ -1092,10 +1120,40 @@ fn top_sources(
             scores: span.score.clone(),
             why_relevant: why_relevant(span, terms),
         });
-        if sources.len() >= 8 {
+        Ok(())
+    };
+
+    // Pass 1 (primary): score-ordered iteration up to the cap. Preserves the
+    // existing precedence (code / backlog / current_thesis above memory and
+    // literature for owning-route tasks).
+    for span in evidence_spans {
+        if sources.len() >= TOP_SOURCE_CAP {
             break;
         }
+        push_span(span, &mut seen, &mut sources)?;
     }
+
+    // Pass 2 (canonical rescue, todo-073): admit canonical-tier matches with
+    // non-empty term overlap that didn't survive the cap. Literature notes
+    // are stable, not stale: the freshness half-life would otherwise drop
+    // them below the floor in apply_confidence_floor. Cap the rescue at
+    // CANONICAL_RESCUE_EXTRA so an out-of-domain claim doesn't drown the
+    // primary set.
+    let rescue_budget = TOP_SOURCE_CAP + CANONICAL_RESCUE_EXTRA;
+    for span in evidence_spans {
+        if sources.len() >= rescue_budget {
+            break;
+        }
+        if span.score.authority != "canonical" {
+            continue;
+        }
+        let matched = matched_terms(span.text.as_str(), terms);
+        if matched.is_empty() {
+            continue;
+        }
+        push_span(span, &mut seen, &mut sources)?;
+    }
+
     Ok(sources)
 }
 
@@ -1103,11 +1161,17 @@ fn apply_confidence_floor(
     top_sources: &mut Vec<ContextTopSource>,
     min_top_source_score: f32,
 ) -> Option<String> {
+    // Canonical-tier entries are curated literature and other ground-truth
+    // sources; they stay in top_sources even when freshness has dropped
+    // their score_final below the floor (todo-073).
+    let has_canonical = top_sources
+        .iter()
+        .any(|source| source.scores.authority == "canonical");
     let max_score = top_sources
         .iter()
         .map(|source| source.scores.score_final)
         .fold(0.0_f32, f32::max);
-    if top_sources.is_empty() || max_score < min_top_source_score {
+    if top_sources.is_empty() || (max_score < min_top_source_score && !has_canonical) {
         top_sources.clear();
         Some("no high-signal evidence found; recommend aria-nbv-context plus targeted reads".into())
     } else {
@@ -2117,18 +2181,58 @@ fn truncate_spans_to_budget(
     budget_tokens: usize,
     truncated: &mut bool,
 ) {
-    let mut used = 0usize;
-    let mut keep = 0usize;
-    for span in spans.iter() {
-        let token_estimate = span.text.split_whitespace().count() + 8;
-        if used + token_estimate > budget_tokens {
+    // Reserved capacity for canonical-tier spans. Literature notes and other
+    // curated ground-truth surfaces (authority="canonical") would otherwise
+    // be ranked below high-lexical-density code spans and lost to budget
+    // truncation. Reserving slots up-front guarantees the verdict layer
+    // gets at least a chance to see them (todo-073).
+    const CANONICAL_RESERVED_TOKENS: usize = 2_400;
+
+    let token_estimate = |span: &ContextEvidenceSpan| -> usize {
+        span.text.split_whitespace().count() + 8
+    };
+
+    let canonical_budget = CANONICAL_RESERVED_TOKENS.min(budget_tokens / 4);
+    let mut canonical_kept = Vec::new();
+    let mut canonical_used = 0usize;
+    let mut non_canonical_idx = Vec::new();
+    for (idx, span) in spans.iter().enumerate() {
+        if span.score.authority == "canonical" {
+            let est = token_estimate(span);
+            if canonical_used + est <= canonical_budget {
+                canonical_used += est;
+                canonical_kept.push(idx);
+            } else {
+                non_canonical_idx.push(idx);
+            }
+        } else {
+            non_canonical_idx.push(idx);
+        }
+    }
+
+    let mut keep_set: std::collections::BTreeSet<usize> = canonical_kept.iter().copied().collect();
+    let mut used = canonical_used;
+    for idx in non_canonical_idx {
+        let est = token_estimate(&spans[idx]);
+        if used + est > budget_tokens {
             *truncated = true;
             break;
         }
-        used += token_estimate;
-        keep += 1;
+        used += est;
+        keep_set.insert(idx);
     }
-    spans.truncate(keep.max(1).min(spans.len()));
+
+    // Preserve the original score-descending order for surviving spans.
+    let mut kept_spans: Vec<ContextEvidenceSpan> = spans
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| keep_set.contains(idx))
+        .map(|(_, span)| span.clone())
+        .collect();
+    if kept_spans.is_empty() && !spans.is_empty() {
+        kept_spans.push(spans[0].clone());
+    }
+    *spans = kept_spans;
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -2372,6 +2476,72 @@ mod tests {
         .unwrap();
         assert_eq!(unverifiable.verdict.as_deref(), Some("unverifiable"));
         assert!(unverifiable.confidence.unwrap_or(1.0) <= 0.25);
+    }
+
+    #[test]
+    fn context_pack_admits_canonical_literature_into_top_sources_and_verdict() {
+        // Verifies todo-073: a curated-literature note tiered as canonical
+        // surfaces in top_sources for a matching claim, and the verdict
+        // pipeline gets the supporting span even when other sources also
+        // match.
+        let dir = tempfile::tempdir().unwrap();
+        write_context_pack_fixture(dir.path());
+        fs::create_dir_all(dir.path().join("docs/contents/literature")).unwrap();
+        fs::write(
+            dir.path().join("docs/contents/literature/rri_theory.qmd"),
+            "---\ntitle: \"RRI Theory\"\n---\n\n# RRI Theory\n\nVIN-NBV introduces Relative Reconstruction Improvement (RRI), an oracle label computed from point-mesh reconstruction-error reduction after adding a query view.\n",
+        )
+        .unwrap();
+
+        let mut config = test_config(dir.path(), false);
+        // Add the literature glob both as a source class (so the file lands
+        // in evidence_spans) and as a canonical authority tier (so the
+        // rescue pass + floor exemption fire).
+        config.sources.insert(
+            "literature_qmd".into(),
+            SourceConfig {
+                authority: Some("literature".into()),
+                include: vec!["docs/contents/literature/**/*.qmd".into()],
+                ..SourceConfig::default()
+            },
+        );
+        config
+            .authority_tiers
+            .as_mut()
+            .expect("test_config installs authority_tiers")
+            .insert("docs/contents/literature/**/*.qmd".into(), 1.5);
+
+        let pack = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task:
+                    "claim-check: VIN-NBV introduces Relative Reconstruction Improvement (RRI), an oracle label computed from point-mesh reconstruction-error reduction after adding a query view"
+                        .into(),
+                budget_tokens: 800,
+                profile: "thesis-coding".into(),
+                lean: false,
+            },
+        )
+        .unwrap();
+
+        // The literature file appears in top_sources with canonical authority
+        // (either via the primary pass or the canonical rescue extension).
+        let canonical = pack
+            .top_sources
+            .iter()
+            .find(|s| s.path.contains("contents/literature/rri_theory.qmd"))
+            .expect("canonical literature must surface in top_sources");
+        assert_eq!(canonical.scores.authority, "canonical");
+
+        // Verdict layer admits the literature span and reports supported.
+        assert_eq!(pack.verdict.as_deref(), Some("supported"));
+        assert!(pack.confidence.unwrap_or_default() > 0.5);
+        assert!(pack
+            .supporting_evidence
+            .iter()
+            .any(|span| span.source_path.contains("contents/literature/rri_theory.qmd")));
     }
 
     #[test]

@@ -1554,6 +1554,7 @@ fn apply_hybrid_vector_search(
         vector_hits,
         lexical_weight,
         limit.max(1),
+        config,
     );
     response.search_mode = "hybrid".into();
     response.mode_reason = String::new();
@@ -1645,6 +1646,7 @@ fn blend_hybrid_hits(
     vector_hits: Vec<Neo4jVectorHit>,
     lexical_weight: f32,
     limit: usize,
+    config: &RepoConfig,
 ) -> Vec<GraphSearchHit> {
     let max_lexical = lexical_hits
         .iter()
@@ -1676,7 +1678,7 @@ fn blend_hybrid_hits(
                     hit.matched_field = "hybrid".into();
                 }
             })
-            .or_insert_with(|| (graph_hit_from_vector(vector_hit), 0.0, cosine));
+            .or_insert_with(|| (graph_hit_from_vector(vector_hit, config), 0.0, cosine));
     }
     let semantic_weight = 1.0 - lexical_weight;
     let mut hits = merged
@@ -1714,18 +1716,50 @@ fn blend_hybrid_hits(
     hits
 }
 
-fn graph_hit_from_vector(hit: Neo4jVectorHit) -> GraphSearchHit {
+fn graph_hit_from_vector(hit: Neo4jVectorHit, config: &RepoConfig) -> GraphSearchHit {
     let mut properties = BTreeMap::new();
     if let Some(repo_path) = &hit.repo_path {
         properties.insert("repo_path".to_string(), repo_path.clone());
     }
     let modality = classify_modality(&hit.labels, &properties);
+    let cosine = hit.score.clamp(0.0, 1.0);
+    // When the vector node carries a repo_path, consult [authority_tiers] so
+    // hits inherit the same authority label that the lexical path would assign
+    // (todo-072). This lets curated literature surface as `canonical` in
+    // hybrid mode rather than the synthetic `semantic` placeholder, which is
+    // required for the verdict gate (trusted_claim_source) to admit it.
+    let rank = match hit.repo_path.as_deref() {
+        Some(path) => {
+            let mut weighted = litkg_core::calculate_weighted_score(
+                std::path::Path::new(path),
+                cosine,
+                config.authority_tiers.as_ref(),
+            );
+            // Preserve cosine as the final score for blend math; authority and
+            // freshness multipliers are surfaced separately on the WeightedScore.
+            weighted.source_type = graph_modality_source_type(modality).into();
+            weighted.score_final = cosine;
+            weighted
+                .why
+                .push("matched Neo4j vector index".into());
+            weighted
+        }
+        None => litkg_core::WeightedScore {
+            source_type: graph_modality_source_type(modality).into(),
+            score_lexical: 0.0,
+            score_authority: 1.0,
+            score_freshness: 1.0,
+            score_final: cosine,
+            authority: "semantic".into(),
+            why: vec!["matched Neo4j vector index (no repo_path)".into()],
+        },
+    };
     GraphSearchHit {
         node_id: hit.node_id,
         title: hit.title,
         kind: hit.kind,
         modality,
-        score: (hit.score.clamp(0.0, 1.0) * 1000.0).round().max(1.0) as i64,
+        score: (cosine * 1000.0).round().max(1.0) as i64,
         matched_field: "embedding".into(),
         repo_path: hit.repo_path,
         line_start: hit.line_start,
@@ -1733,15 +1767,7 @@ fn graph_hit_from_vector(hit: Neo4jVectorHit) -> GraphSearchHit {
         snippet: hit
             .snippet
             .map(|snippet| truncate_text(snippet.trim(), 700)),
-        rank: Some(litkg_core::WeightedScore {
-            source_type: graph_modality_source_type(modality).into(),
-            score_lexical: 0.0,
-            score_authority: 1.0,
-            score_freshness: 1.0,
-            score_final: hit.score.clamp(0.0, 1.0),
-            authority: "semantic".into(),
-            why: vec!["matched Neo4j vector index".into()],
-        }),
+        rank: Some(rank),
     }
 }
 
