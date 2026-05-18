@@ -1283,5 +1283,4 @@ mod tests {
         );
         assert_eq!(hits[0].node_id, "paper:rare");
     }
-
 }

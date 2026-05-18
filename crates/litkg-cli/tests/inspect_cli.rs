@@ -626,7 +626,10 @@ fn context_pack_command_reports_stable_json_contract() {
         "verification_commands",
         "backend_status",
     ] {
-        let present = json.get(field).map(|value| value.is_array()).unwrap_or(true);
+        let present = json
+            .get(field)
+            .map(|value| value.is_array())
+            .unwrap_or(true);
         assert!(present, "{field} should be an array or absent");
     }
     assert_eq!(json["active_issues"][0]["id"], "ISSUE-0048");

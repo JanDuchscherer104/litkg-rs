@@ -345,7 +345,11 @@ pub fn build_context_pack(config: &RepoConfig, request: ContextPackRequest) -> R
         relevant_symbols,
         relevant_papers: if lean { Vec::new() } else { relevant_papers },
         missing_context: missing_leaves.clone(),
-        missing_context_leaves: if lean { Vec::new() } else { missing_leaves.clone() },
+        missing_context_leaves: if lean {
+            Vec::new()
+        } else {
+            missing_leaves.clone()
+        },
         missing_leaves: if lean { Vec::new() } else { missing_leaves },
         risk_flags,
         verification_commands,
@@ -806,8 +810,7 @@ fn configured_source_paths(repo_root: &Path, config: &RepoConfig) -> Result<Vec<
             });
         canonical.sort();
         other.sort();
-        let mut combined: Vec<PathBuf> =
-            canonical.into_iter().take(PATH_CAP).collect();
+        let mut combined: Vec<PathBuf> = canonical.into_iter().take(PATH_CAP).collect();
         let remaining = PATH_CAP.saturating_sub(combined.len());
         combined.extend(other.into_iter().take(remaining));
         combined.sort();
@@ -982,12 +985,14 @@ fn score_for_span(
     terms: &BTreeSet<String>,
     matched_count: usize,
 ) -> crate::ranking::WeightedScore {
+    let path_matched_count = matched_terms(source_path, terms).len();
+    let effective_matched_count = matched_count.max(path_matched_count);
     let lexical = if terms.is_empty() {
         0.1
-    } else if matched_count == 0 {
+    } else if effective_matched_count == 0 {
         0.05
     } else {
-        (matched_count as f32 / terms.len().max(1) as f32).clamp(0.15, 1.0)
+        (effective_matched_count as f32 / terms.len().max(1) as f32).clamp(0.15, 1.0)
     };
     score.score_lexical = lexical;
     score.score_final = score.score_lexical * score.score_authority * score.score_freshness;
@@ -1037,6 +1042,57 @@ fn apply_route_surface_adjustment(
             .why
             .push("boosted proposal source for thesis claim routing".into());
     }
+    if documentation_page_route(terms) {
+        apply_documentation_page_adjustment(score, source_path, terms);
+    }
+}
+
+fn documentation_page_route(terms: &BTreeSet<String>) -> bool {
+    terms.iter().any(|term| {
+        matches!(
+            term.as_str(),
+            "doc" | "docs" | "document" | "documentation" | "enrich" | "page" | "write" | "update"
+        )
+    })
+}
+
+fn apply_documentation_page_adjustment(
+    score: &mut crate::ranking::WeightedScore,
+    source_path: &str,
+    terms: &BTreeSet<String>,
+) {
+    let path = source_path.replace('\\', "/");
+    let path_matches = matched_terms(&path, terms).len();
+    let is_test = path.contains("/tests/") || path.starts_with("tests/");
+
+    if is_test && !terms.contains("test") && !terms.contains("tests") && !terms.contains("pytest") {
+        score.score_final *= 0.25;
+        score
+            .why
+            .push("penalized test file below docs/page owner for documentation task".into());
+    }
+
+    if path.starts_with("docs/contents/") && path.ends_with(".qmd") {
+        let multiplier = if path_matches > 0 { 3.4 } else { 2.2 };
+        score.score_final *= multiplier;
+        score
+            .why
+            .push("boosted authored Quarto page for documentation task".into());
+    } else if path.ends_with("README.md")
+        || path.ends_with("AGENTS.md")
+        || path.ends_with("SKILL.md")
+    {
+        let multiplier = if path_matches > 0 { 2.0 } else { 1.45 };
+        score.score_final *= multiplier;
+        score
+            .why
+            .push("boosted owner guidance for documentation task".into());
+    } else if score.source_type == "code" && path_matches >= 2 {
+        score.score_final *= 1.75;
+        score
+            .why
+            .push("boosted implementation contract whose path matches documentation task".into());
+    }
 }
 
 fn derive_verb(task: &str) -> String {
@@ -1083,6 +1139,7 @@ fn top_sources(
     terms: &BTreeSet<String>,
 ) -> Result<Vec<ContextTopSource>> {
     const TOP_SOURCE_CAP: usize = 8;
+    const DOC_PAGE_RESERVED: usize = 5;
     const LITERATURE_RESERVED_EXTRA: usize = 2;
     const CANONICAL_RESCUE_EXTRA: usize = 4;
     let mut seen = BTreeSet::new();
@@ -1133,6 +1190,39 @@ fn top_sources(
         });
         Ok(())
     };
+
+    // Pass 0 (documentation/page route): when the task asks to write,
+    // enrich, or update a page, first surface the authored page and owner
+    // contracts. Score-only ranking tends to over-promote tests and generic
+    // backlog references because they have dense lexical overlap but are bad
+    // first reads for documentation edits.
+    if documentation_page_route(terms) {
+        let mut candidates = evidence_spans
+            .iter()
+            .filter_map(|span| {
+                documentation_page_candidate_priority(span, terms).map(|priority| (priority, span))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|(left_priority, left_span), (right_priority, right_span)| {
+            left_priority
+                .cmp(right_priority)
+                .then(
+                    right_span
+                        .score
+                        .score_final
+                        .partial_cmp(&left_span.score.score_final)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+                .then(left_span.source_path.cmp(&right_span.source_path))
+                .then(left_span.line_start.cmp(&right_span.line_start))
+        });
+        for (_, span) in candidates {
+            if sources.len() >= DOC_PAGE_RESERVED {
+                break;
+            }
+            push_span(span, &mut seen, &mut sources)?;
+        }
+    }
 
     // Pass 1 (primary): score-ordered iteration up to the cap. Preserves the
     // existing precedence (code / backlog / current_thesis above memory and
@@ -1187,6 +1277,47 @@ fn top_sources(
     }
 
     Ok(sources)
+}
+
+fn documentation_page_candidate_priority(
+    span: &ContextEvidenceSpan,
+    terms: &BTreeSet<String>,
+) -> Option<u8> {
+    let path = span.source_path.replace('\\', "/");
+    if path.contains("/tests/") || path.starts_with("tests/") {
+        return None;
+    }
+    let path_matches = matched_terms(&path, terms).len();
+    let text_matches = matched_terms(&span.text, terms).len();
+
+    if path.starts_with("docs/contents/") && path.ends_with(".qmd") {
+        if path_matches > 0 && !path.starts_with("docs/contents/thesis/") {
+            return Some(0);
+        }
+        if path_matches > 0 {
+            return Some(3);
+        }
+        if text_matches >= 2 {
+            return Some(4);
+        }
+        return None;
+    }
+    if path.ends_with("README.md") || path.ends_with("AGENTS.md") || path.ends_with("SKILL.md") {
+        if path_matches > 0 || text_matches >= 2 {
+            return Some(1);
+        }
+        return None;
+    }
+    if span.score.source_type == "code" {
+        if path_matches > 0 && text_matches >= 1 {
+            if path.contains("/rollouts/") || path.contains("/data_handling/") {
+                return Some(2);
+            }
+            return Some(5);
+        }
+        return None;
+    }
+    None
 }
 
 fn apply_confidence_floor(
@@ -1877,14 +2008,10 @@ fn classify_claim_span(claim: &str, evidence: &str, terms: &BTreeSet<String>) ->
     // Research-claim shape ladder (todo-074). Specific shapes short-circuit
     // before the generic overlap fallback so reworded claims still flip
     // deterministically.
-    if positive_rri_definition_claim(&claim_lower)
-        && evidence_rri_definition(&evidence_lower)
-    {
+    if positive_rri_definition_claim(&claim_lower) && evidence_rri_definition(&evidence_lower) {
         return ClaimRelation::Supports;
     }
-    if positive_hierarchical_nbv_claim(&claim_lower)
-        && evidence_hierarchical_nbv(&evidence_lower)
-    {
+    if positive_hierarchical_nbv_claim(&claim_lower) && evidence_hierarchical_nbv(&evidence_lower) {
         return ClaimRelation::Supports;
     }
     if positive_aria_nbv_objective_claim(&claim_lower)
@@ -1925,9 +2052,7 @@ fn positive_v0_gt_rri_claim(claim: &str) -> bool {
 
 fn positive_rri_definition_claim(claim: &str) -> bool {
     claim.contains("rri")
-        && (claim.contains("introduces")
-            || claim.contains("defines")
-            || claim.contains("label"))
+        && (claim.contains("introduces") || claim.contains("defines") || claim.contains("label"))
         && (claim.contains("reconstruction") || claim.contains("oracle"))
 }
 
@@ -1960,9 +2085,7 @@ fn evidence_hierarchical_nbv(evidence: &str) -> bool {
 
 fn positive_aria_nbv_objective_claim(claim: &str) -> bool {
     (claim.contains("aria-nbv") || claim.contains("aria nbv"))
-        && (claim.contains("objective")
-            || claim.contains("ranking")
-            || claim.contains("candidate"))
+        && (claim.contains("objective") || claim.contains("ranking") || claim.contains("candidate"))
         && (claim.contains("rri") || claim.contains("reconstruction"))
 }
 
@@ -2299,9 +2422,8 @@ fn truncate_spans_to_budget(
     // gets at least a chance to see them (todo-073).
     const CANONICAL_RESERVED_TOKENS: usize = 2_400;
 
-    let token_estimate = |span: &ContextEvidenceSpan| -> usize {
-        span.text.split_whitespace().count() + 8
-    };
+    let token_estimate =
+        |span: &ContextEvidenceSpan| -> usize { span.text.split_whitespace().count() + 8 };
 
     let canonical_budget = CANONICAL_RESERVED_TOKENS.min(budget_tokens / 4);
     let mut canonical_kept = Vec::new();
@@ -2535,6 +2657,118 @@ mod tests {
     }
 
     #[test]
+    fn context_pack_doc_page_route_prefers_page_and_owner_contracts_over_tests() {
+        let dir = tempfile::tempdir().unwrap();
+        write_context_pack_fixture(dir.path());
+        fs::create_dir_all(dir.path().join("docs/contents")).unwrap();
+        fs::create_dir_all(dir.path().join("aria_nbv/aria_nbv/rollouts")).unwrap();
+        fs::create_dir_all(dir.path().join("aria_nbv/aria_nbv/data_handling")).unwrap();
+        fs::create_dir_all(dir.path().join("aria_nbv/tests/data_handling")).unwrap();
+        fs::create_dir_all(dir.path().join(".agents/skills/dataset-cache-ops")).unwrap();
+        fs::create_dir_all(
+            dir.path()
+                .join(".agents/skills/counterfactual-rollout-planner"),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("docs/contents/ase_dataset.qmd"),
+            "---\ntitle: \"Aria Synthetic Environments Dataset\"\n---\n\n# Dataset page\n\nThis page documents the immutable VIN offline dataset and how counterfactual rollouts use a separate rollouts.zarr artifact.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("aria_nbv/aria_nbv/data_handling/AGENTS.md"),
+            "# Data handling\n\nOwner guidance for immutable VIN offline dataset documentation and narrative pages.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".agents/skills/dataset-cache-ops/SKILL.md"),
+            "---\nname: dataset-cache-ops\n---\n\nUse for documenting immutable VIN offline dataset pages.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join(".agents/skills/counterfactual-rollout-planner/SKILL.md"),
+            "---\nname: counterfactual-rollout-planner\n---\n\nUse for counterfactual rollouts and rollout artifact documentation.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("aria_nbv/aria_nbv/rollouts/zarr_store.py"),
+            "\"\"\"Implementation-contract owner for counterfactual rollouts.zarr.\n\nThe rollout store is separate from the immutable VIN offline dataset.\n\"\"\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path()
+                .join("aria_nbv/tests/data_handling/test_vin_offline_store.py"),
+            "\"\"\"Tests for offline dataset counterfactual rollouts page routing.\"\"\"\n",
+        )
+        .unwrap();
+
+        let mut config = test_config(dir.path(), false);
+        config.sources.insert(
+            "docs".into(),
+            SourceConfig {
+                authority: Some("public_docs".into()),
+                include: vec!["docs/contents/**/*.qmd".into()],
+                ..SourceConfig::default()
+            },
+        );
+        config.sources.insert(
+            "python".into(),
+            SourceConfig {
+                authority: Some("implementation".into()),
+                include: vec!["aria_nbv/**/*.py".into()],
+                ..SourceConfig::default()
+            },
+        );
+        config.sources.insert(
+            "guidance".into(),
+            SourceConfig {
+                authority: Some("workflow".into()),
+                include: vec!["**/AGENTS.md".into(), ".agents/skills/**/*.md".into()],
+                ..SourceConfig::default()
+            },
+        );
+        let authority_tiers = config
+            .authority_tiers
+            .as_mut()
+            .expect("test_config installs authority_tiers");
+        authority_tiers.insert("docs/contents/**/*.qmd".into(), 1.4);
+        authority_tiers.insert("aria_nbv/**/*.py".into(), 1.2);
+
+        let pack = build_context_pack(
+            &config,
+            ContextPackRequest {
+                config_path: None,
+                repo_root: dir.path().to_path_buf(),
+                task: "enrich counterfactual rollouts offline dataset page".into(),
+                budget_tokens: 900,
+                profile: "thesis-coding".into(),
+                lean: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            pack.top_sources.first().map(|source| source.path.as_str()),
+            Some("docs/contents/ase_dataset.qmd")
+        );
+        assert_eq!(
+            pack.required_reads.first().map(|read| read.path.as_str()),
+            Some("docs/contents/ase_dataset.qmd")
+        );
+        assert!(!pack
+            .top_sources
+            .iter()
+            .take(3)
+            .any(|source| source.path.contains("/tests/")));
+        assert!(pack
+            .top_sources
+            .iter()
+            .any(|source| source.path.ends_with("rollouts/zarr_store.py")));
+    }
+
+    #[test]
     fn context_pack_claim_check_returns_supported_contradicted_and_unverifiable() {
         let dir = tempfile::tempdir().unwrap();
         write_context_pack_fixture(dir.path());
@@ -2644,7 +2878,11 @@ mod tests {
 
         // New shape: RRI definition.
         let rri = run("claim-check: VIN-NBV introduces Relative Reconstruction Improvement (RRI), an oracle label computed from point-mesh reconstruction-error reduction after adding a query view");
-        assert_eq!(rri.verdict.as_deref(), Some("supported"), "RRI definition claim must flip to supported");
+        assert_eq!(
+            rri.verdict.as_deref(),
+            Some("supported"),
+            "RRI definition claim must flip to supported"
+        );
 
         // New shape: hierarchical NBV decomposition.
         let hierarchical = run("claim-check: Hestia decomposes next-best-view into a hierarchical target proposal and pose realization");
@@ -2655,7 +2893,8 @@ mod tests {
         );
 
         // New shape: ARIA-NBV objective.
-        let aria_nbv = run("claim-check: ARIA-NBV ranks candidate views by RRI as its primary objective");
+        let aria_nbv =
+            run("claim-check: ARIA-NBV ranks candidate views by RRI as its primary objective");
         assert_eq!(
             aria_nbv.verdict.as_deref(),
             Some("supported"),
@@ -2663,14 +2902,12 @@ mod tests {
         );
 
         // Regression: previously-resolved V0 shape stays supported.
-        let v0 = run(
-            "claim-check: ARIA-NBV uses GT-OBB-cropped target RRI as V0 sanity/upper-bound",
-        );
+        let v0 =
+            run("claim-check: ARIA-NBV uses GT-OBB-cropped target RRI as V0 sanity/upper-bound");
         assert_eq!(v0.verdict.as_deref(), Some("supported"));
 
         // Regression: V1 actor-visible stays contradicted.
-        let v1 =
-            run("claim-check: GT OBBs are actor-visible in the V1 main thesis result");
+        let v1 = run("claim-check: GT OBBs are actor-visible in the V1 main thesis result");
         assert_eq!(v1.verdict.as_deref(), Some("contradicted"));
 
         // Regression: Habitat-as-main-simulator stays unverifiable.
@@ -2738,10 +2975,9 @@ mod tests {
         // Verdict layer admits the literature span and reports supported.
         assert_eq!(pack.verdict.as_deref(), Some("supported"));
         assert!(pack.confidence.unwrap_or_default() > 0.5);
-        assert!(pack
-            .supporting_evidence
-            .iter()
-            .any(|span| span.source_path.contains("contents/literature/rri_theory.qmd")));
+        assert!(pack.supporting_evidence.iter().any(|span| span
+            .source_path
+            .contains("contents/literature/rri_theory.qmd")));
     }
 
     #[test]

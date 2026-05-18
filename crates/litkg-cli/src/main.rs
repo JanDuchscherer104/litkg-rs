@@ -1186,9 +1186,10 @@ fn run_kg_find(args: KgFindCommand) -> Result<()> {
         let papers = litkg_core::load_parsed_papers(config.parsed_root())?;
         Neo4jSink::export(&config, &papers)?;
     }
+    let filter = graph_filter(&args.modalities, &args.exclude_modalities);
     let query = GraphEntryQuery {
         query: args.query.clone(),
-        filter: graph_filter(&args.modalities, &args.exclude_modalities),
+        filter: filter.clone(),
         repo_root: Some(repo_root),
         use_rg: !args.no_rg,
         limit: args.limit,
@@ -1206,7 +1207,14 @@ fn run_kg_find(args: KgFindCommand) -> Result<()> {
     };
     let mut response = load_and_search_bundle_with_options(&bundle_root, query, search_options)?;
     if !args.lexical_only {
-        apply_hybrid_vector_search(&mut response, &config, &args.query, args.limit, args.alpha)?;
+        apply_hybrid_vector_search(
+            &mut response,
+            &config,
+            &args.query,
+            args.limit,
+            args.alpha,
+            &filter,
+        )?;
     }
     print_structured_output(&response, args.format, render_graph_search_response)
 }
@@ -1512,6 +1520,7 @@ fn apply_hybrid_vector_search(
     query: &str,
     limit: usize,
     alpha: Option<f32>,
+    filter: &GraphFilter,
 ) -> Result<()> {
     if query.trim().is_empty() {
         return Ok(());
@@ -1525,7 +1534,7 @@ fn apply_hybrid_vector_search(
             return Ok(());
         }
     };
-    let vector_hits = match query_vector_index(
+    let mut vector_hits = match query_vector_index(
         &Neo4jHttpConfig::from_env(),
         format!("kg_embedding_index_{}", settings.embedding_dim).as_str(),
         limit.max(12),
@@ -1538,6 +1547,7 @@ fn apply_hybrid_vector_search(
             return Ok(());
         }
     };
+    vector_hits.retain(|hit| filter.matches(vector_hit_modality(hit)));
     if !vector_hits.iter().any(vector_hit_has_literature_or_memory) {
         response.search_mode = "lexical_only".into();
         response.mode_reason = "paper_coverage_missing".into();
@@ -1717,11 +1727,7 @@ fn blend_hybrid_hits(
 }
 
 fn graph_hit_from_vector(hit: Neo4jVectorHit, config: &RepoConfig) -> GraphSearchHit {
-    let mut properties = BTreeMap::new();
-    if let Some(repo_path) = &hit.repo_path {
-        properties.insert("repo_path".to_string(), repo_path.clone());
-    }
-    let modality = classify_modality(&hit.labels, &properties);
+    let modality = vector_hit_modality(&hit);
     let cosine = hit.score.clamp(0.0, 1.0);
     // When the vector node carries a repo_path, consult [authority_tiers] so
     // hits inherit the same authority label that the lexical path would assign
@@ -1739,9 +1745,7 @@ fn graph_hit_from_vector(hit: Neo4jVectorHit, config: &RepoConfig) -> GraphSearc
             // freshness multipliers are surfaced separately on the WeightedScore.
             weighted.source_type = graph_modality_source_type(modality).into();
             weighted.score_final = cosine;
-            weighted
-                .why
-                .push("matched Neo4j vector index".into());
+            weighted.why.push("matched Neo4j vector index".into());
             weighted
         }
         None => litkg_core::WeightedScore {
@@ -1769,6 +1773,14 @@ fn graph_hit_from_vector(hit: Neo4jVectorHit, config: &RepoConfig) -> GraphSearc
             .map(|snippet| truncate_text(snippet.trim(), 700)),
         rank: Some(rank),
     }
+}
+
+fn vector_hit_modality(hit: &Neo4jVectorHit) -> GraphModality {
+    let mut properties = BTreeMap::new();
+    if let Some(repo_path) = &hit.repo_path {
+        properties.insert("repo_path".to_string(), repo_path.clone());
+    }
+    classify_modality(&hit.labels, &properties)
 }
 
 fn graph_modality_source_type(modality: GraphModality) -> &'static str {
