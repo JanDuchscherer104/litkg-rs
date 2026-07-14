@@ -605,6 +605,9 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }
     }

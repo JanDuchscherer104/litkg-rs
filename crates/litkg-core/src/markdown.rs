@@ -193,6 +193,9 @@ fn build_metadata(
         has_local_tex: false,
         has_local_pdf: false,
         parse_status: ParseStatus::Parsed,
+        relevance_rank: None,
+        relevance_category: None,
+        adoptable_ideas: Vec::new(),
         semantic_scholar: None,
     }
 }

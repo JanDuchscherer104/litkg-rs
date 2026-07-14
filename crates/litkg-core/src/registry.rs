@@ -57,19 +57,20 @@ pub fn merge_registry(
     bib_entries: Vec<BibEntry>,
     config: &RepoConfig,
 ) -> Vec<PaperSourceRecord> {
-    let manifest_by_arxiv: BTreeMap<String, ManifestEntry> = manifest_entries
+    let manifest_by_key: BTreeMap<String, ManifestEntry> = manifest_entries
         .into_iter()
-        .map(|entry| (entry.arxiv_id.clone(), entry))
+        .enumerate()
+        .map(|(index, entry)| (manifest_entry_key(index, &entry), entry))
         .collect();
     let mut manifest_by_normalized_title: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (arxiv_id, entry) in &manifest_by_arxiv {
+    for (manifest_key, entry) in &manifest_by_key {
         if let Some(title) = entry.title.as_deref() {
             let normalized = normalize_title(title);
             if !normalized.is_empty() {
                 manifest_by_normalized_title
                     .entry(normalized)
                     .or_default()
-                    .push(arxiv_id.clone());
+                    .push(manifest_key.clone());
             }
         }
     }
@@ -86,8 +87,12 @@ pub fn merge_registry(
         );
         let matched_manifest = bib_arxiv
             .as_ref()
-            .and_then(|arxiv_id| manifest_by_arxiv.get(arxiv_id))
-            .cloned()
+            .filter(|arxiv_id| !arxiv_id.trim().is_empty())
+            .and_then(|arxiv_id| {
+                manifest_by_key
+                    .get(arxiv_id)
+                    .map(|entry| (arxiv_id.clone(), entry.clone()))
+            })
             .or_else(|| {
                 if bib_title_normalized.is_empty() {
                     return None;
@@ -100,23 +105,27 @@ pub fn merge_registry(
                             .find(|candidate_id| !used_manifest_ids.contains(*candidate_id))
                             .or_else(|| candidate_ids.first())
                     })
-                    .and_then(|candidate_id| manifest_by_arxiv.get(candidate_id))
-                    .cloned()
+                    .and_then(|candidate_id| {
+                        manifest_by_key
+                            .get(candidate_id)
+                            .map(|entry| (candidate_id.clone(), entry.clone()))
+                    })
             });
 
-        if let Some(manifest) = &matched_manifest {
-            used_manifest_ids.insert(manifest.arxiv_id.clone());
+        if let Some((manifest_key, _)) = &matched_manifest {
+            used_manifest_ids.insert(manifest_key.clone());
         }
 
+        let matched_manifest_ref = matched_manifest.as_ref().map(|(_, manifest)| manifest);
         registry.push(build_record_from_bib_and_manifest(
             bib,
-            matched_manifest.as_ref(),
+            matched_manifest_ref,
             config,
         ));
     }
 
-    for manifest in manifest_by_arxiv.values() {
-        if used_manifest_ids.contains(&manifest.arxiv_id) {
+    for (manifest_key, manifest) in &manifest_by_key {
+        if used_manifest_ids.contains(manifest_key) {
             continue;
         }
         registry.push(build_record_from_manifest_only(manifest, config));
@@ -138,16 +147,16 @@ fn build_record_from_bib_and_manifest(
         .or_else(|| manifest.and_then(|item| item.title.clone()))
         .unwrap_or_else(|| bib.citation_key.clone());
     let arxiv_id = manifest
-        .map(|item| item.arxiv_id.clone())
+        .and_then(|item| (!item.arxiv_id.trim().is_empty()).then_some(item.arxiv_id.clone()))
         .or_else(|| bib.fields.get("eprint").cloned());
     let doi = bib.fields.get("doi").cloned();
     let url = bib
         .fields
         .get("url")
         .cloned()
-        .or_else(|| manifest.map(|item| item.source_url()));
-    let tex_dir = manifest.map(|item| item.tex_dir.clone());
-    let pdf_file = manifest.and_then(|item| item.pdf_file.clone());
+        .or_else(|| manifest.and_then(ManifestEntry::source_url));
+    let tex_dir = manifest.and_then(ManifestEntry::tex_dir);
+    let pdf_file = manifest.and_then(ManifestEntry::pdf_file);
     let has_local_tex = tex_dir
         .as_ref()
         .map(|dir| path_has_files(&config.tex_root.join(dir)))
@@ -156,6 +165,24 @@ fn build_record_from_bib_and_manifest(
         .as_ref()
         .map(|file| config.pdf_root.join(file).is_file())
         .unwrap_or(false);
+    let download_mode = if manifest.is_some() {
+        if pdf_file.is_some() {
+            DownloadMode::ManifestSourcePlusPdf
+        } else if tex_dir.is_some() {
+            DownloadMode::ManifestSource
+        } else {
+            DownloadMode::MetadataOnly
+        }
+    } else {
+        DownloadMode::MetadataOnly
+    };
+    let parse_status = if manifest.is_none() || (tex_dir.is_none() && pdf_file.is_none()) {
+        ParseStatus::MetadataOnly
+    } else if has_local_tex {
+        ParseStatus::Downloaded
+    } else {
+        ParseStatus::PendingDownload
+    };
 
     PaperSourceRecord {
         paper_id: make_paper_id(Some(&bib.citation_key), arxiv_id.as_deref(), &title),
@@ -173,24 +200,15 @@ fn build_record_from_bib_and_manifest(
         } else {
             SourceKind::Bib
         },
-        download_mode: if manifest.is_some() {
-            if pdf_file.is_some() {
-                DownloadMode::ManifestSourcePlusPdf
-            } else {
-                DownloadMode::ManifestSource
-            }
-        } else {
-            DownloadMode::MetadataOnly
-        },
+        download_mode,
         has_local_tex,
         has_local_pdf,
-        parse_status: if manifest.is_none() {
-            ParseStatus::MetadataOnly
-        } else if has_local_tex {
-            ParseStatus::Downloaded
-        } else {
-            ParseStatus::PendingDownload
-        },
+        parse_status,
+        relevance_rank: manifest.and_then(|item| item.relevance_rank),
+        relevance_category: manifest.and_then(|item| item.relevance_category.clone()),
+        adoptable_ideas: manifest
+            .map(|item| item.adoptable_ideas.clone())
+            .unwrap_or_default(),
         semantic_scholar: None,
     }
 }
@@ -199,9 +217,13 @@ fn build_record_from_manifest_only(
     manifest: &ManifestEntry,
     config: &RepoConfig,
 ) -> PaperSourceRecord {
-    let has_local_tex = path_has_files(&config.tex_root.join(&manifest.tex_dir));
-    let has_local_pdf = manifest
-        .pdf_file
+    let tex_dir = manifest.tex_dir();
+    let pdf_file = manifest.pdf_file();
+    let has_local_tex = tex_dir
+        .as_ref()
+        .map(|dir| path_has_files(&config.tex_root.join(dir)))
+        .unwrap_or(false);
+    let has_local_pdf = pdf_file
         .as_ref()
         .map(|file| config.pdf_root.join(file).is_file())
         .unwrap_or(false);
@@ -209,7 +231,7 @@ fn build_record_from_manifest_only(
     PaperSourceRecord {
         paper_id: make_paper_id(
             None,
-            Some(&manifest.arxiv_id),
+            (!manifest.arxiv_id.trim().is_empty()).then_some(manifest.arxiv_id.as_str()),
             manifest.title.as_deref().unwrap_or(&manifest.tex_dir),
         ),
         citation_key: None,
@@ -219,14 +241,16 @@ fn build_record_from_manifest_only(
             .unwrap_or_else(|| manifest.tex_dir.clone()),
         authors: Vec::new(),
         year: None,
-        arxiv_id: Some(manifest.arxiv_id.clone()),
+        arxiv_id: (!manifest.arxiv_id.trim().is_empty()).then_some(manifest.arxiv_id.clone()),
         doi: None,
-        url: manifest.pdf_url().or_else(|| Some(manifest.source_url())),
-        tex_dir: Some(manifest.tex_dir.clone()),
-        pdf_file: manifest.pdf_file.clone(),
+        url: manifest.pdf_url().or_else(|| manifest.source_url()),
+        tex_dir,
+        pdf_file: pdf_file.clone(),
         source_kind: SourceKind::Manifest,
-        download_mode: if manifest.pdf_file.is_some() {
+        download_mode: if pdf_file.is_some() {
             DownloadMode::ManifestSourcePlusPdf
+        } else if manifest.tex_dir().is_none() {
+            DownloadMode::MetadataOnly
         } else {
             DownloadMode::ManifestSource
         },
@@ -237,6 +261,9 @@ fn build_record_from_manifest_only(
         } else {
             ParseStatus::PendingDownload
         },
+        relevance_rank: manifest.relevance_rank,
+        relevance_category: manifest.relevance_category.clone(),
+        adoptable_ideas: manifest.adoptable_ideas.clone(),
         semantic_scholar: None,
     }
 }
@@ -251,6 +278,18 @@ fn split_authors(field: Option<&String>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn manifest_entry_key(index: usize, entry: &ManifestEntry) -> String {
+    if !entry.arxiv_id.trim().is_empty() {
+        return entry.arxiv_id.clone();
+    }
+    let label = entry
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&entry.tex_dir);
+    format!("manifest-{index}-{}", slugify(label))
 }
 
 fn make_paper_id(citation_key: Option<&str>, arxiv_id: Option<&str>, title: &str) -> String {
@@ -341,6 +380,9 @@ mod tests {
             source_url: None,
             pdf_url: None,
             pdf_file: Some("vista.pdf".into()),
+            relevance_rank: Some(5),
+            relevance_category: Some("visual SLAM benchmark".into()),
+            adoptable_ideas: vec!["exercise manifest relevance propagation".into()],
         }];
         let bib = vec![BibEntry {
             entry_type: "misc".into(),
@@ -361,6 +403,12 @@ mod tests {
             registry[0].download_mode,
             DownloadMode::ManifestSourcePlusPdf
         );
+        assert_eq!(registry[0].relevance_rank, Some(5));
+        assert_eq!(
+            registry[0].relevance_category.as_deref(),
+            Some("visual SLAM benchmark")
+        );
+        assert_eq!(registry[0].adoptable_ideas.len(), 1);
     }
 
     #[test]
@@ -374,6 +422,9 @@ mod tests {
             source_url: None,
             pdf_url: None,
             pdf_file: None,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
         }];
         let bib = vec![BibEntry {
             entry_type: "misc".into(),
@@ -405,6 +456,9 @@ mod tests {
                 source_url: None,
                 pdf_url: None,
                 pdf_file: None,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
             });
         }
 
@@ -434,5 +488,46 @@ mod tests {
                 .count(),
             399
         );
+    }
+
+    #[test]
+    fn preserves_manifest_entries_without_arxiv_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = sample_config(dir.path());
+        let manifest = vec![
+            ManifestEntry {
+                title: Some("First Web Source".into()),
+                arxiv_id: String::new(),
+                tex_dir: String::new(),
+                source_url: Some("https://example.test/first".into()),
+                pdf_url: None,
+                pdf_file: None,
+                relevance_rank: Some(1),
+                relevance_category: Some("first category".into()),
+                adoptable_ideas: vec!["first idea".into()],
+            },
+            ManifestEntry {
+                title: Some("Second Web Source".into()),
+                arxiv_id: String::new(),
+                tex_dir: String::new(),
+                source_url: Some("https://example.test/second".into()),
+                pdf_url: None,
+                pdf_file: None,
+                relevance_rank: Some(2),
+                relevance_category: Some("second category".into()),
+                adoptable_ideas: vec!["second idea".into()],
+            },
+        ];
+
+        let registry = merge_registry(manifest, Vec::new(), &config);
+        assert_eq!(registry.len(), 2);
+        assert!(registry
+            .iter()
+            .any(|record| record.title == "First Web Source"
+                && record.relevance_category.as_deref() == Some("first category")));
+        assert!(registry
+            .iter()
+            .any(|record| record.title == "Second Web Source"
+                && record.relevance_category.as_deref() == Some("second category")));
     }
 }

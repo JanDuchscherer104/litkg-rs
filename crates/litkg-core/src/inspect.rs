@@ -41,6 +41,9 @@ pub struct SearchHit {
     pub matched_fields: Vec<String>,
     pub snippet: Option<String>,
     pub relevance_tags: Vec<String>,
+    pub relevance_rank: Option<u8>,
+    pub relevance_category: Option<String>,
+    pub adoptable_ideas: Vec<String>,
     #[serde(flatten)]
     pub rank: crate::ranking::WeightedScore,
 }
@@ -1292,6 +1295,9 @@ pub fn search_papers(
             relevance_tags: parsed
                 .map(|paper| matched_relevance_tags(paper, relevance_tags))
                 .unwrap_or_default(),
+            relevance_rank: record.relevance_rank,
+            relevance_category: record.relevance_category.clone(),
+            adoptable_ideas: record.adoptable_ideas.clone(),
             rank: crate::ranking::WeightedScore {
                 source_type: "literature".into(),
                 score_lexical: score as f32,
@@ -1971,6 +1977,9 @@ mod tests {
                 has_local_tex: true,
                 has_local_pdf: true,
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             PaperSourceRecord {
@@ -1989,6 +1998,9 @@ mod tests {
                 has_local_tex: true,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             PaperSourceRecord {
@@ -2007,6 +2019,9 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
         ]
@@ -2072,6 +2087,9 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             abstract_text: Some("stale".into()),
@@ -2185,6 +2203,9 @@ mod tests {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
@@ -2192,6 +2213,9 @@ mod tests {
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
                 has_local_tex: true,
                 ..registry[0].clone()
@@ -2236,6 +2260,9 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: true,
             parse_status: ParseStatus::Downloaded,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
@@ -2245,6 +2272,9 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
                 ..registry[0].clone()
             },
@@ -2285,6 +2315,9 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }];
         let parsed = vec![
@@ -2306,6 +2339,9 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: false,
                     parse_status: ParseStatus::MetadataOnly,
+                    relevance_rank: None,
+                    relevance_category: None,
+                    adoptable_ideas: Vec::new(),
                     semantic_scholar: None,
                 },
                 abstract_text: None,
@@ -2334,6 +2370,9 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: true,
                     parse_status: ParseStatus::Parsed,
+                    relevance_rank: None,
+                    relevance_category: None,
+                    adoptable_ideas: Vec::new(),
                     semantic_scholar: None,
                 },
                 abstract_text: Some("stale parsed abstract".into()),
@@ -2377,6 +2416,9 @@ mod tests {
             has_local_tex: true,
             has_local_pdf: false,
             parse_status: ParseStatus::Downloaded,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }];
         let parsed = vec![
@@ -2398,6 +2440,9 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: false,
                     parse_status: ParseStatus::Parsed,
+                    relevance_rank: None,
+                    relevance_category: None,
+                    adoptable_ideas: Vec::new(),
                     semantic_scholar: None,
                 },
                 abstract_text: Some("A".into()),
@@ -2430,6 +2475,9 @@ mod tests {
                     has_local_tex: true,
                     has_local_pdf: false,
                     parse_status: ParseStatus::Parsed,
+                    relevance_rank: None,
+                    relevance_category: None,
+                    adoptable_ideas: Vec::new(),
                     semantic_scholar: None,
                 },
                 abstract_text: Some("B".into()),
@@ -2470,6 +2518,9 @@ mod tests {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         });
 
@@ -2514,6 +2565,9 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             abstract_text: None,
@@ -2566,6 +2620,9 @@ mod tests {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }];
         let parsed = vec![ParsedPaper {
@@ -2573,6 +2630,9 @@ mod tests {
             metadata: PaperSourceRecord {
                 title: "Parsed Title".into(),
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
                 has_local_tex: true,
                 ..registry[0].clone()

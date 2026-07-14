@@ -31,6 +31,9 @@ pub struct PaperTableRow {
     pub parse_status: ParseStatus,
     pub has_local_tex: bool,
     pub has_local_pdf: bool,
+    pub relevance_rank: Option<u8>,
+    pub relevance_category: Option<String>,
+    pub adoptable_ideas: Vec<String>,
     pub venue: Option<String>,
     pub task_tags: Vec<String>,
     pub dataset_tags: Vec<String>,
@@ -180,6 +183,9 @@ pub fn build_tabular_bundle(research_papers: &[ResearchPaper]) -> TabularBundle 
             parse_status: paper.parsed.metadata.parse_status.clone(),
             has_local_tex: paper.parsed.metadata.has_local_tex,
             has_local_pdf: paper.parsed.metadata.has_local_pdf,
+            relevance_rank: paper.parsed.metadata.relevance_rank,
+            relevance_category: paper.parsed.metadata.relevance_category.clone(),
+            adoptable_ideas: paper.parsed.metadata.adoptable_ideas.clone(),
             venue: paper.research.venue.clone(),
             task_tags: paper.research.task_tags.clone(),
             dataset_tags: paper.research.dataset_tags.clone(),
@@ -429,6 +435,9 @@ fn write_papers_csv(path: &Path, rows: &[PaperTableRow]) -> Result<()> {
         "parse_status",
         "has_local_tex",
         "has_local_pdf",
+        "relevance_rank",
+        "relevance_category",
+        "adoptable_ideas",
         "venue",
         "task_tags",
         "dataset_tags",
@@ -454,6 +463,11 @@ fn write_papers_csv(path: &Path, rows: &[PaperTableRow]) -> Result<()> {
             &format!("{:?}", row.parse_status),
             &row.has_local_tex.to_string(),
             &row.has_local_pdf.to_string(),
+            &row.relevance_rank
+                .map(|rank| rank.to_string())
+                .unwrap_or_default(),
+            row.relevance_category.as_deref().unwrap_or(""),
+            &join_list(&row.adoptable_ideas),
             row.venue.as_deref().unwrap_or(""),
             &join_list(&row.task_tags),
             &join_list(&row.dataset_tags),
@@ -497,6 +511,9 @@ fn write_papers_parquet(path: &Path, rows: &[PaperTableRow]) -> Result<()> {
         Field::new("parse_status", DataType::Utf8, false),
         Field::new("has_local_tex", DataType::Boolean, false),
         Field::new("has_local_pdf", DataType::Boolean, false),
+        Field::new("relevance_rank", DataType::Utf8, true),
+        Field::new("relevance_category", DataType::Utf8, true),
+        Field::new("adoptable_ideas", DataType::Utf8, false),
         Field::new("venue", DataType::Utf8, true),
         Field::new("task_tags", DataType::Utf8, false),
         Field::new("dataset_tags", DataType::Utf8, false),
@@ -572,6 +589,21 @@ fn write_papers_parquet(path: &Path, rows: &[PaperTableRow]) -> Result<()> {
         )),
         Arc::new(BooleanArray::from(
             rows.iter().map(|row| row.has_local_pdf).collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            rows.iter()
+                .map(|row| row.relevance_rank.map(|rank| rank.to_string()))
+                .collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            rows.iter()
+                .map(|row| row.relevance_category.as_deref())
+                .collect::<Vec<_>>(),
+        )),
+        Arc::new(StringArray::from(
+            rows.iter()
+                .map(|row| Some(join_list(&row.adoptable_ideas)))
+                .collect::<Vec<_>>(),
         )),
         Arc::new(StringArray::from(
             rows.iter()
@@ -800,6 +832,9 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             abstract_text: Some("A practical abstract.".to_string()),

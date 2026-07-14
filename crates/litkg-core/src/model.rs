@@ -53,6 +53,12 @@ pub struct PaperSourceRecord {
     pub has_local_pdf: bool,
     pub parse_status: ParseStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance_rank: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relevance_category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adoptable_ideas: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_scholar: Option<SemanticScholarPaper>,
 }
 

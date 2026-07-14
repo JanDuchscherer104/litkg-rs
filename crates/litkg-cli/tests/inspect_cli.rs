@@ -52,6 +52,9 @@ fn write_test_config(root: &Path) -> PathBuf {
         has_local_tex: true,
         has_local_pdf: true,
         parse_status: ParseStatus::Parsed,
+        relevance_rank: Some(4),
+        relevance_category: Some("benchmark".into()),
+        adoptable_ideas: vec!["reuse the evaluation split".into()],
         semantic_scholar: None,
     }];
     write_registry(&registry_path, &registry).unwrap();
@@ -221,6 +224,9 @@ fn write_metadata_only_config(root: &Path) -> PathBuf {
             has_local_tex: false,
             has_local_pdf: false,
             parse_status: ParseStatus::MetadataOnly,
+            relevance_rank: None,
+            relevance_category: None,
+            adoptable_ideas: Vec::new(),
             semantic_scholar: None,
         }],
     )
@@ -299,6 +305,9 @@ fn write_stale_snapshot_config(root: &Path) -> PathBuf {
                 has_local_tex: true,
                 has_local_pdf: true,
                 parse_status: ParseStatus::Parsed,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             abstract_text: Some("stale parsed abstract".into()),
@@ -989,6 +998,27 @@ fn search_and_show_paper_commands_work_end_to_end() {
         search_json["hits"][0]["matched_fields"][0],
         "table_captions"
     );
+    assert_eq!(search_json["hits"][0]["relevance_rank"], 4);
+    assert_eq!(search_json["hits"][0]["relevance_category"], "benchmark");
+
+    let search_text = Command::cargo_bin("litkg-cli")
+        .unwrap()
+        .args([
+            "lit",
+            "search",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--query",
+            "caption token table",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let search_text = String::from_utf8(search_text).unwrap();
+    assert!(search_text.contains("Relevance: rank=4 category=benchmark"));
+    assert!(!search_text.contains("Thesis:"));
 
     Command::cargo_bin("litkg-cli")
         .unwrap()

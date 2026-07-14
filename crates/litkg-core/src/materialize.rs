@@ -174,6 +174,33 @@ pub fn emit_markdown(config: &RepoConfig, paper: &ParsedPaper) -> MaterializedDo
         format!("has_local_pdf: {}", paper.metadata.has_local_pdf),
         format!("parse_status: {:?}", paper.metadata.parse_status),
         format!(
+            "relevance_rank: {}",
+            paper
+                .metadata
+                .relevance_rank
+                .map(|rank| rank.to_string())
+                .unwrap_or_default()
+        ),
+        format!(
+            "relevance_category: \"{}\"",
+            paper
+                .metadata
+                .relevance_category
+                .clone()
+                .unwrap_or_default()
+                .replace('"', "\\\"")
+        ),
+        format!(
+            "adoptable_ideas: [{}]",
+            paper
+                .metadata
+                .adoptable_ideas
+                .iter()
+                .map(|idea| format!("\"{}\"", idea.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        format!(
             "kg_tags: [{}]",
             tags.iter()
                 .map(|tag| format!("\"{tag}\""))
@@ -213,6 +240,30 @@ pub fn emit_markdown(config: &RepoConfig, paper: &ParsedPaper) -> MaterializedDo
         format!(
             "- URL: {}",
             paper.metadata.url.clone().unwrap_or_else(|| "n/a".into())
+        ),
+        format!(
+            "- Relevance rank: {}",
+            paper
+                .metadata
+                .relevance_rank
+                .map(|rank| rank.to_string())
+                .unwrap_or_else(|| "n/a".into())
+        ),
+        format!(
+            "- Relevance category: {}",
+            paper
+                .metadata
+                .relevance_category
+                .clone()
+                .unwrap_or_else(|| "n/a".into())
+        ),
+        format!(
+            "- Adoptable ideas: {}",
+            if paper.metadata.adoptable_ideas.is_empty() {
+                "n/a".into()
+            } else {
+                paper.metadata.adoptable_ideas.join("; ")
+            }
         ),
         String::new(),
     ];
@@ -452,6 +503,9 @@ mod tests {
                 has_local_tex: false,
                 has_local_pdf: false,
                 parse_status: ParseStatus::MetadataOnly,
+                relevance_rank: None,
+                relevance_category: None,
+                adoptable_ideas: Vec::new(),
                 semantic_scholar: None,
             },
             abstract_text: None,

@@ -2538,6 +2538,32 @@ fn render_search_results(results: &SearchResults) -> String {
                 "".to_string(),
             ]);
         }
+        if hit.relevance_rank.is_some()
+            || hit.relevance_category.is_some()
+            || !hit.adoptable_ideas.is_empty()
+        {
+            table.add_row(vec![
+                "".to_string(),
+                format!(
+                    "Relevance: rank={} category={} ideas={}",
+                    hit.relevance_rank
+                        .map(|rank| rank.to_string())
+                        .unwrap_or_else(|| "n/a".to_string()),
+                    hit.relevance_category.as_deref().unwrap_or("n/a"),
+                    if hit.adoptable_ideas.is_empty() {
+                        "n/a".to_string()
+                    } else {
+                        hit.adoptable_ideas.join("; ")
+                    }
+                ),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+                "".to_string(),
+            ]);
+        }
         if let Some(snippet) = &hit.snippet {
             table.add_row(vec![
                 "".to_string(),
@@ -2578,6 +2604,30 @@ fn render_paper_inspection(inspection: &PaperInspection) -> String {
         format!("source_kind: {:?}", inspection.metadata.source_kind),
         format!("download_mode: {:?}", inspection.metadata.download_mode),
         format!("parse_status: {:?}", inspection.metadata.parse_status),
+        format!(
+            "relevance_rank: {}",
+            inspection
+                .metadata
+                .relevance_rank
+                .map(|rank| rank.to_string())
+                .unwrap_or_else(|| "n/a".to_string())
+        ),
+        format!(
+            "relevance_category: {}",
+            inspection
+                .metadata
+                .relevance_category
+                .as_deref()
+                .unwrap_or("n/a")
+        ),
+        format!(
+            "adoptable_ideas: {}",
+            if inspection.metadata.adoptable_ideas.is_empty() {
+                "n/a".to_string()
+            } else {
+                inspection.metadata.adoptable_ideas.join("; ")
+            }
+        ),
         format!(
             "authors: {}",
             if inspection.metadata.authors.is_empty() {
