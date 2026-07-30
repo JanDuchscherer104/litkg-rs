@@ -30,7 +30,9 @@ pub fn download_registry_sources(
         let mut next = record.clone();
         match next.download_mode {
             DownloadMode::MetadataOnly => {}
-            DownloadMode::ManifestSource | DownloadMode::ManifestSourcePlusPdf => {
+            DownloadMode::ManifestSource
+            | DownloadMode::ManifestPdf
+            | DownloadMode::ManifestSourcePlusPdf => {
                 if let (Some(arxiv_id), Some(tex_dir)) =
                     (next.arxiv_id.clone(), next.tex_dir.clone())
                 {
@@ -53,13 +55,15 @@ pub fn download_registry_sources(
                 }
 
                 if (options.download_pdfs || config.download_pdfs) && next.pdf_file.is_some() {
-                    let arxiv_id = next.arxiv_id.clone().unwrap_or_default();
                     let pdf_path = config.pdf_root.join(next.pdf_file.clone().unwrap());
                     if options.overwrite || !pdf_path.is_file() {
-                        let pdf_url = format!("https://arxiv.org/pdf/{arxiv_id}.pdf");
+                        let pdf_url = resolve_pdf_url(&next)?;
                         download_to_path(&pdf_url, &pdf_path)?;
                     }
                     next.has_local_pdf = pdf_path.is_file();
+                    if next.has_local_pdf && next.tex_dir.is_none() {
+                        next.parse_status = ParseStatus::Downloaded;
+                    }
                 }
             }
         }
@@ -69,21 +73,61 @@ pub fn download_registry_sources(
 }
 
 fn download_to_path(url: &str, destination: &Path) -> Result<()> {
+    require_https(url)?;
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
+    let partial = destination.with_extension(format!(
+        "{}part",
+        destination
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| format!("{extension}."))
+            .unwrap_or_default()
+    ));
     let status = Command::new("curl")
         .arg("-L")
+        .arg("--proto")
+        .arg("=https")
+        .arg("--proto-redir")
+        .arg("=https")
         .arg("--fail")
         .arg("--silent")
         .arg("--show-error")
         .arg(url)
         .arg("-o")
-        .arg(destination)
+        .arg(&partial)
         .status()
         .with_context(|| format!("Failed to spawn curl for {url}"))?;
     if !status.success() {
+        let _ = fs::remove_file(&partial);
         anyhow::bail!("curl failed for {url}");
+    }
+    fs::rename(&partial, destination).with_context(|| {
+        format!(
+            "Failed to publish downloaded file {}",
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn resolve_pdf_url(record: &PaperSourceRecord) -> Result<String> {
+    let url = record.pdf_url.clone().or_else(|| {
+        record
+            .arxiv_id
+            .as_deref()
+            .filter(|arxiv_id| !arxiv_id.trim().is_empty())
+            .map(|arxiv_id| format!("https://arxiv.org/pdf/{arxiv_id}.pdf"))
+    });
+    let url = url.with_context(|| format!("No PDF URL available for {}", record.paper_id))?;
+    require_https(&url)?;
+    Ok(url)
+}
+
+fn require_https(url: &str) -> Result<()> {
+    if !url.starts_with("https://") {
+        anyhow::bail!("Only HTTPS downloads are supported: {url}");
     }
     Ok(())
 }
@@ -157,6 +201,7 @@ fn path_has_files(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::SourceKind;
     use flate2::{write::GzEncoder, Compression};
     use std::io::Write;
     use tar::{Builder, Header};
@@ -232,5 +277,51 @@ mod tests {
             fs::read_to_string(target.join("paper/appendix.tex")).unwrap(),
             "\\section{Appendix}"
         );
+    }
+
+    fn pdf_record(pdf_url: Option<&str>, arxiv_id: Option<&str>) -> PaperSourceRecord {
+        PaperSourceRecord {
+            paper_id: "example".into(),
+            citation_key: None,
+            title: "Example".into(),
+            authors: Vec::new(),
+            year: None,
+            arxiv_id: arxiv_id.map(str::to_string),
+            doi: None,
+            url: None,
+            tex_dir: None,
+            pdf_url: pdf_url.map(str::to_string),
+            pdf_file: Some("example.pdf".into()),
+            source_kind: SourceKind::Manifest,
+            download_mode: DownloadMode::ManifestPdf,
+            has_local_tex: false,
+            has_local_pdf: false,
+            parse_status: ParseStatus::PendingDownload,
+            semantic_scholar: None,
+        }
+    }
+
+    #[test]
+    fn explicit_pdf_url_precedes_arxiv_fallback() {
+        let record = pdf_record(Some("https://example.org/book.pdf"), Some("2509.01584"));
+        assert_eq!(
+            resolve_pdf_url(&record).unwrap(),
+            "https://example.org/book.pdf"
+        );
+    }
+
+    #[test]
+    fn derives_arxiv_pdf_url_when_explicit_url_is_absent() {
+        let record = pdf_record(None, Some("2509.01584"));
+        assert_eq!(
+            resolve_pdf_url(&record).unwrap(),
+            "https://arxiv.org/pdf/2509.01584.pdf"
+        );
+    }
+
+    #[test]
+    fn rejects_non_https_and_unresolved_pdf_urls() {
+        assert!(resolve_pdf_url(&pdf_record(Some("http://example.org/book.pdf"), None)).is_err());
+        assert!(resolve_pdf_url(&pdf_record(None, None)).is_err());
     }
 }

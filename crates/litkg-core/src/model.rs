@@ -23,6 +23,7 @@ pub enum DocumentKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DownloadMode {
     ManifestSource,
+    ManifestPdf,
     ManifestSourcePlusPdf,
     MetadataOnly,
 }
@@ -46,6 +47,8 @@ pub struct PaperSourceRecord {
     pub doi: Option<String>,
     pub url: Option<String>,
     pub tex_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_url: Option<String>,
     pub pdf_file: Option<String>,
     pub source_kind: SourceKind,
     pub download_mode: DownloadMode,

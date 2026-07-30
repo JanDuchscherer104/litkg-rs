@@ -57,19 +57,23 @@ pub fn merge_registry(
     bib_entries: Vec<BibEntry>,
     config: &RepoConfig,
 ) -> Vec<PaperSourceRecord> {
-    let manifest_by_arxiv: BTreeMap<String, ManifestEntry> = manifest_entries
+    let manifest_by_key: BTreeMap<String, ManifestEntry> = manifest_entries
         .into_iter()
-        .map(|entry| (entry.arxiv_id.clone(), entry))
+        .map(|entry| (entry.identity(), entry))
         .collect();
     let mut manifest_by_normalized_title: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (arxiv_id, entry) in &manifest_by_arxiv {
+    let mut manifest_key_by_arxiv = BTreeMap::new();
+    for (manifest_key, entry) in &manifest_by_key {
+        if let Some(arxiv_id) = entry.arxiv_id() {
+            manifest_key_by_arxiv.insert(arxiv_id.to_string(), manifest_key.clone());
+        }
         if let Some(title) = entry.title.as_deref() {
             let normalized = normalize_title(title);
             if !normalized.is_empty() {
                 manifest_by_normalized_title
                     .entry(normalized)
                     .or_default()
-                    .push(arxiv_id.clone());
+                    .push(manifest_key.clone());
             }
         }
     }
@@ -86,7 +90,8 @@ pub fn merge_registry(
         );
         let matched_manifest = bib_arxiv
             .as_ref()
-            .and_then(|arxiv_id| manifest_by_arxiv.get(arxiv_id))
+            .and_then(|arxiv_id| manifest_key_by_arxiv.get(arxiv_id))
+            .and_then(|manifest_key| manifest_by_key.get(manifest_key))
             .cloned()
             .or_else(|| {
                 if bib_title_normalized.is_empty() {
@@ -100,12 +105,12 @@ pub fn merge_registry(
                             .find(|candidate_id| !used_manifest_ids.contains(*candidate_id))
                             .or_else(|| candidate_ids.first())
                     })
-                    .and_then(|candidate_id| manifest_by_arxiv.get(candidate_id))
+                    .and_then(|candidate_id| manifest_by_key.get(candidate_id))
                     .cloned()
             });
 
         if let Some(manifest) = &matched_manifest {
-            used_manifest_ids.insert(manifest.arxiv_id.clone());
+            used_manifest_ids.insert(manifest.identity());
         }
 
         registry.push(build_record_from_bib_and_manifest(
@@ -115,8 +120,8 @@ pub fn merge_registry(
         ));
     }
 
-    for manifest in manifest_by_arxiv.values() {
-        if used_manifest_ids.contains(&manifest.arxiv_id) {
+    for manifest in manifest_by_key.values() {
+        if used_manifest_ids.contains(&manifest.identity()) {
             continue;
         }
         registry.push(build_record_from_manifest_only(manifest, config));
@@ -138,15 +143,16 @@ fn build_record_from_bib_and_manifest(
         .or_else(|| manifest.and_then(|item| item.title.clone()))
         .unwrap_or_else(|| bib.citation_key.clone());
     let arxiv_id = manifest
-        .map(|item| item.arxiv_id.clone())
+        .and_then(|item| item.arxiv_id().map(str::to_string))
         .or_else(|| bib.fields.get("eprint").cloned());
     let doi = bib.fields.get("doi").cloned();
     let url = bib
         .fields
         .get("url")
         .cloned()
-        .or_else(|| manifest.map(|item| item.source_url()));
-    let tex_dir = manifest.map(|item| item.tex_dir.clone());
+        .or_else(|| manifest.and_then(ManifestEntry::source_url));
+    let tex_dir = manifest.and_then(|item| item.tex_dir().map(str::to_string));
+    let pdf_url = manifest.and_then(ManifestEntry::pdf_url);
     let pdf_file = manifest.and_then(|item| item.pdf_file.clone());
     let has_local_tex = tex_dir
         .as_ref()
@@ -156,6 +162,12 @@ fn build_record_from_bib_and_manifest(
         .as_ref()
         .map(|file| config.pdf_root.join(file).is_file())
         .unwrap_or(false);
+    let download_mode = download_mode(tex_dir.as_deref(), pdf_file.as_deref());
+    let parse_status = match download_mode {
+        DownloadMode::MetadataOnly => ParseStatus::MetadataOnly,
+        _ if has_local_tex || has_local_pdf => ParseStatus::Downloaded,
+        _ => ParseStatus::PendingDownload,
+    };
 
     PaperSourceRecord {
         paper_id: make_paper_id(Some(&bib.citation_key), arxiv_id.as_deref(), &title),
@@ -167,30 +179,17 @@ fn build_record_from_bib_and_manifest(
         doi,
         url,
         tex_dir,
+        pdf_url,
         pdf_file: pdf_file.clone(),
         source_kind: if manifest.is_some() {
             SourceKind::ManifestAndBib
         } else {
             SourceKind::Bib
         },
-        download_mode: if manifest.is_some() {
-            if pdf_file.is_some() {
-                DownloadMode::ManifestSourcePlusPdf
-            } else {
-                DownloadMode::ManifestSource
-            }
-        } else {
-            DownloadMode::MetadataOnly
-        },
+        download_mode,
         has_local_tex,
         has_local_pdf,
-        parse_status: if manifest.is_none() {
-            ParseStatus::MetadataOnly
-        } else if has_local_tex {
-            ParseStatus::Downloaded
-        } else {
-            ParseStatus::PendingDownload
-        },
+        parse_status,
         semantic_scholar: None,
     }
 }
@@ -199,7 +198,11 @@ fn build_record_from_manifest_only(
     manifest: &ManifestEntry,
     config: &RepoConfig,
 ) -> PaperSourceRecord {
-    let has_local_tex = path_has_files(&config.tex_root.join(&manifest.tex_dir));
+    let tex_dir = manifest.tex_dir().map(str::to_string);
+    let has_local_tex = tex_dir
+        .as_ref()
+        .map(|dir| path_has_files(&config.tex_root.join(dir)))
+        .unwrap_or(false);
     let has_local_pdf = manifest
         .pdf_file
         .as_ref()
@@ -209,35 +212,46 @@ fn build_record_from_manifest_only(
     PaperSourceRecord {
         paper_id: make_paper_id(
             None,
-            Some(&manifest.arxiv_id),
-            manifest.title.as_deref().unwrap_or(&manifest.tex_dir),
+            manifest.arxiv_id(),
+            manifest
+                .title
+                .as_deref()
+                .or(manifest.tex_dir())
+                .unwrap_or("untitled-source"),
         ),
         citation_key: None,
         title: manifest
             .title
             .clone()
-            .unwrap_or_else(|| manifest.tex_dir.clone()),
+            .or_else(|| manifest.tex_dir().map(str::to_string))
+            .unwrap_or_else(|| "Untitled source".to_string()),
         authors: Vec::new(),
         year: None,
-        arxiv_id: Some(manifest.arxiv_id.clone()),
+        arxiv_id: manifest.arxiv_id().map(str::to_string),
         doi: None,
-        url: manifest.pdf_url().or_else(|| Some(manifest.source_url())),
-        tex_dir: Some(manifest.tex_dir.clone()),
+        url: manifest.source_url(),
+        tex_dir: tex_dir.clone(),
+        pdf_url: manifest.pdf_url(),
         pdf_file: manifest.pdf_file.clone(),
         source_kind: SourceKind::Manifest,
-        download_mode: if manifest.pdf_file.is_some() {
-            DownloadMode::ManifestSourcePlusPdf
-        } else {
-            DownloadMode::ManifestSource
-        },
+        download_mode: download_mode(tex_dir.as_deref(), manifest.pdf_file.as_deref()),
         has_local_tex,
         has_local_pdf,
-        parse_status: if has_local_tex {
-            ParseStatus::Downloaded
-        } else {
-            ParseStatus::PendingDownload
+        parse_status: match download_mode(tex_dir.as_deref(), manifest.pdf_file.as_deref()) {
+            DownloadMode::MetadataOnly => ParseStatus::MetadataOnly,
+            _ if has_local_tex || has_local_pdf => ParseStatus::Downloaded,
+            _ => ParseStatus::PendingDownload,
         },
         semantic_scholar: None,
+    }
+}
+
+fn download_mode(tex_dir: Option<&str>, pdf_file: Option<&str>) -> DownloadMode {
+    match (tex_dir, pdf_file) {
+        (Some(_), Some(_)) => DownloadMode::ManifestSourcePlusPdf,
+        (Some(_), None) => DownloadMode::ManifestSource,
+        (None, Some(_)) => DownloadMode::ManifestPdf,
+        (None, None) => DownloadMode::MetadataOnly,
     }
 }
 
@@ -432,5 +446,31 @@ mod tests {
                 .count(),
             399
         );
+    }
+
+    #[test]
+    fn preserves_pdf_only_manifest_rows_without_arxiv_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = sample_config(dir.path());
+        let manifest = vec![ManifestEntry {
+            title: Some("Example Book".into()),
+            arxiv_id: String::new(),
+            tex_dir: String::new(),
+            source_url: Some("https://example.org/book".into()),
+            pdf_url: Some("https://cdn.example.org/book.pdf".into()),
+            pdf_file: Some("book.pdf".into()),
+        }];
+
+        let registry = merge_registry(manifest, Vec::new(), &config);
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry[0].paper_id, "example-book");
+        assert_eq!(registry[0].arxiv_id, None);
+        assert_eq!(registry[0].tex_dir, None);
+        assert_eq!(
+            registry[0].pdf_url.as_deref(),
+            Some("https://cdn.example.org/book.pdf")
+        );
+        assert_eq!(registry[0].download_mode, DownloadMode::ManifestPdf);
     }
 }

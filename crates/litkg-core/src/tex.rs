@@ -599,6 +599,7 @@ mod tests {
             doi: None,
             url: Some("https://arxiv.org/abs/2509.01584".into()),
             tex_dir: Some("paper".into()),
+            pdf_url: None,
             pdf_file: Some("vista.pdf".into()),
             source_kind: SourceKind::ManifestAndBib,
             download_mode: DownloadMode::ManifestSourcePlusPdf,

@@ -794,6 +794,7 @@ mod tests {
                 doi: None,
                 url: Some("https://example.org/paper".to_string()),
                 tex_dir: None,
+                pdf_url: None,
                 pdf_file: None,
                 source_kind: SourceKind::Bib,
                 download_mode: DownloadMode::MetadataOnly,
