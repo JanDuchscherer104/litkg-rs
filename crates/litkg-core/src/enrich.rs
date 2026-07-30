@@ -811,6 +811,7 @@ mod tests {
                 doi: None,
                 url: None,
                 tex_dir: None,
+                pdf_url: None,
                 pdf_file: None,
                 source_kind: SourceKind::ManifestAndBib,
                 download_mode: DownloadMode::ManifestSource,

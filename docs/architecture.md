@@ -30,7 +30,7 @@ flowchart TD
    - read BibTeX
    - merge into `PaperSourceRecord`
 2. `download`
-   - fetch arXiv source bundles and optional PDFs
+   - fetch arXiv source bundles and explicit or arXiv-derived HTTPS PDFs
 3. `parse`
    - discover TeX root
    - inline includes
@@ -51,20 +51,26 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  Manifest["ManifestEntry\narXiv id, title, tex/pdf paths"] --> Merge["merge_registry"]
+  Manifest["ManifestEntry\ntitle, optional arXiv id, source/PDF URLs"] --> Merge["merge_registry"]
   Bib["BibEntry\nkey, title, authors, year, DOI/eprint/url"] --> Merge
   Merge --> Record["PaperSourceRecord\nstable paper_id, source_kind,\ndownload/parse status"]
   Record --> Registry["registry.jsonl"]
 ```
 
 - Registry merge is deterministic: merged `PaperSourceRecord` rows are sorted by `paper_id` before writing JSONL.
+- Manifest landing pages use `source_url`; `url` is accepted as a compatibility
+  alias for client manifests that already use the shorter field name.
 - BibTeX entries match manifest rows primarily by arXiv id / `eprint` and secondarily by normalized title.
 - Manifest-only rows stay in the registry so download and parse state can advance even when a paper does not yet have a citation key.
 - Download and parse status live on the normalized record so the pipeline can resume from the registry without adapter-specific sidecar state.
 
 ## Download Contract
 
-- Source download targets arXiv `e-print` bundles and optional PDFs derived from the normalized registry.
+- Source download targets arXiv `e-print` bundles. PDF-only rows may instead
+  provide an explicit `pdf_url` and `pdf_file`; arXiv rows retain the derived
+  `https://arxiv.org/pdf/<id>.pdf` fallback.
+- Explicit downloads must use HTTPS. Downloads are written beside the final
+  destination as partial files and renamed only after `curl` succeeds.
 - Extraction accepts `tar.gz` first and falls back to plain `tar` for arXiv bundles that are not gzip-compressed.
 - Archive extraction is path-safe: only normal relative file paths are allowed, and absolute paths, parent traversal, and empty paths are rejected.
 - `overwrite = false` preserves existing extracted trees and PDFs; `overwrite = true` refreshes local assets from upstream.

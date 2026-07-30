@@ -187,6 +187,7 @@ fn build_metadata(
         doi: None,
         url: None,
         tex_dir: None,
+        pdf_url: None,
         pdf_file: None,
         source_kind,
         download_mode: crate::model::DownloadMode::MetadataOnly,

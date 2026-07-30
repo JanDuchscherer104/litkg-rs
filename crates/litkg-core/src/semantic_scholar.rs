@@ -667,6 +667,7 @@ mod tests {
             doi: None,
             url: None,
             tex_dir: None,
+            pdf_url: None,
             pdf_file: None,
             source_kind: SourceKind::Bib,
             download_mode: DownloadMode::MetadataOnly,
